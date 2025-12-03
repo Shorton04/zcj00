@@ -1,0 +1,41 @@
+*&--------------------------------------------------------------------*
+*& Module Pool       SAPMZWBS
+*&--------------------------------------------------------------------*
+
+PROGRAM sapmzwbs.
+
+INCLUDE mzwbstop.
+
+SELECTION-SCREEN:BEGIN OF BLOCK b2 WITH FRAME TITLE text-006.
+SELECT-OPTIONS:s_req    FOR zwbs_header-request,
+               s_type   FOR zwbs_header-type,
+               s_prjtyp FOR zwbs_header-proj_type,
+               s_status FOR zwbs_header-status,
+               s_stufe  FOR zwbs_item-stufe DEFAULT '1',
+               s_crton  FOR zwbs_header-created_on,
+               s_prdon  FOR zwbs_header-created_on,
+               s_vbukr  FOR zwbs_header-vbukr,
+               s_prctr  FOR zwbs_header-prctr,
+               s_werks  FOR zwbs_header-werks,
+               s_code   FOR zwbs_header-zprodcod,
+               s_pgman  FOR zwbs_header-zprgman,
+               s_pspid  FOR zwbs_header-pspid,
+               s_prjcod FOR zwbs_header-zprj_code_pv,
+               s_msys   FOR zwbs_item-zmaint_sys,
+               s_izwek  FOR zwbs_header-izwek,
+               s_crt_by FOR zwbs_header-created_by.
+SELECTION-SCREEN:END OF BLOCK b2.
+
+INCLUDE mzwbso01.
+INCLUDE mzwbsi01.
+INCLUDE mzwbsf01.
+
+START-OF-SELECTION.
+  PERFORM get_report_data.
+
+END-OF-SELECTION.
+  IF NOT lt_output[] IS INITIAL.
+    PERFORM display_data.
+  ELSE.
+    MESSAGE 'No Data for the above selection' TYPE 'I'.
+  ENDIF.
