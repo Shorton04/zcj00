@@ -1,0 +1,1040 @@
+*&---------------------------------------------------------------------*
+*&  Include           MZWBSI01
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0100 INPUT.
+
+*Project Type
+*   CASE abap_true.
+*     WHEN lv_proj1.
+*       lv_proj_type = 'CZ'.
+*     WHEN lv_proj2.
+*       lv_proj_type = 'CI'.
+*     WHEN lv_proj3.
+*       lv_proj_type = 'TC'.
+*     WHEN OTHERS.
+*   ENDCASE.
+   lv_proj_type = zwbs_header-proj_type.
+
+   IF lv_rb2 IS NOT INITIAL OR
+      lv_rb3 IS NOT INITIAL OR
+      lv_rb4 IS NOT INITIAL.
+*     IF lv_proj3 IS INITIAL.
+     IF lv_proj_type NE 'TC' AND NOT lv_project IS INITIAL.
+       SELECT SINGLE COUNT(*) FROM zwbs_proj_type
+                              WHERE proj_type = lv_project+0(2).
+       IF sy-subrc = 0.
+         lv_proj_type = lv_project+0(2).
+       ELSE.
+         lv_proj_type = 'TC'.
+       ENDIF.
+     ENDIF.
+   ENDIF.
+
+   CASE ok_code.
+     WHEN 'SOP'.
+       CLEAR lv_url.
+*      CONCATENATE text-s01 text-s02 text-s03 INTO lv_url.
+       lv_url = text-s04.
+       PERFORM show_dms_link USING lv_url.
+     WHEN 'NEXT'.
+       PERFORM process_data.
+     WHEN 'PRJTY'.
+       PERFORM process_action.
+     WHEN OTHERS.
+   ENDCASE.
+
+ ENDMODULE.                 " USER_COMMAND_0100  INPUT
+*&--------------------------------------------------------------------*
+*&      Module  EXIT_COMMAND  INPUT
+*&--------------------------------------------------------------------*
+*       text
+*---------------------------------------------------------------------*
+ MODULE exit_command INPUT.
+
+   CASE ok_code.
+     WHEN 'BACK'.
+       PERFORM clear_proj_buffer.
+       IF lv_wf_flag IS INITIAL AND
+          sy-tcode   EQ 'ZCJ01'.
+         LEAVE TO SCREEN 0.
+       ELSE.
+         LEAVE PROGRAM.
+       ENDIF.
+     WHEN 'EXIT' OR 'CANCEL'.
+       CLEAR lv_answer.
+       CALL FUNCTION 'POPUP_TO_CONFIRM'
+         EXPORTING
+           titlebar              = 'Information'
+           text_question         =
+                                   'Changes will be lost. Do you want to Continue?'
+           text_button_1         = 'Yes'
+           icon_button_1         = 'ICON_OKAY'
+           text_button_2         = 'No'
+           icon_button_2         = 'ICON_CANCEL'
+           display_cancel_button = space
+         IMPORTING
+           answer                = lv_answer
+         EXCEPTIONS
+           text_not_found        = 1
+           OTHERS                = 2.
+       IF sy-subrc <> 0.
+* Implement suitable error handling here
+       ENDIF.
+       CHECK lv_answer = 1.
+       PERFORM clear_proj_buffer.
+       LEAVE PROGRAM.
+   ENDCASE.
+
+ ENDMODULE.                 " EXIT_COMMAND  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0300 INPUT.
+
+   CLEAR:lv_bunit,lv_profid.
+
+   lv_bunit  = zwbs_proj_templ-b_unit.
+   lv_profid = zwbs_proj_tem_tc-profidproj.
+   " lv_ir     = zwbs_proj_tem_tc-izwek.
+
+ ENDMODULE.                 " USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0400  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0400 INPUT.
+
+   CASE ok_code.
+     WHEN 'ENTER'.
+       PERFORM screen_data.
+       IF lv_no_budget = 'X'.
+         CALL TRANSACTION 'ZCJ00'.
+       ENDIF.
+     WHEN 'ATTACH'.
+       PERFORM attach_document.
+     WHEN 'SAVE'.
+       PERFORM save_data.
+     WHEN 'CANCEL_REQ'.
+       PERFORM cancel_request.
+     WHEN 'SUBMIT'.
+*       IF lv_proj3 IS NOT INITIAL.
+       IF lv_proj_type = 'TC'.
+         IF lv_message IS NOT INITIAL.
+           MESSAGE lv_message TYPE 'E'.
+         ELSEIF lv_message1 IS NOT INITIAL.
+           MESSAGE lv_message1 TYPE 'E'.
+         ELSEIF lv_message2 IS NOT INITIAL.
+           MESSAGE lv_message2 TYPE 'E'.
+         ELSEIF lv_msg_clsd_wbs IS NOT INITIAL.
+           MESSAGE lv_msg_clsd_wbs TYPE 'E'.
+         ELSEIF lv_msg_diff_wbs IS NOT INITIAL.
+           MESSAGE lv_msg_diff_wbs TYPE 'E'.
+         ELSEIF lv_msg_miss_wbs IS NOT INITIAL.
+           MESSAGE lv_msg_miss_wbs TYPE 'E'.
+         ELSEIF lv_msg_curr IS NOT INITIAL.
+           MESSAGE lv_msg_curr TYPE 'E'.
+         ENDIF.
+         IF zwbs_header-request IS INITIAL.
+           MESSAGE 'Attachment is Mandatory' TYPE 'E'.
+         ELSE.
+           DATA : wa_object       TYPE sibflporb,
+                  int_rel_options TYPE obl_t_relt,
+                  wa_rel_options  TYPE obl_s_relt,
+                  int_links       TYPE obl_t_link,
+                  wa_links        TYPE obl_s_link.
+
+           wa_rel_options-low = 'ATTA'. "" Attachemnts
+           wa_rel_options-sign = 'I'.
+           wa_rel_options-option = 'EQ'.
+           APPEND wa_rel_options TO int_rel_options.
+
+           wa_object-instid = zwbs_header-request.
+           wa_object-typeid = 'Z_WBS'. "" PR
+           wa_object-catid  = 'BO'. "" Business Object
+           REFRESH int_links[].
+
+           TRY.
+               CALL METHOD cl_binary_relation=>read_links_of_binrels
+                 EXPORTING
+                   is_object           = wa_object          " Start object
+                   it_relation_options = int_rel_options    " Link Types
+                   ip_role             = 'GOSAPPLOBJ'       " Role type
+                 IMPORTING
+                   et_links            = int_links.         " Table with Relationship Records
+
+             CATCH cx_obl_parameter_error. " Incorrect Calling of Interface
+             CATCH cx_obl_internal_error.  " Internal Error of Relationship Service
+             CATCH cx_obl_model_error.     " Error with Model Roles
+           ENDTRY.
+           IF int_links IS INITIAL.
+             MESSAGE 'Attachment is Mandatory' TYPE 'E'.
+           ENDIF.
+         ENDIF.
+       ENDIF.
+*       IF lv_proj3 IS NOT INITIAL.
+       IF lv_proj_type = 'TC'.
+         DATA(lt_table_tmp) = lt_table.
+         SORT lt_table_tmp BY stufe DESCENDING.
+       ENDIF.
+       IF lt_table IS INITIAL.
+         ""* Changes by AKOTA for CR 668561
+         CALL FUNCTION 'POPUP_TO_INFORM'
+           EXPORTING
+             titel = 'Project/WBS Request'
+             txt1  = 'Request cannot be submitted with no WBS elements'
+             txt2  = ''.
+       ELSE.
+         CLEAR: lv_flag.
+         LOOP AT lt_table INTO ls_table.
+           IF ls_table-pspid IS INITIAL.
+             lv_flag = 'X'.
+             CALL FUNCTION 'POPUP_TO_INFORM'
+               EXPORTING
+                 titel = 'Project/WBS Request'
+                 txt1  = 'Request cannot be submitted with blank WBS elements'
+                 txt2  = ''.
+             EXIT.
+           ENDIF.
+         ENDLOOP.
+         IF lv_flag IS INITIAL.
+*          PERFORM validate_data. " Changes by AKOTA for EiCR 729491
+           PERFORM submit_data.
+         ENDIF.
+         ""* Changes by AKOTA for CR 668561
+       ENDIF.
+     WHEN 'DELETE'.
+       CLEAR:lv_text,lv_answer.
+       CONCATENATE text-005
+                   zwbs_header-request INTO lv_text SEPARATED BY space.
+       CALL FUNCTION 'POPUP_TO_CONFIRM'
+         EXPORTING
+           titlebar              = 'Project/WBS Request'
+           text_question         = lv_text
+           text_button_1         = 'Yes'
+           icon_button_1         = 'ICON_OKAY'
+           text_button_2         = 'No'
+           icon_button_2         = 'ICON_CANCEL'
+           display_cancel_button = ' '
+         IMPORTING
+           answer                = lv_answer
+         EXCEPTIONS
+           text_not_found        = 1
+           OTHERS                = 2.
+       IF sy-subrc <> 0.
+* Implement suitable error handling here
+       ENDIF.
+       CHECK lv_answer = 1.
+       PERFORM delete_data.
+     WHEN 'APPROVE'.
+*       IF lv_proj3 = 'X' OR gv_capex = 'X'.
+       IF lv_proj_type = 'TC' OR gv_capex = 'X'.
+         IF lv_message IS NOT INITIAL.
+           MESSAGE lv_message TYPE 'E'.
+         ELSEIF lv_message1 IS NOT INITIAL.
+           MESSAGE lv_message1 TYPE 'E'.
+         ELSEIF lv_message2 IS NOT INITIAL.
+           MESSAGE lv_message2 TYPE 'E'.
+         ENDIF.
+       ENDIF.
+       PERFORM approve_data.
+     WHEN 'REJECT'.
+       DATA: lt_text1 TYPE catsxt_longtext_itab.
+       CALL FUNCTION 'CATSXT_SIMPLE_TEXT_EDITOR'
+         EXPORTING
+           im_title = 'Rejection Remarks'
+*          IM_DISPLAY_MODE       = ' '
+*          IM_START_COLUMN       = 10
+*          IM_START_ROW          = 10
+         CHANGING
+           ch_text  = lt_text1.
+
+       IF lt_text1 IS INITIAL.
+         MESSAGE 'Please type rejection reason in the Remark area below' TYPE 'E'.
+       ELSE.
+         EXPORT lt_text1 = lt_text1 TO MEMORY ID 'REJECT'.
+       ENDIF.
+
+*      IF lt_text IS INITIAL.
+*        MESSAGE 'Please type rejection reason in the Remark area below' TYPE 'E'.
+*      ELSE.
+*        EXPORT lt_text = lt_text TO MEMORY ID 'REJECT'.
+*      ENDIF.
+       PERFORM reject_data.
+     WHEN 'SOP'.
+       CLEAR lv_url.
+*      CONCATENATE text-s01 text-s02 text-s03 INTO lv_url.
+       lv_url = text-s04.
+       PERFORM show_dms_link USING lv_url.
+     WHEN 'LOG'.
+       PERFORM show_log.
+     WHEN 'DOWNLOAD'.
+       PERFORM download.
+     WHEN 'UPLOAD'.
+       PERFORM upload.
+     WHEN 'APPR_LOG'.
+       PERFORM show_approval_log.
+   ENDCASE.
+
+ ENDMODULE.                 " USER_COMMAND_0400  INPUT
+
+*&SPWIZARD: INPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: MODIFY TABLE
+ MODULE tc_wbs_modify INPUT.
+
+   CLEAR ls_temp.
+   ls_temp = ls_table.
+
+   CLEAR:lv_error,ls_table.
+   MOVE-CORRESPONDING zwbs_item TO ls_table.
+   ls_table-pspid_new = ls_temp-pspid_new.
+   ls_table-long_text = ls_temp-long_text.
+   ls_table-updkz     = ls_temp-updkz.
+   ls_table-status    = ls_temp-status.
+   ls_table-stat_curr = ls_temp-stat_curr.
+*Handle IBP Flags
+   ls_table-zibpflag  = ls_temp-zibpflag.
+   ls_table-zibpflgmc = ls_temp-zibpflgmc.
+
+*Register Changed Records
+   IF zwbs_header-type EQ 2 AND ls_temp <> ls_table.
+     IF ls_table-updkz = 'I'.
+       ls_table-zchange = 'I'.
+     ELSE.
+       IF ls_table-zchange = 'I'.
+* Do Nothing..!
+       ELSE.
+         ls_table-zchange = 'U'.
+       ENDIF.
+     ENDIF.
+   ENDIF.
+
+*Default Values in the table
+   PERFORM assign_table_values USING space.
+
+   MODIFY lt_table FROM ls_table
+                   INDEX tc_wbs-current_line.
+   IF sy-subrc <> 0." AND NOT ls_table-stufe IS INITIAL.
+     APPEND ls_table TO lt_table.
+   ENDIF.
+
+*Validate and Update Data
+*  PERFORM validate_data.
+
+ ENDMODULE.
+
+*&SPWIZARD: INPUT MODUL FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: MARK TABLE
+ MODULE tc_wbs_mark INPUT.
+   DATA: g_tc_wbs_wa2 LIKE LINE OF lt_table.
+   IF tc_wbs-line_sel_mode = 1 AND ls_table-select = 'X'.
+     LOOP AT lt_table INTO g_tc_wbs_wa2
+                      WHERE select = 'X'.
+       g_tc_wbs_wa2-select = ''.
+       MODIFY lt_table FROM g_tc_wbs_wa2
+                       TRANSPORTING select.
+     ENDLOOP.
+   ENDIF.
+   MODIFY lt_table FROM ls_table
+                   INDEX tc_wbs-current_line
+                   TRANSPORTING select.
+ ENDMODULE.
+
+*&SPWIZARD: INPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: PROCESS USER COMMAND
+ MODULE tc_wbs_user_command INPUT.
+
+   PERFORM clear_fcode.
+
+   ok_code = sy-ucomm.
+
+   CHECK lv_error IS INITIAL.
+*Validate and Update Data
+   PERFORM validate_data.
+   PERFORM clear_fcode.
+
+   CHECK lv_error IS INITIAL.
+*Table Operations
+   PERFORM user_ok_tc USING    'TC_WBS'
+                               'LT_TABLE'
+                               'SELECT'
+                      CHANGING ok_code.
+   sy-ucomm = ok_code.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0500  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0500 INPUT.
+
+ ENDMODULE.                 " USER_COMMAND_0500  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0600  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0600 INPUT.
+
+   PERFORM get_text.
+
+ ENDMODULE.                 " USER_COMMAND_0600  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0700  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0700 INPUT.
+
+   PERFORM get_request_data.
+
+ ENDMODULE.                 " USER_COMMAND_0700  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  GET_ABGSL  INPUT
+*&---------------------------------------------------------------------*
+ MODULE get_abgsl INPUT.
+
+   TYPES:BEGIN OF ts_abgsl,
+           abgsl TYPE abgr_schl,
+           texta TYPE kkatext,
+         END OF ts_abgsl.
+
+   DATA:lt_abgsl TYPE STANDARD TABLE OF ts_abgsl.
+
+   CLEAR:ls_temp,lv_sline.
+
+   GET CURSOR LINE lv_sline.
+   IF tc_wbs-top_line + lv_sline - 1 > tc_wbs-lines.
+     lv_sline = tc_wbs-lines.
+   ELSE.
+     lv_sline = tc_wbs-top_line + lv_sline - 1.
+   ENDIF.
+
+   SELECT a~abgsl a~texta INTO TABLE lt_abgsl
+                          FROM tkkad AS a INNER JOIN zwbs_proj_rakey AS b
+                          ON a~abgsl = b~abgsl
+                          WHERE a~spras     = lc_spras AND
+                                b~proj_type = lv_proj_type .
+   IF NOT lt_abgsl IS INITIAL.
+     CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+       EXPORTING
+         retfield    = 'ABGSL'
+         dynpprog    = sy-repid
+         dynpnr      = sy-dynnr
+         dynprofield = 'ZWBS_ITEM-ABGSL'
+         value_org   = 'S'
+       TABLES
+         value_tab   = lt_abgsl.
+     IF sy-subrc <> 0.
+     ENDIF.
+   ENDIF.
+
+ ENDMODULE.                 " GET_ABGSL  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  GET_STATUS  INPUT
+*&---------------------------------------------------------------------*
+ MODULE get_status INPUT.
+
+   TYPES:BEGIN OF ts_status,
+           status TYPE j_txt04,
+         END OF ts_status.
+
+   DATA lt_status TYPE STANDARD TABLE OF ts_status.
+
+   CLEAR:ls_temp,lv_sline.
+
+   GET CURSOR LINE lv_sline.
+   IF tc_wbs-top_line + lv_sline - 1 > tc_wbs-lines.
+     lv_sline = tc_wbs-lines.
+   ELSE.
+     lv_sline = tc_wbs-top_line + lv_sline - 1.
+   ENDIF.
+   READ TABLE lt_table INTO ls_temp INDEX lv_sline.
+   SELECT stat_new FROM zwbs_status INTO TABLE lt_status
+                                    WHERE type      = lv_type AND
+                                          stat_curr = ls_temp-stat_curr.
+   IF NOT lt_status IS INITIAL.
+     CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+       EXPORTING
+         retfield    = 'STATUS'
+         dynpprog    = sy-repid
+         dynpnr      = sy-dynnr
+         dynprofield = 'ZWBS_ITEM-STAT_NEW'
+         value_org   = 'S'
+       TABLES
+         value_tab   = lt_status.
+     IF sy-subrc <> 0.
+     ENDIF.
+   ENDIF.
+
+ ENDMODULE.                 " GET_STATUS  INPUT
+*&--------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0800  INPUT
+*&--------------------------------------------------------------------*
+ MODULE user_command_0800 INPUT.
+   CLEAR: sy-ucomm.
+   LEAVE TO SCREEN 0.
+
+ ENDMODULE.                 " USER_COMMAND_0800  INPUT
+
+*&SPWIZARD: INPUT MODULE FOR TC 'TC_CAPEX'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: MODIFY TABLE
+ MODULE tc_capex_modify INPUT.
+   DATA:
+     ls_useridv    TYPE soudnamei1,
+     ls_userida    TYPE soudnamei1,
+     ls_user_datav TYPE soudatai1,
+     ls_user_dataa TYPE soudatai1,
+     lv_budget     TYPE char20,
+     lv_budget_c   TYPE char20.
+*   DATA: lt_table5 TYPE STANDARD TABLE OF ts_table,
+*         lt_table4 TYPE STANDARD TABLE OF ts_table,
+*         lt_table3 TYPE STANDARD TABLE OF ts_table,
+*         lt_table2 TYPE STANDARD TABLE OF ts_table,
+*         lt_table1 TYPE STANDARD TABLE OF ts_table.
+
+*   DATA: lv_pspid_len5 TYPE numc2.
+*   DATA: lv_pspid_len4 TYPE numc2.
+*   DATA: lv_pspid_len3 TYPE numc2.
+*   DATA: lv_pspid_len2 TYPE numc2.
+*   DATA: lv_pspid_len1 TYPE numc2.
+*   DATA: lv_pspid_len_eende TYPE numc2.
+
+   zwbs_item-pspid_new = ls_table-pspid_new = ls_table-pspid.
+   IF ls_table-status IS INITIAL.
+     zwbs_item-werks = ls_table-werks = zwbs_header-werks.
+   ENDIF.
+   CLEAR ls_temp.
+   ls_temp = ls_table.
+
+   zwbs_item-prctr = ls_table-prctr.
+   zwbs_item-posid = ls_table-posid.
+   zwbs_item-pgsbr = zwbs_header-vgsbr.
+   IF ls_table-status IS INITIAL.
+     zwbs_item-izwek = zwbs_header-izwek.
+   ENDIF.
+   MOVE-CORRESPONDING zwbs_item TO ls_table. "g_tc_capex_wa.
+   IF ls_table-vernr IS NOT INITIAL.
+     PERFORM responsible_person_line.
+   ENDIF.
+
+   IF ls_table-astnr IS NOT INITIAL.
+     PERFORM applicant_number_line.
+   ENDIF.
+
+*   READ TABLE lt_table INTO DATA(ls_tab_eende) WITH KEY stufe = '2'.
+*   IF sy-subrc = 0 AND ls_tab_eende-eende IS NOT INITIAL.
+*     IF ls_table-stufe > 2.
+*       zwbs_item-eende = ls_table-eende = ls_tab_eende-eende.
+*     ENDIF.
+*   ENDIF.
+
+*   CLEAR:lv_pspid_len_eende , lv_pspid_new2.
+*   LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa1>).
+*     IF <wa1>-stufe = '5'.
+*     ELSEIF <wa1>-stufe = '2'.
+*       lv_pspid_new2 = <wa1>-pspid.
+*       CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+*         CHANGING
+*           c_value = lv_pspid_new2.
+*       lv_pspid_len_eende = strlen( lv_pspid_new2 ).
+*     ENDIF.
+*   ENDLOOP.
+*
+*   CLEAR: ls_frct_2, ls_frct_3.
+*   LOOP AT lt_table INTO ls_frct_2 WHERE stufe = '2'.
+*     LOOP AT lt_table INTO ls_frct_3 WHERE stufe > '2'.
+*       IF ls_frct_3-pspid+0(lv_pspid_len_eende) = ls_frct_2-pspid+0(lv_pspid_len_eende).
+*         ls_frct_3-eende = ls_frct_2-eende.
+*
+*         IF ls_frct_3-eende IS NOT INITIAL.
+*           MODIFY lt_table FROM ls_frct_3 TRANSPORTING eende.
+*         ENDIF.
+*       ENDIF.
+*     ENDLOOP.
+*   ENDLOOP.
+   IF zwbs_header-type EQ 1.
+     IF ls_table-stufe NE 1.
+       ls_table-estrt = ls_table-plfaz.
+     ENDIF.
+
+     IF ls_table-stufe  = '2'.
+       ls_table-eende = ls_table-plsez.
+       IF ls_table-eende NE zwbs_item-eende.
+         ls_table-eende = zwbs_item-eende.
+       ENDIF.
+     ENDIF.
+   ENDIF.
+
+   IF zwbs_header-type EQ 2.
+     ls_table-estrt = ls_table-plfaz.
+   ENDIF.
+   IF ls_table-updkz = 'I'.
+     ls_table-zinsert = zwbs_item-zinsert = 'X'.
+   ENDIF.
+
+*Register Changed Records
+   IF zwbs_header-type EQ 2 AND ls_temp <> ls_table.
+     IF ls_table-updkz = 'I'.
+       ls_table-zchange = 'I'.
+     ELSE.
+       IF ls_table-zchange = 'I'.
+* Do Nothing..!
+       ELSE.
+         ls_table-zchange = 'U'.
+       ENDIF.
+     ENDIF.
+   ENDIF.
+
+
+   MODIFY lt_table
+     FROM ls_table
+     INDEX tc_capex-current_line.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  TC_CAPEX_USER_COMMAND  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE tc_capex_user_command INPUT.
+
+*  PERFORM business_area.
+
+   PERFORM clear_fcode.
+
+   ok_code = sy-ucomm.
+
+   CHECK lv_error IS INITIAL.
+*Validate and Update Data
+   PERFORM validate_data.
+   PERFORM clear_fcode.
+
+   CHECK lv_error IS INITIAL.
+*Table Operations
+   PERFORM user_ok_tc USING    'TC_CAPEX'
+                               'LT_TABLE'
+                               'SELECT'
+                      CHANGING ok_code.
+   sy-ucomm = ok_code.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0900  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0900 INPUT.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  GET_AKSTL  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE get_akstl INPUT.
+
+
+   DATA: lv_datum_1 TYPE char8.
+   CLEAR:ls_temp,lv_sline.
+   DATA: lv_counter TYPE numc3.
+
+   GET CURSOR LINE lv_sline.
+   IF tc_capex-top_line + lv_sline - 1 > tc_capex-lines.
+     lv_sline = tc_capex-lines.
+   ELSE.
+     lv_sline = tc_capex-top_line + lv_sline - 1.
+   ENDIF.
+
+*  SELECT DISTINCT a~kostl b~ktext INTO TABLE lt_kostl
+*                         FROM csks AS a INNER JOIN cskt AS b
+*                         ON a~kostl = b~kostl
+*WHERE a~datbi     > sy-datum AND " zwbs_header-plsez AND
+*                               a~bukrs     = zwbs_header-vbukr AND
+*                               a~gsber     = zwbs_header-vgsbr AND
+*                               b~spras     = lc_spras.
+
+
+
+   CONCATENATE sy-datum+0(4) '12' '31' INTO lv_datum_1.
+   lv_datum1 = sy-datum.
+   lv_datum1 = lv_datum_1.
+
+   IF lv_counter IS INITIAL.
+     SELECT kostl
+        FROM csks
+        INTO TABLE @DATA(lt_csks)
+        WHERE datbi GE @lv_datum1
+            AND bukrs = @zwbs_header-vbukr
+            AND gsber = @zwbs_header-vgsbr.
+     lv_counter = 1.
+   ELSE.
+     READ TABLE lt_table INTO DATA(ls_table_akstl) INDEX lv_sline.
+
+     SELECT kostl
+         FROM csks
+         INTO TABLE @lt_csks
+         WHERE datbi GE @lv_datum1
+             AND bukrs = @ls_table_akstl-pbukr "@zwbs_header-vbukr
+             AND gsber = @ls_table_akstl-pgsbr. "@zwbs_item-pgsbr.
+   ENDIF.
+   IF lt_csks IS NOT INITIAL.
+     SELECT kostl, ktext INTO TABLE @DATA(lt_cskt) FROM cskt
+        FOR ALL ENTRIES IN @lt_csks
+       WHERE kostl = @lt_csks-kostl
+        AND  spras = @lc_spras.
+   ENDIF.
+   REFRESH: lt_kostl.
+
+   LOOP AT lt_csks INTO DATA(ls_csks1).
+     READ TABLE lt_cskt INTO DATA(ls_cskt) WITH KEY kostl =
+     ls_csks1-kostl.
+     IF sy-subrc = 0.
+       MOVE ls_csks1-kostl TO ls_kostl-kostl.
+       MOVE ls_cskt-ktext TO ls_kostl-ktext.
+       APPEND ls_kostl TO lt_kostl.
+       CLEAR: ls_kostl.
+     ENDIF.
+
+   ENDLOOP.
+*  DELETE ADJACENT DUPLICATES FROM lt_kostl.
+   IF NOT lt_kostl IS INITIAL.
+     CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+       EXPORTING
+         retfield    = 'KOSTL'
+         dynpprog    = sy-repid
+         dynpnr      = sy-dynnr
+         dynprofield = 'ZWBS_ITEM-AKSTL'
+         value_org   = 'S'
+       TABLES
+         value_tab   = lt_kostl.
+     IF sy-subrc <> 0.
+     ENDIF.
+   ENDIF.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  GET_VGSBR  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE get_vgsbr INPUT.
+
+   TYPES:BEGIN OF ts_vgsbr,
+           gsber TYPE gsber,
+*          ktext TYPE ktext,
+         END OF ts_vgsbr.
+
+   DATA:lt_vgsbr TYPE STANDARD TABLE OF ts_vgsbr,
+        lt_gjahr TYPE rseloption,
+        ls_gjahr TYPE rsdsselopt.
+
+*   IF lv_proj3 IS NOT INITIAL.
+   IF lv_proj_type = 'TC'.
+     ls_gjahr-sign  = 'I'.
+     ls_gjahr-option = 'EQ'.
+     ls_gjahr-low = sy-datum+0(4).
+     ls_gjahr-high = sy-datum+0(4) + 1.
+
+     APPEND ls_gjahr TO lt_gjahr.
+     CLEAR: ls_gjahr.
+
+     SELECT gsber FROM t9f09
+        INTO TABLE lt_vgsbr
+       WHERE gjahr IN lt_gjahr
+        AND  bukrs = zwbs_header-vbukr.
+
+     IF NOT lt_vgsbr IS INITIAL.
+       CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+         EXPORTING
+           retfield    = 'VGSBR'
+           dynpprog    = sy-repid
+           dynpnr      = sy-dynnr
+           dynprofield = 'ZWBS_header-VGSBR'
+           value_org   = 'S'
+         TABLES
+           value_tab   = lt_vgsbr.
+       IF sy-subrc <> 0.
+       ENDIF.
+     ENDIF.
+     REFRESH: lt_gjahr.
+   ELSE.
+     SELECT gsber FROM tgsb
+        INTO TABLE lt_vgsbr.
+
+
+     IF NOT lt_vgsbr IS INITIAL.
+       CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+         EXPORTING
+           retfield    = 'VGSBR'
+           dynpprog    = sy-repid
+           dynpnr      = sy-dynnr
+           dynprofield = 'ZWBS_ITEM-VGSBR'
+           value_org   = 'S'
+         TABLES
+           value_tab   = lt_vgsbr.
+       IF sy-subrc <> 0.
+       ENDIF.
+     ENDIF.
+
+   ENDIF.
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  ASSIGN_BA  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE assign_ba INPUT.
+
+   DATA:ls_userid1    TYPE soudnamei1,
+        ls_user_data1 TYPE soudatai1.
+
+   DATA:lv_prctr_cpx1      TYPE char4,
+        lv_prctr_cpx1_conv TYPE prctr.
+*   IF lv_proj3 IS NOT INITIAL OR gv_capex IS NOT INITIAL.
+   IF lv_proj_type = 'TC' OR gv_capex IS NOT INITIAL.
+     lv_prctr_cpx1 = zwbs_header-vgsbr.
+     SHIFT lv_prctr_cpx1 LEFT DELETING LEADING '0'.
+     CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+       EXPORTING
+         input  = lv_prctr_cpx1
+       IMPORTING
+         output = lv_prctr_cpx1_conv.
+     zwbs_item-prctr    = lv_prctr_cpx1_conv.
+     zwbs_header-prctr  = lv_prctr_cpx1_conv.
+     zwbs_item-pgsbr    = zwbs_header-vgsbr.
+     ls_userid1-sapname =  sy-uname.
+** get the user FUll name.
+     CALL FUNCTION 'SO_USER_READ_API1'
+       EXPORTING
+         user            = ls_userid1
+*        PREPARE_FOR_FOLDER_ACCESS       = ' '
+       IMPORTING
+         user_data       = ls_user_data1
+       EXCEPTIONS
+         user_not_exist  = 1
+         parameter_error = 2
+         x_error         = 3
+         OTHERS          = 4.
+     IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+     ELSE.
+       lv_fullname    = ls_user_data1-fullname.
+     ENDIF.
+   ENDIF.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  GET_IMPRF  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE get_imprf INPUT.
+   TYPES:BEGIN OF ts_imprf,
+           ivpro  TYPE im_profil,
+           invtxt TYPE im_invtxt,
+         END OF ts_imprf.
+
+   DATA:lt_imprf TYPE STANDARD TABLE OF ts_imprf.
+
+   CLEAR:ls_temp,lv_sline.
+
+   GET CURSOR LINE lv_sline.
+   IF tc_capex-top_line + lv_sline - 1 > tc_capex-lines.
+     lv_sline = tc_capex-lines.
+   ELSE.
+     lv_sline = tc_capex-top_line + lv_sline - 1.
+   ENDIF.
+
+   SELECT ivpro
+          invtxt FROM taprft INTO TABLE lt_imprf WHERE
+                                       spras  = lc_spras.
+   IF NOT lt_imprf IS INITIAL.
+     CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+       EXPORTING
+         retfield    = 'IVPRO'
+         dynpprog    = sy-repid
+         dynpnr      = sy-dynnr
+         dynprofield = 'ZWBS_ITEM-IMPRF'
+         value_org   = 'S'
+       TABLES
+         value_tab   = lt_imprf.
+     IF sy-subrc <> 0.
+     ENDIF.
+   ENDIF.
+
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  TC_CAPEX_MARK  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE tc_capex_mark INPUT.
+   DATA: g_tc_capex_wa2 LIKE LINE OF lt_table.
+   IF tc_capex-line_sel_mode = 1
+   AND ls_table-select = 'X'.
+     LOOP AT lt_table INTO g_tc_capex_wa2
+       WHERE select = 'X'.
+       g_tc_capex_wa2-select = ''.
+       MODIFY lt_table
+         FROM g_tc_capex_wa2
+         TRANSPORTING select.
+     ENDLOOP.
+   ENDIF.
+   MODIFY lt_table
+     FROM ls_table
+     INDEX tc_capex-current_line
+     TRANSPORTING select.
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  GET_POSID  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE get_posid INPUT.
+   TYPES:BEGIN OF ts_impr,
+           posid TYPE im_posid,
+           "          posnr TYPE im_posnr,
+           post1 TYPE im_post1, "invtxt TYPE im_invtxt,
+         END OF ts_impr.
+
+   DATA:lt_impr1 TYPE STANDARD TABLE OF ts_impr,
+        ls_impr2 TYPE ts_impr.
+   DATA: lv_prctr_impr TYPE impr-prctr.
+   DATA: lv_counterc TYPE numc3.
+   CLEAR:ls_temp,lv_sline.
+
+   GET CURSOR LINE lv_sline.
+   IF tc_capex-top_line + lv_sline - 1 > tc_capex-lines.
+     lv_sline = tc_capex-lines.
+   ELSE.
+     lv_sline = tc_capex-top_line + lv_sline - 1.
+   ENDIF.
+
+*  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+*    EXPORTING
+*      input  = zwbs_header-prctr
+*    IMPORTING
+*      output = lv_prctr_impr.
+
+   IF zwbs_header-izwek = 'LS'.
+     IF lv_counterc IS INITIAL.
+       SELECT posnr, posid FROM impr
+           INTO TABLE @DATA(lt_impr)
+           WHERE izwek  = @zwbs_header-izwek
+             AND bukrs  = @zwbs_header-vbukr
+             "AND gsber  = @zwbs_header-vgsbr
+             AND usr11  = @space.
+
+       lv_counterc = 1.
+     ELSE.
+
+       READ TABLE lt_table INTO DATA(ls_table_posid) INDEX lv_sline.
+       SELECT posnr, posid FROM impr
+         INTO TABLE @lt_impr
+         WHERE izwek  = @zwbs_header-izwek
+           AND bukrs  = @ls_table_posid-pbukr
+         "AND gsber  = @ls_table_posid-pgsbr
+         AND usr11  = @space.
+
+     ENDIF.
+   ELSE.
+     IF lv_counterc IS INITIAL.
+       SELECT posnr, posid FROM impr
+           INTO TABLE @lt_impr
+           WHERE izwek  = @zwbs_header-izwek
+             AND bukrs  = @zwbs_header-vbukr
+             AND gsber  = @zwbs_header-vgsbr
+             AND usr11  = @space.
+
+       lv_counterc = 1.
+     ELSE.
+
+       READ TABLE lt_table INTO ls_table_posid INDEX lv_sline.
+       SELECT posnr, posid FROM impr
+         INTO TABLE @lt_impr
+         WHERE izwek  = @zwbs_header-izwek
+           AND bukrs  = @ls_table_posid-pbukr
+         AND gsber  = @ls_table_posid-pgsbr
+         AND usr11  = @space.
+
+     ENDIF.
+   ENDIF.
+
+   IF lt_impr IS NOT INITIAL.
+     SELECT posnr,  post1 FROM impu
+       INTO TABLE @DATA(lt_impu)
+       FOR ALL ENTRIES IN @lt_impr
+       WHERE spras = 'E'
+        AND  posnr = @lt_impr-posnr.
+   ENDIF.
+
+   REFRESH: lt_impr1.
+   LOOP AT lt_impr INTO DATA(ls_impr).
+     READ TABLE lt_impu INTO DATA(ls_impu) WITH KEY posnr = ls_impr-posnr
+     .
+     IF sy-subrc = 0.
+       ls_impr2-posid = ls_impr-posid.
+*      ls_impr2-posid = ls_impu-posnr.
+       ls_impr2-post1 = ls_impu-post1.
+       APPEND ls_impr2 TO lt_impr1.
+       CLEAR: ls_impr2.
+     ENDIF.
+   ENDLOOP.
+
+   IF NOT lt_impr IS INITIAL.
+     CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+       EXPORTING
+         retfield    = 'POSID'
+         dynpprog    = sy-repid
+         dynpnr      = sy-dynnr
+         dynprofield = 'LS_TABLE-POSID'
+         value_org   = 'S'
+       TABLES
+         value_tab   = lt_impr1.
+     IF sy-subrc <> 0.
+     ENDIF.
+   ENDIF.
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Form  BUSINESS_AREA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+ FORM business_area .
+   LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<fs_table1>).
+     <fs_table1>-pgsbr = zwbs_item-pgsbr.
+     CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+       EXPORTING
+         input  = zwbs_header-prctr
+       IMPORTING
+         output = zwbs_header-prctr.
+     <fs_table1>-prctr = zwbs_item-prctr.
+   ENDLOOP.
+ ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0810  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+ MODULE user_command_0810 INPUT.
+   CLEAR: sy-ucomm.
+   LEAVE TO SCREEN 0.
+ ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  GET_IZWEK  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
