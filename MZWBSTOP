@@ -1,0 +1,454 @@
+*&--------------------------------------------------------------------*
+*&  Include           MZWBSTOP
+*&--------------------------------------------------------------------*
+
+TYPE-POOLS vrm.
+
+TABLES:zwbs_proj_templ,zwbs_header,zwbs_item,zwbs_material,
+       zwbs_wf_control,zwbs_cf_control,zwbs_status,prps,proj,
+       zwbs_proj_tem_tc.
+
+TYPES:BEGIN OF ts_bunit,
+        b_unit TYPE zzb_unit,
+        bustxt TYPE zzbustxt,
+        bultxt TYPE zzbultxt,
+        div    TYPE zzdiv,  " Changes by AKOTA for EiCR - 729491
+      END OF ts_bunit,
+      BEGIN OF ts_doc_attach,
+        file_desc TYPE so_obj_des,
+        file_ext  TYPE so_fileext,
+        file_len  TYPE i,
+        file_cont TYPE soli_tab,
+      END OF ts_doc_attach,
+      BEGIN OF ts_project,
+        pspid TYPE ps_pspid,
+        post1 TYPE ps_post1,
+      END OF ts_project,
+      BEGIN OF ts_prj_typ,
+        izwek      TYPE izwek,
+        profidproj TYPE profidproj,
+        profi_txt  TYPE profi_txt,
+      END OF ts_prj_typ,
+*Cost Center table
+      BEGIN OF ts_table,
+        select TYPE flag.
+        INCLUDE TYPE zwbs_item.
+TYPES:werks_name    TYPE name1,             "Plant Name
+      box_name      TYPE zbox_name,         "Asset Box Name
+      zrevstr_name  TYPE z_de_revstr_name,  "Revenue Stream Text
+      zarea_name    TYPE z_de_area_name,    "Misc. Categroy Text
+      zscopcha_name TYPE z_de_scopcha_name, "Status of Contract Text
+      zsynergy_type TYPE zsynergy_type,     "Synergy sales Text
+      kunag_name    TYPE ad_name1,          "Sold-to party Name
+      maktx         TYPE maktx,             "Material Description
+      long_text     TYPE flag,              "Long Text Exists
+      updkz         TYPE updkz_d,           "Update Indicator
+      status        TYPE flag,     "Status - Closed/Locked/Deleted
+      stat_curr     TYPE j_txt04,           "WBS Current Status
+      "Insert        TYPE flag,
+      END OF ts_table,
+      BEGIN OF ts_remarks,
+        pspid TYPE ps_pspid,
+        thead TYPE thead,
+        tline LIKE tline OCCURS 0,
+      END OF ts_remarks,
+      BEGIN OF ts_text,
+        text TYPE tdline,
+      END OF ts_text,
+      BEGIN OF ts_user,
+        bname      TYPE xubname,
+        name_textc TYPE ad_namtext,
+      END OF ts_user,
+      " Begin of Changes by AKOTA for EiCR 787082
+      BEGIN OF ts_messg,
+        msg_text(256) TYPE c,
+      END OF ts_messg,
+      " End of Changes by AKOTA for EiCR 787082
+      BEGIN OF ts_type_text,
+        ddtext     TYPE val_text,
+        domvalue_l TYPE domvalue_l,
+      END OF ts_type_text.
+
+DATA:lt_wbs_header       TYPE STANDARD TABLE OF zwbs_header,
+     lt_wbs_item         TYPE STANDARD TABLE OF zwbs_item,
+     lt_wbs_budget       TYPE STANDARD TABLE OF zwbs_item,
+     lt_wbs_item_db      TYPE STANDARD TABLE OF zwbs_item,
+     lt_zwbs_status      TYPE STANDARD TABLE OF zwbs_status,
+     lt_bunit            TYPE STANDARD TABLE OF ts_bunit,
+     lt_project          TYPE STANDARD TABLE OF ts_project,
+     lt_proj             TYPE STANDARD TABLE OF proj,
+     lt_prps             TYPE STANDARD TABLE OF prps,
+     lt_prte             TYPE STANDARD TABLE OF prte, "LCHENNA CR 797199
+     " Changes by AKOTA for EiCR 787082
+     lt_messg            TYPE STANDARD TABLE OF ts_messg,
+     lt_table            TYPE STANDARD TABLE OF ts_table,
+     lt_table_bp         TYPE STANDARD TABLE OF zwbs_item,
+     lt_table_dl         TYPE STANDARD TABLE OF ts_table,
+     lt_table_init       TYPE STANDARD TABLE OF ts_table,
+     lt_remarks          TYPE STANDARD TABLE OF ts_remarks,
+     lt_user             TYPE STANDARD TABLE OF ts_user,
+     lt_type_text        TYPE STANDARD TABLE OF ts_type_text,
+     lt_t9m49            TYPE STANDARD TABLE OF t9m49,
+     lt_fcode            TYPE STANDARD TABLE OF sy-ucomm,
+     lt_return           TYPE STANDARD TABLE OF bapiret2,
+     lt_treturn          TYPE STANDARD TABLE OF bapiret2,
+     ls_return           TYPE bapiret2,
+     lt_list_bunit       TYPE vrm_values,
+     lt_ip               TYPE vrm_values,
+     ls_ip               LIKE LINE OF lt_ip,
+     lt_proj_list        TYPE vrm_values,
+     ls_list_bunit       LIKE LINE OF lt_list_bunit,
+     ls_list_bunit1      LIKE LINE OF lt_list_bunit,
+     lt_list_bunit_tc    TYPE STANDARD TABLE OF ts_prj_typ, "vrm_values,
+     lt_list             TYPE vrm_values,
+     ls_head             TYPE zwbs_header,
+     ls_head_db          TYPE zwbs_header,
+     ls_head_init        TYPE zwbs_header,
+     ls_item             TYPE zwbs_item,
+     ls_item_db          TYPE zwbs_item,
+     ls_wf_control       TYPE zwbs_wf_control,
+     ls_cf_control       TYPE zwbs_cf_control,
+     ls_zwbs_status      TYPE zwbs_status,
+     ls_proj_templ       TYPE zwbs_proj_templ,
+     ls_list             LIKE LINE OF lt_list,
+     ls_project          TYPE ts_project,
+     ls_table            TYPE ts_table,
+     ls_table_bp         TYPE zwbs_item,
+     ls_temp             TYPE ts_table,
+     ls_default          TYPE ts_table,
+     ls_table_init       TYPE ts_table,
+     ls_remarks          TYPE ts_remarks,
+     ls_type_text        TYPE ts_type_text,
+     ls_user             TYPE ts_user,
+     ls_proj             TYPE proj,
+     ls_prps             TYPE prps,
+     ls_prte             TYPE prte, "LCHENNA CR 797199
+     ls_t9m49            TYPE t9m49,
+     lv_sline            TYPE syst_stepl,
+     lv_id               TYPE vrm_id,
+     lv_error            TYPE flag,
+     lv_cerror           TYPE flag,
+     lv_verror           TYPE flag,
+     lv_raerror          TYPE flag,
+     lv_herror           TYPE flag,
+     lv_cflag            TYPE flag,
+     lv_ucflag           TYPE flag,
+     lv_dflag            TYPE flag,
+     lv_oflag            TYPE flag,  "Open Request Exists Already
+     lv_sflag            TYPE flag,
+     lv_rflag            TYPE flag,
+     lv_wf_flag          TYPE flag,
+     lv_ag_flag          TYPE flag,
+     lv_grp_flag         TYPE flag,
+     lv_agrp_flag        TYPE flag,
+     lv_rakey_flag       TYPE flag,
+     lv_wbs_rakey_flag   TYPE flag,
+     lv_grp_allowed      TYPE flag,
+     lv_wf_pos_flag      TYPE flag,
+     lv_pcba_flag        TYPE flag,
+     lv_pcasset_flag     TYPE flag,
+     lv_level_flag       TYPE flag,
+     lv_init_run         TYPE flag,
+     lv_cf_control       TYPE flag,
+     lv_cf_control_capex TYPE flag,
+     lv_wbs_app_call     TYPE flag,
+     lv_abgsl            TYPE zvalue1,
+     lv_cond             TYPE string,
+     lv_cvalue           TYPE string,
+     lv_cursor           TYPE feldname,
+     lv_text             TYPE string,
+     lv_status           TYPE string,
+     lv_no_budget        TYPE flag,
+     lv_zibpflag         TYPE prps-zibpflag,
+     " Changes by AKOTA EiCR 729491
+     lv_wf_status        TYPE char1,
+     lv_tline            TYPE i,
+     lv_url              TYPE char512,
+     lv_answer           TYPE char1,
+     lv_req_type         TYPE ktext,
+     lv_stat             TYPE zzstatustext,
+     lv_fname            TYPE ad_namefir,
+     lv_lname            TYPE ad_namelas,
+     lv_fullname         TYPE ad_namtext,
+     lv_department       TYPE ad_dprtmnt,
+     lv_location         TYPE ad_city1,
+     lv_prctr            TYPE char4,
+     lv_objnr            TYPE j_objnr,
+     lv_loevm            TYPE kna1-loevm,
+     ""* Changes by AKOTA for CR 668561
+     lv_flag             TYPE flag,
+     ""* Changes by AKOTA for CR 668561
+     lv_messg            TYPE string,
+     ""* Changes by AKOTA for CR 668561
+     repid               LIKE sy-repid,
+     gv_capex            TYPE flag,
+     lv_akstl            TYPE zwbs_item-akstl.
+
+DATA:lt_lines   TYPE STANDARD TABLE OF tline,
+     ls_lines   TYPE tline,
+     ls_header  TYPE thead,
+     ls_result  TYPE itcer,
+     ls_stxh    TYPE stxh,
+     lv_tdname  TYPE tdobname,
+     lv_lines   TYPE i,
+     lv_rlines  TYPE i,
+     lv_rrlines TYPE i,
+     lv_mode    TYPE flag,
+     lv_rmode   TYPE i.
+
+DATA:lo_proj_tree    TYPE REF TO cl_gui_column_tree,
+     lo_html_control TYPE REF TO cl_gui_html_viewer,
+     lo_cont_proj    TYPE REF TO cl_gui_custom_container,
+     lo_cont_html    TYPE REF TO cl_gui_custom_container,
+     lv_bukrs        TYPE bukrs,
+     lv_bunit        TYPE zzb_unit,
+     lv_profid       TYPE profidproj,
+     lv_ir           TYPE char20, "izwek,
+     lv_vbukr        TYPE bukrs, " Changes by AKOTA for EiCR-766523
+     lv_werks        TYPE werks_d,
+     lv_lonzacode    TYPE z_de_prodcod,
+     lv_template     TYPE ps_pspid,
+     lv_project      TYPE ps_pspid,
+     lv_project_new  TYPE ps_pspid,
+     lv_project_int  TYPE ps_pspid,
+     lv_project_st   TYPE ps_pspid,
+     lv_project_str  TYPE string,
+     lv_offset       TYPE i,
+     lv_rb1          TYPE char1 VALUE 'X',
+     lv_rb2          TYPE char1,
+     lv_rb3          TYPE char1,
+     lv_rb4          TYPE char1,
+     lv_rb5          TYPE char1,
+     lv_proj_create  TYPE char1,
+     lv_wbs_create   TYPE char1,
+     lv_wbs_change   TYPE char1,
+*     lv_proj1        TYPE char1 VALUE 'X',
+*     lv_proj2        TYPE char1,
+*     lv_proj3        TYPE char1,
+     lv_proj3_type   TYPE char3,
+     lv_proj_type    TYPE zzproj_type VALUE 'CZ',
+     lv_type         TYPE zzwbs_type,
+     ok_code         TYPE syst_ucomm,
+     gv_posnr        TYPE impr-posnr.
+
+DATA:lt_items      TYPE cnpb_h_t_rsthie,
+     ls_rcwbs      TYPE rcwbs,
+     est_proj_mand TYPE cnpb_h_st_proj_mandatory_flds,
+     est_prps_mand TYPE cnpb_h_st_prps_mandatory_flds,
+     lt_prps_mand  TYPE STANDARD TABLE OF cnpb_h_prps_mandatory_fields.
+
+DATA:lt_treeitm_u            TYPE cnpb_h_t_treeitm_upd,
+     lt_treev_node_u         TYPE treev_upno,
+     ls_hierarchy_header     TYPE treev_hhdr,
+     gt_treeitm              TYPE cnpb_h_t_treeitm,
+     gt_treev_node           TYPE cnpb_h_t_treev_node,
+     gs_objects_in_tree      TYPE cnpb_h_objects_in_hierarchy,
+     ls_objects_in_hierarchy TYPE cnpb_h_objects_in_hierarchy,
+     lv_enqueue              TYPE char1,
+     lv_drag_drop_handle     TYPE cnpb_h_drag_drop_handle,
+     lv_hier_col_is_key      TYPE c.
+
+DATA:lo_editor   TYPE REF TO c_textedit_control,
+     lo_clog     TYPE REF TO c_textedit_control,
+     lo_alog     TYPE REF TO c_textedit_control,
+     lo_rtext    TYPE REF TO c_textedit_control,
+     lt_text     TYPE STANDARD TABLE OF ts_text,
+     lt_rtext    TYPE STANDARD TABLE OF ts_text,
+     gt_log      TYPE STANDARD TABLE OF ts_text,
+     gt_rtext    TYPE STANDARD TABLE OF ts_text,
+     lt_log      TYPE STANDARD TABLE OF ts_text,
+     lt_tlog     TYPE STANDARD TABLE OF ts_text,
+     gt_appr_log TYPE STANDARD TABLE OF ts_text,
+     ls_text     TYPE ts_text,
+     ls_log      TYPE ts_text,
+     gs_appr_log TYPE ts_text.
+
+DATA:ls_project_new     TYPE bapi_bus2001_new,
+     ls_project_def     TYPE bapi_bus2001_chg,
+     ls_project_def_upd TYPE bapi_bus2001_upd,
+     lt_methods         TYPE STANDARD TABLE OF bapi_method_project,
+     ls_methods         TYPE bapi_method_project,
+     lt_wbs_element     TYPE STANDARD TABLE OF bapi_bus2054_chg,
+     lt_wbs_celement    TYPE STANDARD TABLE OF bapi_bus2054_new,
+     lt_wbs_element_upd TYPE STANDARD TABLE OF bapi_bus2054_upd,
+     lt_extensionin     TYPE STANDARD TABLE OF bapiparex,
+     lt_cextensionin    TYPE STANDARD TABLE OF bapiparex,
+     lt_wbs_elements    TYPE STANDARD TABLE OF bapi_wbs_elements,
+     lt_wbs_status      TYPE STANDARD TABLE OF bapi_wbs_system_status,
+     ls_wbs_celement    TYPE bapi_bus2054_new,
+     ls_wbs_element     TYPE bapi_bus2054_chg,
+     ls_wbs_element_upd TYPE bapi_bus2054_upd,
+     ls_extensionin     TYPE bapiparex.
+
+*Set WBS Status for Close/Unclose
+DATA:lt_wbs_stat TYPE STANDARD TABLE OF bapi_wbs_mnt_system_status,
+     lt_ret      TYPE STANDARD TABLE OF bapiret2,
+     ls_wbs_stat TYPE bapi_wbs_mnt_system_status,
+     ls_ret      TYPE bapireturn1.
+
+*ALV Declarations
+TYPE-POOLS slis.
+
+DATA:lt_fieldcat TYPE slis_t_fieldcat_alv,
+     ls_layout   TYPE slis_layout_alv.
+
+DATA:BEGIN OF lt_output OCCURS 0,
+       request        LIKE zwbs_header-request,
+       pspid          LIKE zwbs_header-pspid,
+       post1          LIKE zwbs_header-post1,
+       proj_type      LIKE zwbs_header-proj_type,
+       type           LIKE zwbs_header-type,
+       zmaint_sys_h   LIKE zwbs_header-zmaint_sys,
+       type_text      LIKE tkt05-ktext,       "Request Type
+       status         LIKE zwbs_header-status,
+       status_text    LIKE t9m49-text,
+       izwek          LIKE zwbs_header-izwek,
+
+       created_by     LIKE zwbs_header-created_by,
+       created_name   LIKE adrp-name_text,    "Requester Name
+       created_on     LIKE zwbs_header-created_on,
+       complete_by    LIKE zkostk-created_by, "Completed by
+       complete_name  LIKE adrp-name_text,    "Completed by Name
+       complete_on    LIKE qmel-qmdab,        "Completion date
+       turntime       LIKE ps2012-anzhl,      "Turnaround
+
+       stufe          LIKE zwbs_item-stufe,
+       pspid_wbs      LIKE zwbs_item-pspid_new,
+       post1_wbs      LIKE zwbs_item-post1,
+       pbukr          LIKE zwbs_item-pbukr,
+       pgsbr          LIKE zwbs_item-pgsbr,
+       prctr          LIKE zwbs_item-prctr,
+
+       zprj_code_pv   LIKE zwbs_header-zprj_code_pv,
+       zstate_code_pv LIKE zwbs_item-zstate_code_pv,
+       zmaint_sys     LIKE zwbs_item-zmaint_sys,
+     END OF lt_output.
+*Workflow Details
+DATA:lt_sww_wi2obj   TYPE STANDARD TABLE OF sww_wi2obj,
+     lt_swpsteplog   TYPE STANDARD TABLE OF swpsteplog,
+     lt_swwwihead    TYPE STANDARD TABLE OF swwwihead,
+     lt_sww_wi2obj_c TYPE STANDARD TABLE OF sww_wi2obj,
+     lt_swpsteplog_c TYPE STANDARD TABLE OF swpsteplog,
+     lt_swwwihead_c  TYPE STANDARD TABLE OF swwwihead,
+     ls_output       LIKE LINE OF lt_output,
+     ls_sww_wi2obj   TYPE sww_wi2obj,
+     ls_swpsteplog   TYPE swpsteplog,
+     ls_swwwihead    TYPE swwwihead,
+     lv_sdate        TYPE datum,
+     lv_stime        TYPE uzeit,
+     lv_cdate        TYPE datum,
+     lv_ctime        TYPE uzeit,
+     lv_timestamp    TYPE tzntstmps,
+     lv_timestamps   TYPE string,
+     lv_seconds      TYPE sytabix,
+     lv_index1       TYPE sytabix,
+     lv_index2       TYPE sytabix,
+     lv_maint_sys    TYPE zmaint_sys.
+
+FIELD-SYMBOLS:<fs_table>   TYPE ts_table,
+              <fs_remarks> TYPE ts_remarks.
+
+*GOS Services
+DATA:lo_gos     TYPE REF TO cl_gos_manager,
+     lv_rw_mode TYPE sgs_rwmod.
+
+CONSTANTS:
+  lc_hierarchy_short_text    TYPE tv_itmname VALUE '          1',
+  lc_hierarchy_technical_key TYPE tv_itmname VALUE 'TECH_KEY',
+  lc_hier_col_txt            TYPE cnpb_hierarchy_column VALUE '1',
+  lc_hier_col_key            TYPE cnpb_hierarchy_column VALUE '2',
+  lc_false                   TYPE i         VALUE 0,
+  lc_true                    TYPE i         VALUE 1,
+  lc_object                  TYPE tdobject  VALUE 'Z_WBS_REQ',
+  lc_rem_id                  TYPE tdid      VALUE 'ZREM',
+  lc_com_id                  TYPE tdid      VALUE 'ZCOM',
+  lc_log_id                  TYPE tdid      VALUE 'ZLOG',
+  lc_spras                   TYPE spras     VALUE 'E',
+  lc_submit                  TYPE swo_event VALUE 'SUBMITTED'.
+
+*&SPWIZARD: DECLARATION OF TABLECONTROL 'TC_WBS' ITSELF
+CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 0500.
+
+*&SPWIZARD: LINES OF TABLECONTROL 'TC_WBS'
+DATA:     g_tc_wbs_lines  LIKE sy-loopc.
+
+DATA: gv_at_capex_approver_step   TYPE swp_agent,
+      gv_capex_approver_step      TYPE flag,
+      gv_at_pm_approver_step      TYPE swp_agent,
+      gv_pm_approver_step         TYPE flag,
+      gv_at_co_approver_step      TYPE swp_agent,
+      gv_co_approver_step         TYPE flag,
+      gv_at_r2r_acc_approver_step TYPE swp_agent,
+      gv_at_r2r_sr_approver_step  TYPE swp_agent,
+      gv_r2r_approver_step        TYPE flag,
+      gv_approver_step            TYPE flag,
+      gv_auto_approver_step       TYPE flag,
+      gv_auto_approver_step_error TYPE flag,
+* Begin of change by LCHENNA for CR 797199
+      gv_err_mail_flag            TYPE flag,
+* End of changes by LCHENNA for CR 797199
+      gv_pm_app_response          TYPE flag,
+      gv_capex_app_response       TYPE flag,
+      gv_co_app_response          TYPE flag,
+      gv_mdm_app_response         TYPE flag,
+      gv_r2r_acc_app_response     TYPE flag,
+      gv_r2r_sr_app_response      TYPE flag.
+
+* data for call of transaction Z_WF_LIST
+DATA: lt_rspar       TYPE STANDARD TABLE OF rsparams,
+      ls_rspar       TYPE rsparams,
+      lc_memory_id_5 TYPE char20 VALUE 'ZCJ04_SELECTION'.
+
+DATA: gv_screen TYPE sydynnr.
+
+*&SPWIZARD: TYPE FOR THE DATA OF TABLECONTROL 'TC_CAPEX'
+TYPES: BEGIN OF t_tc_capex,
+         select    LIKE ls_table-select,
+         pspid_new LIKE zwbs_item-pspid_new,
+         stufe     LIKE zwbs_item-stufe,
+         post1     LIKE zwbs_item-post1,
+         akstl     LIKE zwbs_item-akstl,
+         akokr     LIKE zwbs_item-akokr,
+         werks     LIKE zwbs_item-werks,
+         budget    LIKE zwbs_item-budget,
+         belkz     LIKE zwbs_item-belkz,
+         plakz     LIKE zwbs_item-plakz,
+         plfaz     LIKE zwbs_item-plfaz,
+         plsez     LIKE zwbs_item-plsez,
+         astna     LIKE zwbs_item-astna,
+         verna     LIKE zwbs_item-verna,
+         imprf     LIKE zwbs_item-imprf,
+       END OF t_tc_capex.
+
+*&SPWIZARD: INTERNAL TABLE FOR TABLECONTROL 'TC_CAPEX'
+DATA:     g_tc_capex_itab TYPE t_tc_capex OCCURS 0,
+          g_tc_capex_wa   TYPE t_tc_capex. "work area
+DATA:     g_tc_capex_copied.           "copy flag
+
+*&SPWIZARD: DECLARATION OF TABLECONTROL 'TC_CAPEX' ITSELF
+CONTROLS: tc_capex TYPE TABLEVIEW USING SCREEN 0900.
+
+DATA:     g_tc_capex_lines  LIKE sy-loopc.
+
+
+DATA:lv_vernr        TYPE xubname,
+     lv_astnr        TYPE xubname,
+     lv_vgsbr        TYPE zwbs_header-vgsbr,
+     lv_plsez        TYPE zwbs_header-plsez,
+     lv_end_date     TYPE ps_plsez,
+     gv_error_email  TYPE flag,
+     lv_insr_flag    TYPE flag,
+     lv_insr_flag_up TYPE flag.
+
+TYPES:BEGIN OF ts_kostl,
+        kostl TYPE kostl,
+        ktext TYPE ktext,
+      END OF ts_kostl.
+
+DATA:lt_kostl TYPE STANDARD TABLE OF ts_kostl.
+DATA:ls_kostl TYPE  ts_kostl.
+
+DATA: lv_msg_clsd_wbs TYPE char80.
+DATA: lv_msg_miss_wbs TYPE char80.
+DATA: lv_msg_diff_wbs TYPE char80.
+DATA: lv_msg_curr TYPE char80.
