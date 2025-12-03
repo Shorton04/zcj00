@@ -1,0 +1,2045 @@
+*&---------------------------------------------------------------------*
+*&  Include           MZWBSO01
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+
+  PERFORM exlcude_fcode.
+
+  SET PF-STATUS '100' EXCLUDING lt_fcode.
+  SET TITLEBAR '100' WITH text-001.
+
+  PERFORM screen_0100.
+
+  PERFORM get_project_type_list.
+
+ENDMODULE.                 " STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0200  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0200 OUTPUT.
+
+  DATA: l_html              TYPE STANDARD TABLE OF w3html
+                            WITH DEFAULT KEY INITIAL SIZE 0
+                            WITH HEADER LINE,
+        html_line           LIKE LINE OF l_html,
+        lt_html_lines       TYPE STANDARD TABLE OF tline,
+        ls_html_lines       TYPE tline,
+        g_current_url(1024),
+        g_url(1024).
+
+  IF lo_html_control IS INITIAL.
+    CREATE OBJECT lo_cont_html
+      EXPORTING
+        container_name = 'HTML_CONTROL'.
+
+    CREATE OBJECT lo_html_control
+      EXPORTING
+        parent = lo_cont_html.
+    IF sy-subrc NE 0.
+*
+    ENDIF.
+
+    FREE l_html.
+    CLEAR html_line.
+
+    CALL FUNCTION 'READ_TEXT'
+      EXPORTING
+        client                  = sy-mandt
+        id                      = 'ST'
+        language                = sy-langu
+        name                    = 'ZWBS_ADD_INFO'
+        object                  = 'TEXT'
+*      IMPORTING
+*       header                  = ls_header
+      TABLES
+        lines                   = lt_html_lines
+      EXCEPTIONS
+        id                      = 1
+        language                = 2
+        name                    = 3
+        not_found               = 4
+        object                  = 5
+        reference_check         = 6
+        wrong_access_to_archive = 7
+        OTHERS                  = 8.
+    IF sy-subrc <> 0.
+    ENDIF.
+
+    LOOP AT lt_html_lines INTO ls_html_lines.
+      l_html = ls_html_lines-tdline.
+      APPEND l_html.
+    ENDLOOP.
+*url leihen
+    CALL METHOD lo_html_control->load_html_document
+      EXPORTING
+        document_id  = 'PMC_EXAMPLE1.HTML'
+      IMPORTING
+        assigned_url = g_current_url.
+    IF sy-subrc <> 0.
+** MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*            WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+
+    g_url = g_current_url.
+
+*daten_an_url_laden
+*unsere programmlokale interne tabelle vom typ w3html
+*enthaelt nun den html code der nun an die geliehene url aus dem
+*web repository geladen wird ( merge )
+    CALL METHOD lo_html_control->load_data
+      EXPORTING
+        url          = g_url
+        type         = 'text'
+        subtype      = 'html'
+*       SIZE         = 0
+      IMPORTING
+        assigned_url = g_current_url
+      CHANGING
+        data_table   = l_html[].
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*            WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+*am ende werden die daten auf dem screen prasentiert und stehen zur
+*eingabe bereit
+    g_url = g_current_url.
+*daten_auf-screen_zeigen
+    CALL METHOD lo_html_control->show_url
+      EXPORTING
+        url = g_url.
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*            WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+  ENDIF.
+
+ENDMODULE.                 " STATUS_0200  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0300  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0300 OUTPUT.
+*  SET PF-STATUS 'xxxxxxxx'.
+*  SET TITLEBAR 'xxx'.
+
+  PERFORM screen_0300.
+
+  PERFORM get_investment_reason.
+
+  PERFORM get_bunit_list.
+
+  PERFORM get_tree_list.
+
+  PERFORM show_tree_structure.
+
+ENDMODULE.                 " STATUS_0300  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0400  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0400 OUTPUT.
+  IMPORT gv_capex = gv_capex FROM MEMORY ID 'ZWBS_CAPEX'.
+  IF ls_head-proj_type = 'TC'.
+    gv_capex = 'X'.
+  ENDIF.
+  PERFORM exlcude_fcode.
+  PERFORM screen_0400.
+  SET PF-STATUS '400' EXCLUDING lt_fcode.
+
+*Check for any errors on Header
+  IF NOT lv_herror IS INITIAL.
+    SET CURSOR FIELD lv_cursor.
+    IF lv_cursor = 'ZWBS_HEADER-VGSBR'.
+      MESSAGE s368(00) WITH 'Mismatch in Business Area &'
+      'Profit Center'
+                       DISPLAY LIKE 'W'.
+    ELSEIF NOT lv_text IS INITIAL.
+      MESSAGE s368(00) WITH lv_text 'is a required field'
+                       DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+*Clear User Commands
+  DATA(zucomm) = sy-ucomm.
+  CLEAR:ok_code,sy-ucomm.
+
+ENDMODULE.                 " STATUS_0400  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  START_GOS  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE start_gos OUTPUT.
+
+* -- start GOS
+  IF lo_gos IS NOT BOUND.
+    IF NOT lv_dflag IS INITIAL OR
+       NOT lv_sflag IS INITIAL OR
+       sy-tcode = 'ZCJ03'.
+      lv_rw_mode = 'D'.
+    ELSE.
+      lv_rw_mode = 'E'.
+    ENDIF.
+*    IF lv_proj3 IS NOT INITIAL.
+*
+*    ENDIF.
+    PERFORM start_gos USING    zwbs_header-request
+                               lv_rw_mode
+                      CHANGING lo_gos.
+  ENDIF.
+
+ENDMODULE.                 " START_GOS  OUTPUT
+
+*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: UPDATE LINES FOR EQUIVALENT SCROLLBAR
+MODULE tc_wbs_change_tc_attr OUTPUT.
+
+  FIELD-SYMBOLS <fs_cols> TYPE scxtab_column.
+
+  DESCRIBE TABLE lt_table LINES tc_wbs-lines.
+
+*Check for any errors
+  IF NOT lv_error IS INITIAL AND lv_herror IS INITIAL.
+    lv_tline = lv_tline - tc_wbs-top_line + 1.
+    ""**Changes by AKOTA for CR 668561
+    SET CURSOR FIELD lv_cursor LINE lv_tline.
+    IF NOT lv_verror IS INITIAL.
+      CASE lv_cursor.
+        WHEN 'ZWBS_ITEM-PSPID'.
+          MESSAGE s368(00) WITH 'The project number is wrong, '
+                                'please add the correct project no'
+                           DISPLAY LIKE 'E'.
+        WHEN 'ZWBS_ITEM-PGSBR'.
+          MESSAGE s368(00) WITH 'Mismatch in Business Area &'
+                                'Profit Center'
+                           DISPLAY LIKE 'E'.
+        WHEN 'ZWBS_ITEM-POST1'.
+          MESSAGE s368(00) WITH 'Mismatch in Project Description &'
+                                'WBS Description'
+                           DISPLAY LIKE 'E'.
+        WHEN 'ZWBS_ITEM-ABGSL'.
+          IF lv_raerror IS INITIAL.
+            MESSAGE s022(zk) DISPLAY LIKE 'E'.
+          ELSE.
+            MESSAGE s368(00) WITH 'For IC Case Please maintain ZRA-24 '
+                                  'in the Upper level'
+                             DISPLAY LIKE 'E'.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-ZASSET'.
+          MESSAGE s368(00) WITH 'Asset Box is Deleted'
+                           DISPLAY LIKE 'E'.
+        WHEN 'ZWBS_ITEM-PRCTR'.
+          IF NOT lv_pcasset_flag IS INITIAL.
+            MESSAGE s368(00) WITH 'Asset Box Profit Center not coherent'
+                                  'with WBS Profit Center'
+                             DISPLAY LIKE 'E'.
+          ELSE.
+            MESSAGE s368(00) WITH 'Profit Center of WBS is not valid'
+                                  'for the assigned Company Code'
+                             DISPLAY LIKE 'E'.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-GRPKZ'.
+          CASE lv_grp_flag.
+            WHEN 1.
+              MESSAGE s368(00) WITH 'Maintain Grouping indicator'
+                                    'on atleast one WBS element'
+                               DISPLAY LIKE 'E'.
+            WHEN 2 OR 3.
+              MESSAGE s368(00) WITH 'Maintain Grouping indicator 1'
+                                    'on only one WBS element'
+                               DISPLAY LIKE 'E'.
+            WHEN 4.
+              MESSAGE s021(zk) DISPLAY LIKE 'E'.
+            WHEN 5.
+              MESSAGE s368(00) WITH 'For IC Case the grouping flag is expected'
+                                    'only on below level'
+                               DISPLAY LIKE 'E'.
+            WHEN OTHERS.
+          ENDCASE.
+          CASE lv_agrp_flag.
+            WHEN 1.
+              MESSAGE s368(00) WITH 'Please select Template which has Automatic'
+                                    'grouping flagged in order to use grouping 1'
+                               DISPLAY LIKE 'E'.
+            WHEN 2 OR 3.
+              MESSAGE s368(00) WITH 'Maintain Grouping indicator 1 Only'
+                               DISPLAY LIKE 'E'.
+            WHEN OTHERS.
+          ENDCASE.
+        WHEN OTHERS.
+          MESSAGE s368(00) WITH text-007 lv_text
+                           DISPLAY LIKE 'E'.
+      ENDCASE.
+    ELSEIF NOT lv_wf_pos_flag IS INITIAL.
+      MESSAGE s398(00) WITH 'Workflow not maintained for this Company Code'
+                            'and Business Area,'
+                            'please get in contact with Master Data Team'
+                       DISPLAY LIKE 'E'.
+    ELSEIF NOT lv_pcba_flag IS INITIAL.
+      CASE lv_cursor.
+*        WHEN 'ZWBS_ITEM-PGSBR'.
+*          MESSAGE s368(00) WITH 'Business Area entered not coherent' 'with your Plant'
+*                           DISPLAY LIKE 'E'.
+        WHEN 'ZWBS_ITEM-PRCTR'.
+          MESSAGE s368(00) WITH "'Profit Center not allowed' 'for the Company Code'
+                                'Profit Center of WBS is not valid' 'for the assigned Company Code'
+                           DISPLAY LIKE 'E'.
+      ENDCASE.
+    ELSEIF NOT lv_level_flag IS INITIAL.
+      MESSAGE s368(00) WITH 'Missing Parent element for WBS' ls_table-pspid
+                       DISPLAY LIKE 'E'.
+    ELSEIF NOT lv_ag_flag IS INITIAL AND NOT lv_cerror IS INITIAL.
+    ELSEIF NOT lv_text IS INITIAL.
+      MESSAGE s368(00) WITH lv_text 'is a required field'
+                       DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+  CLEAR:lv_error,lv_verror,lv_herror,lv_grp_flag,lv_wf_pos_flag,
+        lv_pcba_flag,lv_cerror,lv_raerror.
+
+*Hide Columns for Regular Process
+  ASSIGN tc_wbs-cols TO FIELD-SYMBOL(<lt_cols>).
+  CASE zwbs_header-type.
+    WHEN 1.
+*Create Case
+      LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                        WHERE screen-name = 'ZWBS_ITEM-ZCHANGE'  OR
+                              screen-name = 'ZWBS_ITEM-ZCLOSE'   OR
+                              screen-name = 'ZWBS_ITEM-ZUNCLOSE' OR
+                              screen-name = 'LS_TABLE-STAT_CURR' OR
+                              screen-name = 'ZWBS_ITEM-ZSTATUS'  OR
+                              screen-name = 'ZWBS_ITEM-ACCEPT'   OR
+                              screen-name = 'LS_TABLE-LONG_TEXT' OR
+                              screen-name = 'COMMENTS_TEXT'.
+        <fs_cols>-invisible = 1.
+      ENDLOOP.
+    WHEN 2.
+*Change Case
+      LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                        WHERE screen-name = 'ZWBS_ITEM-ZCLOSE'   OR
+                              screen-name = 'ZWBS_ITEM-ZUNCLOSE' OR
+                              screen-name = 'LS_TABLE-STAT_CURR' OR
+                              screen-name = 'ZWBS_ITEM-ZSTATUS'  OR
+                              screen-name = 'ZWBS_ITEM-ACCEPT'   OR
+                              screen-name = 'LS_TABLE-LONG_TEXT' OR
+                              screen-name = 'COMMENTS_TEXT' OR
+*    Begin of Changes by LCHENNA for CR 797199
+                              screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+        IF <fs_cols>-screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+          <fs_cols>-screen-input = 0.
+* End of changes by LCHENNA for CR 797199
+        ELSE.
+          <fs_cols>-invisible = 1.
+        ENDIF.
+      ENDLOOP.
+    WHEN 3.
+*Close Case
+      LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                        WHERE screen-name = 'ZWBS_ITEM-ZCHANGE'  OR
+                              screen-name = 'ZWBS_ITEM-ZUNCLOSE' OR
+                              screen-name = 'ZWBS_ITEM-ACCEPT'   OR
+                              screen-name = 'LS_TABLE-LONG_TEXT' OR
+                              screen-name = 'COMMENTS_TEXT' OR
+*        Begin of changes by LCHENNA for CR 797199.
+                              screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+*        End of changes by LCHENNA for CR 797199.
+        IF <fs_cols>-screen-name = 'ZWBS_ITEM-ACCEPT'.
+          IF zwbs_header-request IS INITIAL.
+            <fs_cols>-invisible = 1.
+          ENDIF.
+* Begin of changes by LCHENNA for CR 797199
+        ELSEIF <fs_cols>-screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+          <fs_cols>-screen-input = 0.
+* End of changes by LCHENNA for CR 797199
+        ELSE.
+          <fs_cols>-invisible = 1.
+        ENDIF.
+      ENDLOOP.
+    WHEN 4.
+*Unclose Case
+      LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                        WHERE screen-name = 'ZWBS_ITEM-ZCHANGE'  OR
+                              screen-name = 'ZWBS_ITEM-ZCLOSE'   OR
+                              screen-name = 'ZWBS_ITEM-ACCEPT'   OR
+                              screen-name = 'LS_TABLE-LONG_TEXT' OR
+                              screen-name = 'COMMENTS_TEXT' OR
+                              screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+        IF <fs_cols>-screen-name = 'ZWBS_ITEM-ACCEPT'.
+          IF zwbs_header-request IS INITIAL.
+            <fs_cols>-invisible = 1.
+          ENDIF.
+* Begin of changes by LCHENNA for CR 797199
+        ELSEIF <fs_cols>-screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+          <fs_cols>-screen-input = 0.
+* End of changes by LCHENNA for CR 797199
+        ELSE.
+          <fs_cols>-invisible = 1.
+        ENDIF.
+      ENDLOOP.
+  ENDCASE.
+
+*DO NOT Display PlanView fields for SAP Requests
+  IF zwbs_header-zprj_code_pv IS INITIAL.
+    LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                      WHERE screen-name = 'ZWBS_ITEM-ZSTATE_CODE_PV' OR
+                            screen-name = 'ZWBS_ITEM-ZMAINT_SYS'."     OR
+*                            screen-name = 'ZWBS_ITEM-ZIBP_RES_PROJ'.
+      <fs_cols>-invisible = 1.
+    ENDLOOP.
+  ENDIF.
+
+*DO NOT Display GROUPING field based on Template for SAP Requests
+  IF ls_proj_templ-grouping IS INITIAL AND lv_grp_allowed IS INITIAL.
+    LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                      WHERE screen-name = 'ZWBS_ITEM-GRPKZ'.
+      <fs_cols>-invisible = 1.
+    ENDLOOP.
+  ENDIF.
+  UNASSIGN <lt_cols>.
+
+ENDMODULE.
+
+*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: GET LINES OF TABLECONTROL
+MODULE tc_wbs_get_lines OUTPUT.
+  g_tc_wbs_lines = sy-loopc.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0500  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0500 OUTPUT.
+*  SET PF-STATUS 'xxxxxxxx'.
+*  SET TITLEBAR 'xxx'.
+
+  CASE sy-tcode.
+    WHEN 'ZCJ01'.
+      IF zwbs_header-type = 3 OR
+         zwbs_header-type = 4.
+        LOOP AT SCREEN.
+          CASE screen-name.
+            WHEN 'TC_WBS_INSERT'   OR
+                 'TC_WBS_DELETE'   OR
+                 'TC_WBS_MARK'     OR
+                 'TC_WBS_DEMARK'.
+              screen-active = 0.
+              MODIFY SCREEN.
+          ENDCASE.
+        ENDLOOP.
+      ENDIF.
+    WHEN 'ZCJ03'.
+      LOOP AT SCREEN.
+        CASE screen-name.
+          WHEN 'TC_WBS_INSERT'   OR
+               'TC_WBS_DELETE'   OR
+*               'TC_WBS_TOP'      OR
+*               'TC_WBS_PREVIOUS' OR
+*               'TC_WBS_NEXT'     OR
+*               'TC_WBS_BOTTOM'   OR
+               'TC_WBS_MARK'     OR
+               'TC_WBS_DEMARK'.
+            screen-active = 0.
+            MODIFY SCREEN.
+        ENDCASE.
+      ENDLOOP.
+  ENDCASE.
+
+ENDMODULE.                 " STATUS_0500  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0600  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0600 OUTPUT.
+*  SET PF-STATUS 'xxxxxxxx'.
+*  SET TITLEBAR 'xxx'.
+
+  PERFORM create_text_editor.
+
+ENDMODULE.                 " STATUS_0600  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  TC_WBS_CHANGE_FIELD_ATTR  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE tc_wbs_change_field_attr OUTPUT.
+
+  DATA:ls_screen TYPE screen,
+       lv_field  TYPE feldname.
+
+  MOVE-CORRESPONDING ls_table TO zwbs_item.
+
+  LOOP AT SCREEN INTO ls_screen.
+    IF NOT ls_table-status IS INITIAL.
+      CASE ls_screen-name.
+        WHEN 'LS_TABLE-SELECT'.
+        WHEN OTHERS.
+          ls_screen-input = 0.
+      ENDCASE.
+    ELSE.
+      CASE ls_screen-name.
+        WHEN 'ZWBS_ITEM-ZCLOSE'.
+          IF NOT lv_wf_flag IS INITIAL AND
+                 sy-tcode = 'ZCJ02N'.
+            ls_screen-input = 0.
+          ELSEIF NOT lv_dflag IS INITIAL.
+            ls_screen-input = 0.
+          ELSE.
+            READ TABLE lt_zwbs_status TRANSPORTING NO FIELDS
+                                      WITH KEY type      = lv_type
+                                               stat_curr = ls_table-stat_curr.
+            IF sy-subrc <> 0.
+              ls_screen-input = 0.
+            ENDIF.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-ZUNCLOSE'.
+          IF NOT lv_wf_flag IS INITIAL AND
+                 sy-tcode = 'ZCJ02N'.
+            ls_screen-input = 0.
+          ELSEIF NOT lv_dflag IS INITIAL.
+            ls_screen-input = 0.
+          ELSE.
+            READ TABLE lt_zwbs_status TRANSPORTING NO FIELDS
+                                      WITH KEY type      = lv_type
+                                               stat_curr = ls_table-stat_curr.
+            IF sy-subrc <> 0.
+              ls_screen-input = 0.
+            ENDIF.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-ACCEPT'.
+          IF NOT lv_dflag IS INITIAL OR
+             NOT lv_rflag IS INITIAL.
+            ls_screen-input = 0.
+          ELSEIF NOT lv_wf_flag         IS INITIAL   AND
+               ( NOT zwbs_item-zclose   IS INITIAL   OR
+                 NOT zwbs_item-zunclose IS INITIAL ) AND
+                 sy-tcode = 'ZCJ02N'.
+*            ls_screen-input = 1.
+          ELSE.
+            ls_screen-input = 0.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-ZSTATUS'.
+          IF NOT lv_wf_flag IS INITIAL.
+            ls_screen-input = 0.
+          ELSEIF NOT lv_dflag IS INITIAL OR
+                 NOT lv_rflag IS INITIAL.
+            ls_screen-input = 0.
+          ELSEIF NOT ls_table-zclose   IS INITIAL OR
+                 NOT ls_table-zunclose IS INITIAL.
+            ls_screen-input    = 1.
+          ELSE.
+            ls_screen-input = 0.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-STUFE'.
+          IF ls_table-updkz = 'I'.
+            ls_screen-input = 1.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-POST1'.
+          IF NOT lv_cflag  IS INITIAL OR
+             NOT lv_ucflag IS INITIAL OR
+             NOT lv_dflag  IS INITIAL OR
+             NOT lv_rflag  IS INITIAL.
+            ls_screen-input = 0.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-BELKZ' OR 'ZWBS_ITEM-FAKKZ'.
+          IF ls_table-stufe = '1' OR ls_table-stufe = '2'.
+            ls_screen-input = 0.
+          ENDIF.
+          IF NOT lv_cflag  IS INITIAL OR
+             NOT lv_ucflag IS INITIAL OR
+             NOT lv_dflag  IS INITIAL OR
+             NOT lv_rflag  IS INITIAL.
+            ls_screen-input = 0.
+          ENDIF.
+*          IF NOT ls_cf_control IS INITIAL.
+*            CASE ls_table-stufe.
+**              WHEN 2.
+**                IF NOT ls_cf_control-level2 IS INITIAL.
+**                  ls_screen-required = 1.
+**                ENDIF.
+*              WHEN 3.
+*                IF NOT ls_cf_control-level3 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 4.
+*                IF NOT ls_cf_control-level4 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 5.
+*                IF NOT ls_cf_control-level5 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 6.
+*                IF NOT ls_cf_control-level6 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*            ENDCASE.
+*          ENDIF.
+        WHEN 'ZWBS_ITEM-MTART' OR 'ZWBS_ITEM-Z_MATERIAL'.
+          IF NOT lv_cflag  IS INITIAL OR
+             NOT lv_ucflag IS INITIAL OR
+             NOT lv_dflag  IS INITIAL OR
+             NOT lv_rflag  IS INITIAL.
+            ls_screen-input = 0.
+          ENDIF.
+        WHEN 'ZWBS_ITEM-ZCUSTOM' OR 'ZWBS_ITEM-ZASSET' OR
+             'ZWBS_ITEM-ZREVSTR' OR 'ZWBS_ITEM-ZSCOPCHA'.
+*If Customer already exists for a line make it Non-editable
+          IF ls_screen-name EQ 'ZWBS_ITEM-ZCUSTOM'.
+            IF  ls_table-zcustom IS INITIAL AND
+            NOT ls_table-zchange IS INITIAL.
+            ELSEIF ls_table-updkz IS INITIAL AND
+              lv_type = 2.
+              ls_screen-input = 0.
+            ENDIF.
+          ENDIF.
+          IF NOT lv_cflag  IS INITIAL OR
+             NOT lv_ucflag IS INITIAL OR
+             NOT lv_dflag  IS INITIAL OR
+             NOT lv_rflag  IS INITIAL.
+            ls_screen-input = 0.
+          ENDIF.
+*          IF NOT ls_cf_control IS INITIAL.
+*            CASE ls_table-stufe.
+*              WHEN 2.
+*                IF NOT ls_cf_control-level2 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 3.
+*                IF NOT ls_cf_control-level3 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 4.
+*                IF NOT ls_cf_control-level4 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 5.
+*                IF NOT ls_cf_control-level5 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*              WHEN 6.
+*                IF NOT ls_cf_control-level6 IS INITIAL.
+*                  ls_screen-required = 1.
+*                ENDIF.
+*            ENDCASE.
+*          ENDIF.
+        WHEN 'COMMENTS_TEXT'.
+        WHEN 'ZWBS_ITEM-GRPKZ'.
+          IF NOT lv_grp_allowed IS INITIAL AND NOT ls_table-grpkz IS INITIAL.
+            READ TABLE lt_table_init TRANSPORTING NO FIELDS
+                                     WITH KEY pspid = ls_table-pspid.
+            IF sy-subrc = 0.
+              ls_screen-input = 0.
+            ENDIF.
+          ENDIF.
+        WHEN OTHERS.
+          IF NOT lv_cflag  IS INITIAL OR
+             NOT lv_ucflag IS INITIAL OR
+             NOT lv_dflag  IS INITIAL OR
+             NOT lv_rflag  IS INITIAL.
+            ls_screen-input = 0.
+          ENDIF.
+      ENDCASE.
+    ENDIF.
+    MODIFY SCREEN FROM ls_screen.
+  ENDLOOP.
+
+*Highlight Changed Values for Change Project/WBS
+  IF lv_type = '2' AND ls_table-zchange = 'U' AND
+                 ( NOT lt_table_init IS INITIAL OR
+                   NOT lt_prps       IS INITIAL ).
+    CLEAR:ls_table_init,ls_prps.
+    IF sy-tcode = 'ZCJ01'.
+      READ TABLE lt_table_init INTO ls_table_init
+                               WITH KEY pspid = zwbs_item-pspid.
+    ELSE.
+      READ TABLE lt_prps INTO ls_prps WITH KEY posid = zwbs_item-pspid.
+    ENDIF.
+    LOOP AT SCREEN INTO ls_screen.
+      CASE ls_screen-name.
+        WHEN 'ZWBS_ITEM-POST1'             OR
+             'ZWBS_ITEM-PBUKR'             OR
+             'ZWBS_ITEM-PGSBR'             OR
+             'ZWBS_ITEM-PRCTR'             OR
+             'ZWBS_ITEM-WERKS'             OR
+             'ZWBS_ITEM-ABGSL'             OR
+             'ZWBS_ITEM-ZASSET'            OR
+             'ZWBS_ITEM-ZREVSTR'           OR
+             'ZWBS_ITEM-ZAREA'             OR
+             'ZWBS_ITEM-ZSCOPCHA'          OR
+             'ZWBS_ITEM-ZOPPORTUNITY_ID'   OR
+             'ZWBS_ITEM-ZSYNERGY_ID'       OR
+             'ZWBS_ITEM-ZCUSTOM'           OR
+             'ZWBS_ITEM-MTART'             OR
+             'ZWBS_ITEM-Z_MATERIAL'        OR
+             'ZWBS_ITEM-ZIBPEBELN'         OR
+             'ZWBS_ITEM-ZFCW'              OR
+             'ZWBS_ITEM-ZIPM_PR_CODE'      OR
+             'ZWBS_ITEM-ZZFCST_STATUS'     OR
+             'ZWBS_ITEM-ZZSERV_BUND'       OR
+             'ZWBS_ITEM-ZZFREE_TEXT'       OR
+             'ZWBS_ITEM-BELKZ'             OR
+             'ZWBS_ITEM-FAKKZ'             OR
+* Begin of changes by LCHENNA for CR 797199
+             'ZWBS_ITEM-ZSTAGE_ST_DT'      OR
+             'ZWBS_ITEM-ZSTAGE_END_DT'     OR
+             'ZWBS_ITEM-ZREV_REC_DT'       OR
+             'ZWBS_ITEM-ZPRODCAT'          OR
+             'ZWBS_ITEM-ZBUSINESS_CASE'    OR
+             'ZWBS_ITEM-ZLIFECYCLE_MODULE' OR
+* End of changes by LCHENNA for CR 797199
+             'ZWBS_ITEM-ZBSTKD'            OR
+             'ZWBS_ITEM-ZPOSEX'.
+          CLEAR lv_field.
+          lv_field = ls_screen-name+10.
+          ASSIGN COMPONENT lv_field OF STRUCTURE ls_table TO
+          FIELD-SYMBOL(<fs1>).
+          IF sy-tcode = 'ZCJ01'.
+            ASSIGN COMPONENT lv_field OF STRUCTURE ls_table_init TO
+            FIELD-SYMBOL(<fs2>).
+          ELSE.
+            ASSIGN COMPONENT lv_field OF STRUCTURE ls_prps TO <fs2>.
+          ENDIF.
+          IF <fs1> IS ASSIGNED AND
+             <fs2> IS ASSIGNED AND
+             <fs1> NE <fs2>.
+            ls_screen-intensified = 1.
+          ENDIF.
+          UNASSIGN:<fs1>,<fs2>.
+      ENDCASE.
+      MODIFY SCREEN FROM ls_screen.
+    ENDLOOP.
+  ENDIF.
+
+ENDMODULE.                 " TC_WBS_CHANGE_FIELD_ATTR  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0700  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0700 OUTPUT.
+
+  PERFORM exlcude_fcode.
+
+  SET PF-STATUS '700' EXCLUDING lt_fcode.
+  IF sy-tcode = 'ZCJ02N'.
+    SET TITLEBAR '100' WITH text-002.
+  ELSEIF sy-tcode = 'ZCJ03'.
+    lv_dflag = abap_true.
+    SET TITLEBAR '100' WITH text-003.
+  ENDIF.
+
+ENDMODULE.                 " STATUS_0700  OUTPUT
+*&--------------------------------------------------------------------*
+*&      Module  STATUS_0800  OUTPUT
+*&--------------------------------------------------------------------*
+MODULE status_0800 OUTPUT.
+  SET PF-STATUS '800'.
+  SET TITLEBAR '800'.
+
+  PERFORM create_log_editor.
+
+ENDMODULE.                 " STATUS_0800  OUTPUT
+
+*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_CAPEX'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: COPY DDIC-TABLE TO ITAB
+MODULE tc_capex_init OUTPUT.
+
+  DATA: "lv_vernr     TYPE xubname,
+*        lv_astnr     TYPE xubname,
+*        lv_vgsbr     TYPE zwbs_header-vgsbr,
+*        lv_plsez     TYPE zwbs_header-plsez,
+    ls_usr03          TYPE usr03,
+    lv_ans_appl       TYPE c,
+    lv_ans_pers       TYPE c,
+    lv_ans_buss       TYPE c,
+    lv_ans_fini       TYPE c,
+    lv_countera       TYPE numc3,
+    lv_counterv       TYPE numc3,
+    lv_counterb       TYPE numc3,
+    lv_counterf       TYPE numc3,
+    lv_prctr_cpx      TYPE char4,
+    lv_prctr_cpx_conv TYPE prctr,
+    lv_datum          TYPE char8,
+    lv_message        TYPE char80,
+    lv_message1       TYPE char80,
+    lv_message2       TYPE char80,
+    lv_pspid_hdr      TYPE zwbs_header-pspid.
+  DATA: lv_pspid_len  TYPE numc2.
+  DATA: lv_pspid_len1 TYPE numc2.
+  DATA: result_tab TYPE match_result_tab.
+  DATA: lv_pspid_len_eende TYPE numc2.
+  "DATA: lv_pspid_len2 TYPE numc2.
+
+  IF zucomm = 'ENTER' OR zucomm = 'ATTACH'.
+    IF ( lv_type = 1 AND gv_capex IS INITIAL ) OR
+       ( lv_type = 2 AND gv_capex IS INITIAL ) .
+      IF zwbs_header-vernr IS NOT INITIAL.
+        IF ( lv_vernr IS INITIAL AND zwbs_header-vernr NE ls_head_db-vernr ) OR
+       ( NOT lv_vernr IS INITIAL AND zwbs_header-vernr NE lv_vernr ).
+*          IF lv_vernr IS INITIAL.
+*            lv_vernr = zwbs_header-vernr.
+*            lv_countera = lv_countera + 1.
+*            IF lv_countera = 1.
+*              LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<fs_table1>).
+*                CHECK <fs_table1>-status IS INITIAL."DO NOT Update for Inactive Lines
+*                zwbs_item-vernr   = <fs_table1>-vernr   = zwbs_header-vernr.
+*                zwbs_item-vernr_n = <fs_table1>-vernr_n = zwbs_header-vernr_n.
+*                IF lv_type = 2.
+*                  <fs_table1>-zchange = 'U'.
+*                ENDIF.
+*                CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+*                  EXPORTING
+*                    user_name              = zwbs_header-vernr
+**                   READ_DB_DIRECTLY       = ' '
+**                   CACHE_RESULTS          = 'X'
+*                  IMPORTING
+*                    user_usr03             = ls_usr03  "lv_name
+*                  EXCEPTIONS
+*                    user_address_not_found = 1
+*                    OTHERS                 = 2.
+*                IF sy-subrc = 0.
+*                  CONCATENATE ls_usr03-name1 ls_usr03-name2 INTO
+*                              <fs_table1>-verna SEPARATED BY space.
+*                  zwbs_item-verna = <fs_table1>-verna.
+*                ENDIF.
+*                CLEAR: ls_usr03.
+*              ENDLOOP.
+*              UNASSIGN <fs_table1>.
+**          PERFORM pers_resp_num_to_items.
+*            ENDIF.
+*          ENDIF.
+          IF lv_type = 1 AND lv_vernr IS INITIAL.
+            LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<fs_table1>).
+              CHECK <fs_table1>-status IS INITIAL."DO NOT Update for Inactive Lines
+              zwbs_item-vernr   = <fs_table1>-vernr   = zwbs_header-vernr.
+              zwbs_item-vernr_n = <fs_table1>-vernr_n = zwbs_header-vernr_n.
+              IF lv_type = 2.
+                <fs_table1>-zchange = 'U'.
+              ENDIF.
+              CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+                EXPORTING
+                  user_name              = zwbs_header-vernr
+*                 READ_DB_DIRECTLY       = ' '
+*                 CACHE_RESULTS          = 'X'
+                IMPORTING
+                  user_usr03             = ls_usr03  "lv_name
+                EXCEPTIONS
+                  user_address_not_found = 1
+                  OTHERS                 = 2.
+              IF sy-subrc = 0.
+                CONCATENATE ls_usr03-name1 ls_usr03-name2 INTO
+                            <fs_table1>-verna SEPARATED BY space.
+                zwbs_item-verna = <fs_table1>-verna.
+              ENDIF.
+              CLEAR: ls_usr03.
+            ENDLOOP.
+            UNASSIGN <fs_table1>.
+          ELSE.
+            PERFORM pers_resp_num_to_items.
+          ENDIF.
+        ENDIF.
+*        IF zwbs_header-vernr NE lv_vernr AND lv_vernr IS NOT INITIAL.
+*          PERFORM pers_resp_num_to_items.
+*        ENDIF.
+        lv_vernr = zwbs_header-vernr.
+      ENDIF.
+
+      IF zwbs_header-astnr IS NOT INITIAL.
+        IF ( lv_astnr IS INITIAL AND zwbs_header-astnr NE ls_head_db-astnr ) OR
+       ( NOT lv_astnr IS INITIAL AND zwbs_header-astnr NE lv_astnr ).
+*        IF lv_astnr IS INITIAL.
+*          lv_astnr = zwbs_header-astnr.
+*          lv_counterv = lv_counterv + 1.
+*          IF lv_counterv = 1.
+*            LOOP AT lt_table ASSIGNING <fs_table1>.
+*              CHECK <fs_table1>-status IS INITIAL."DO NOT Update for Inactive Lines
+*              <fs_table1>-astnr   = zwbs_header-astnr.
+*              <fs_table1>-astnr_n = zwbs_header-astnr_n.
+*              IF lv_type = 2.
+*                <fs_table1>-zchange = 'U'.
+*              ENDIF.
+*              CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+*                EXPORTING
+*                  user_name              = zwbs_header-astnr
+**                 READ_DB_DIRECTLY       = ' '
+**                 CACHE_RESULTS          = 'X'
+*                IMPORTING
+*                  user_usr03             = ls_usr03  "lv_name
+*                EXCEPTIONS
+*                  user_address_not_found = 1
+*                  OTHERS                 = 2.
+*              IF sy-subrc = 0.
+*                CONCATENATE ls_usr03-name1 ls_usr03-name2 INTO
+*                <fs_table1>-astna SEPARATED BY space.
+*                zwbs_item-astna = <fs_table1>-astna.
+*              ENDIF.
+*              CLEAR: ls_usr03.
+**    <fs_table1>-pgsbr = ZWBS_ITEM-pgsbr.
+**    <fs_table1>-prctr = ZWBS_ITEM-prctr.
+*            ENDLOOP.
+*          PERFORM applicant_num_to_items.
+*          ENDIF.
+*        ENDIF.
+*        IF zwbs_header-astnr NE lv_astnr AND lv_astnr IS NOT INITIAL.
+          IF lv_type = 1 AND lv_astnr IS INITIAL.
+            LOOP AT lt_table ASSIGNING <fs_table1>.
+              CHECK <fs_table1>-status IS INITIAL."DO NOT Update for Inactive Lines
+              <fs_table1>-astnr   = zwbs_header-astnr.
+              <fs_table1>-astnr_n = zwbs_header-astnr_n.
+              IF lv_type = 2.
+                <fs_table1>-zchange = 'U'.
+              ENDIF.
+              CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+                EXPORTING
+                  user_name              = zwbs_header-astnr
+                IMPORTING
+                  user_usr03             = ls_usr03
+                EXCEPTIONS
+                  user_address_not_found = 1
+                  OTHERS                 = 2.
+              IF sy-subrc = 0.
+                CONCATENATE ls_usr03-name1 ls_usr03-name2 INTO
+                <fs_table1>-astna SEPARATED BY space.
+                zwbs_item-astna = <fs_table1>-astna.
+              ENDIF.
+              CLEAR: ls_usr03.
+            ENDLOOP.
+          ELSE.
+            PERFORM applicant_num_to_items.
+          ENDIF.
+        ENDIF.
+        lv_astnr = zwbs_header-astnr.
+      ENDIF.
+
+      IF zwbs_header-vgsbr IS NOT INITIAL.
+        IF lv_vgsbr IS INITIAL.
+          lv_vgsbr = zwbs_header-vgsbr.
+          lv_counterb = lv_counterb + 1.
+          IF lv_counterb = 1.
+            IF lv_type = 1.
+              LOOP AT lt_table ASSIGNING <fs_table1>.
+                zwbs_item-pgsbr = <fs_table1>-pgsbr = zwbs_header-vgsbr.
+              ENDLOOP.
+            ELSE.
+              LOOP AT lt_table ASSIGNING <fs_table1> WHERE pgsbr IS INITIAL.
+                zwbs_item-pgsbr = <fs_table1>-pgsbr = zwbs_header-vgsbr.
+              ENDLOOP.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF zwbs_header-vgsbr NE lv_vgsbr AND lv_vgsbr IS NOT INITIAL.
+        PERFORM business_area_lines.
+        lv_vgsbr = zwbs_header-vgsbr.
+      ENDIF.
+
+*** Begin of change to correct Basic Finish Date Update
+***      IF zwbs_header-plsez IS NOT INITIAL.
+***        IF lv_plsez IS INITIAL.
+***          lv_plsez = zwbs_header-plsez.
+***          lv_counterf = lv_counterf + 1.
+***          IF lv_counterf = 1.
+***            LOOP AT lt_table ASSIGNING <fs_table1>.
+***              CHECK <fs_table1>-status IS INITIAL."DO NOT Update for Inactive Lines
+***              IF <fs_table1>-zchange = 'I'.
+***              ELSE.
+***                zwbs_item-plsez = <fs_table1>-plsez = zwbs_header-plsez.
+***                IF lv_type = 1.
+***                  zwbs_item-eende = <fs_table1>-eende = <fs_table1>-plsez.
+***                ENDIF.
+***              ENDIF.
+***            ENDLOOP.
+***          ENDIF.
+***        ENDIF.
+***      ENDIF.
+
+*** Update Basic FInish Date based on Header Finish Date
+      IF lv_plsez IS INITIAL.
+        IF lv_type = 1.
+          lv_plsez = zwbs_header-plsez.
+        ELSE.
+          IF zwbs_header-plsez NE ls_head_db-plsez.
+            PERFORM finish_date_lines.
+            lv_plsez = zwbs_header-plsez.
+          ENDIF.
+        ENDIF.
+      ELSEIF lv_plsez NE zwbs_header-plsez.
+        PERFORM finish_date_lines.
+        lv_plsez = zwbs_header-plsez.
+      ENDIF.
+*** End of change to correct Basic Finish Date Update
+*    ELSEIF lv_type = 2.
+*      " Applicant Number
+*      IF zwbs_header-astnr_n IS NOT INITIAL.
+*        IF zwbs_header-astnr_n NE zwbs_item-astnr_n. "ls_proj-astnr.
+*          lv_astnr = zwbs_header-astnr.
+*          PERFORM applicant_num_to_items.
+*
+*        ENDIF.
+*
+*        IF zwbs_header-astnr NE lv_astnr AND lv_astnr IS NOT INITIAL..
+*          PERFORM applicant_num_to_items.
+*          lv_astnr = zwbs_header-astnr.
+*        ENDIF.
+*      ENDIF.
+*
+*      " User Responsible Number.
+*      IF zwbs_header-vernr_n IS NOT INITIAL.
+*        IF zwbs_header-vernr_n NE zwbs_item-vernr_n. "ls_proj-vernr.
+*          lv_vernr = zwbs_header-vernr.
+*          PERFORM pers_resp_num_to_items.
+*        ENDIF.
+*
+*        IF zwbs_header-vernr NE lv_vernr AND lv_vernr IS NOT INITIAL.
+*          PERFORM pers_resp_num_to_items.
+*          lv_vernr = zwbs_header-vernr.
+*        ENDIF.
+*      ENDIF.
+*
+*      " Business Area.
+*      IF zwbs_header-vgsbr IS NOT INITIAL.
+*        IF zwbs_header-vgsbr NE zwbs_item-pgsbr. "ls_proj-vgsbr.
+*          lv_vgsbr = zwbs_header-vgsbr.
+*          PERFORM business_area_lines.
+*        ENDIF.
+*
+*        IF zwbs_header-vgsbr NE lv_vgsbr AND lv_vgsbr IS NOT INITIAL.
+*          PERFORM business_area_lines.
+*          lv_vgsbr = zwbs_header-vgsbr.
+*        ENDIF.
+*      ENDIF.
+*
+*      " Finish Date.
+*      IF zwbs_header-plsez NE zwbs_item-plsez. "ls_proj-plsez.
+*        lv_plsez = zwbs_header-plsez.
+*        PERFORM finish_date_lines.
+*      ENDIF.
+*
+*      IF zwbs_header-plsez NE lv_plsez AND lv_plsez IS NOT INITIAL.
+*        PERFORM finish_date_lines.
+*        lv_plsez = zwbs_header-plsez.
+*      ENDIF.
+
+    ELSEIF gv_capex IS NOT INITIAL.
+      " Applicant Number
+      IF zwbs_header-astnr IS NOT INITIAL.
+        IF zwbs_header-astnr NE ls_head-astnr.
+          lv_astnr = zwbs_header-astnr.
+          PERFORM applicant_num_to_items.
+        ENDIF.
+
+        IF zwbs_header-astnr NE lv_astnr AND lv_astnr IS NOT INITIAL..
+          PERFORM applicant_num_to_items.
+          lv_astnr = zwbs_header-astnr.
+        ENDIF.
+      ENDIF.
+
+      " User Responsible Number.
+      IF zwbs_header-vernr IS NOT INITIAL.
+        IF zwbs_header-vernr NE ls_head-vernr.
+          lv_vernr = zwbs_header-vernr.
+          PERFORM pers_resp_num_to_items.
+        ENDIF.
+
+        IF zwbs_header-vernr NE lv_vernr AND lv_vernr IS NOT INITIAL.
+          PERFORM pers_resp_num_to_items.
+          lv_vernr = zwbs_header-vernr.
+        ENDIF.
+      ENDIF.
+
+      " Business Area
+      IF zwbs_header-vgsbr IS NOT INITIAL.
+        IF zwbs_header-vgsbr NE ls_head-vgsbr.
+          lv_vgsbr = zwbs_header-vgsbr.
+          PERFORM business_area_lines.
+        ENDIF.
+
+        IF zwbs_header-vgsbr NE lv_vgsbr AND lv_vgsbr IS NOT INITIAL.
+          PERFORM business_area_lines.
+          lv_vgsbr = zwbs_header-vgsbr.
+        ENDIF.
+      ENDIF.
+
+      " Finish Date
+      IF zwbs_header-plsez IS NOT INITIAL.
+        IF zwbs_header-plsez NE ls_head-plsez.
+          lv_plsez = zwbs_header-plsez.
+          PERFORM finish_date_lines.
+        ENDIF.
+
+        IF zwbs_header-plsez NE lv_plsez AND lv_plsez IS NOT INITIAL.
+          PERFORM finish_date_lines.
+          lv_plsez = zwbs_header-plsez.
+        ENDIF.
+      ENDIF.
+
+    ENDIF.
+
+    CLEAR:lv_pspid_len_eende .
+    LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa1>).
+      IF <wa1>-stufe = '5'.
+      ELSEIF <wa1>-stufe = '2'.
+        DATA(lv_pspid_new2) = <wa1>-pspid.
+        CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+          CHANGING
+            c_value = lv_pspid_new2.
+        lv_pspid_len_eende = strlen( lv_pspid_new2 ).
+      ENDIF.
+    ENDLOOP.
+
+    "CLEAR: ls_frct_2, ls_frct_3.
+    LOOP AT lt_table INTO DATA(ls_frct_2) WHERE stufe = '2'.
+      LOOP AT lt_table INTO DATA(ls_frct_3) WHERE stufe > '2'.
+        IF ls_frct_3-pspid+0(lv_pspid_len_eende) = ls_frct_2-pspid+0(lv_pspid_len_eende).
+          IF lv_type = 2.
+            "CLEAR: lv_objnr1.
+            SELECT SINGLE objnr FROM prps INTO @DATA(lv_objnr1)
+              WHERE posid =  @ls_frct_3-pspid.
+            IF sy-subrc = 0.
+              "CLEAR: ls_jest.
+              SELECT SINGLE * FROM jest INTO @DATA(ls_jest)
+                WHERE objnr = @lv_objnr1
+                AND  stat  = 'I0046'
+                AND  inact = @space.
+              IF sy-subrc = 0.
+              ELSE.
+                ls_frct_3-eende = ls_frct_2-eende.
+                IF lv_type = 2.
+                  ls_frct_3-zchange = 'U'.
+                ENDIF.
+                IF ls_frct_3-eende IS NOT INITIAL.
+                  MODIFY lt_table FROM ls_frct_3 TRANSPORTING eende zchange.
+                ENDIF.
+              ENDIF.
+            ELSE.
+              ls_frct_3-eende = ls_frct_2-eende.
+              IF ls_frct_3-eende IS NOT INITIAL.
+                MODIFY lt_table FROM ls_frct_3 TRANSPORTING eende.
+              ENDIF.
+            ENDIF.
+          ELSE.
+            ls_frct_3-eende = ls_frct_2-eende.
+            IF ls_frct_3-eende IS NOT INITIAL.
+              MODIFY lt_table FROM ls_frct_3 TRANSPORTING eende.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+  ENDIF.
+  FIELD-SYMBOLS <fs_cols1> TYPE scxtab_column.
+  DESCRIBE TABLE lt_table LINES tc_capex-lines.
+
+  DATA: lv_pspid_itm  TYPE zwbs_header-pspid.
+*Check for any errors
+  IF zwbs_header-izwek IS NOT INITIAL.
+    READ TABLE lt_table INTO DATA(ls_table1) WITH KEY stufe = '2'.
+    IF sy-subrc = 0.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = ls_table1-pspid
+        IMPORTING
+          output = lv_pspid_itm.
+
+      SPLIT lv_pspid_itm AT '.' INTO DATA(lv_first) DATA(lv_second) DATA(lv_third).
+      IF zwbs_header-izwek = 'LS' AND lv_third = '51'.
+        MESSAGE s368(00) WITH 'Project Template and Investment Reason' 'do not match'
+                       DISPLAY LIKE 'E'.
+        "MESSAGE 'Project Template and Investment Reason do not match' TYPE 'S' DISPLAY LIKE 'E'.
+      ELSEIF lv_third = '41' AND zwbs_header-izwek NE 'LS'.
+        MESSAGE s368(00) WITH 'Project Template and Investment Reason' 'do not match'
+                        DISPLAY LIKE 'E'.
+        " MESSAGE 'Project Template and Investment Reason do not match' TYPE 'S' DISPLAY LIKE 'E'.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+
+  IF NOT lv_error IS INITIAL AND lv_herror IS INITIAL.
+    lv_tline = lv_tline - tc_wbs-top_line + 1.
+    SET CURSOR FIELD lv_cursor LINE lv_tline.
+    IF NOT lv_verror IS INITIAL.
+      IF lv_cursor = 'ZWBS_ITEM-PGSBR'.
+        MESSAGE s368(00) WITH 'Mismatch in Business Area &'
+        'Profit Center'
+                         DISPLAY LIKE 'W'.
+      ELSEIF lv_cursor = 'ZWBS_ITEM-POST1'.
+*        IF lv_proj3 = space.
+        IF lv_proj_type NE 'TC'.
+          MESSAGE s368(00) WITH 'Mismatch in Project Description &'
+                                'WBS Description'
+                           DISPLAY LIKE 'E'.
+        ENDIF.
+      ELSE.
+        MESSAGE s368(00) WITH text-007 lv_text
+                         DISPLAY LIKE 'E'.
+      ENDIF.
+    ELSEIF NOT lv_wf_pos_flag IS INITIAL.
+      MESSAGE s398(00) WITH
+      'Workflow not maintained for this Company Code'
+      'and Business Area,'
+    'please get in contact with Master Data Team'
+                       DISPLAY LIKE 'E'.
+    ELSEIF NOT lv_ag_flag IS INITIAL AND NOT lv_cerror IS INITIAL.
+    ELSEIF NOT lv_text IS INITIAL.
+      MESSAGE s368(00) WITH lv_text 'is a required field'
+                       DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+  CLEAR:lv_error,lv_verror,lv_herror,lv_raerror.
+
+*Hide Columns for Regular Process
+  ASSIGN tc_capex-cols TO <lt_cols>.
+  CASE zwbs_header-type.
+    WHEN 1.
+*Create Case
+      LOOP AT <lt_cols> ASSIGNING <fs_cols1>
+                        WHERE screen-name = 'ZWBS_ITEM-ZCHANGE'
+                        .
+        <fs_cols1>-invisible = 1.
+      ENDLOOP.
+    WHEN 2.
+*Change Case
+      IF gv_capex IS INITIAL.
+        LOOP AT <lt_cols> ASSIGNING <fs_cols>
+                          WHERE screen-name = 'ZWBS_ITEM-ZCHANGE'.
+          <fs_cols>-invisible = 1.
+        ENDLOOP.
+      ENDIF.
+  ENDCASE.
+
+* DO NOT Display PlanView fields for SAP Requests
+  IF zwbs_header-zprj_code_pv IS INITIAL.
+    LOOP AT <lt_cols> ASSIGNING <fs_cols1>
+                     WHERE screen-name = 'ZWBS_ITEM-ZSTATE_CODE_PV' OR
+                           screen-name = 'ZWBS_ITEM-ZMAINT_SYS'.
+      <fs_cols1>-invisible = 1.
+    ENDLOOP.
+  ENDIF.
+  UNASSIGN <lt_cols>.
+  CLEAR: lv_message, lv_message1, lv_message2,lv_msg_clsd_wbs,lv_msg_miss_wbs,lv_msg_diff_wbs.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<fs_table2>).
+
+    IF <fs_table2>-pspid IS INITIAL.
+      <fs_table2>-zinsert = zwbs_item-zinsert = 'X'.
+    ENDIF.
+*Consider Change flag ONLY in case of Change Project/WBS
+    IF zwbs_header-type EQ 2.
+      CHECK <fs_table2>-zchange IS NOT INITIAL.
+    ENDIF.
+
+
+*Maintain PC in accordance to BA at the Line Item Level
+    lv_prctr_cpx = <fs_table2>-pgsbr.
+    SHIFT lv_prctr_cpx LEFT DELETING LEADING '0'.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = lv_prctr_cpx
+      IMPORTING
+        output = lv_prctr_cpx_conv.
+    <fs_table2>-prctr = zwbs_item-prctr = lv_prctr_cpx_conv.
+*In the change request if a requestor update the data in the header,
+*the system should updated the data of all the lines except the closed WBS
+*(now it is updating the data of all lines, also closed WBS).
+    IF <fs_table2>-status IS INITIAL.
+      zwbs_item-izwek = <fs_table2>-izwek = zwbs_header-izwek.
+      zwbs_item-pbukr = <fs_table2>-pbukr = zwbs_header-vbukr.
+    ENDIF.
+    "<fs_table2>-plsez = zwbs_header-plsez.
+*    <fs_table2>-pgsbr = zwbs_item-pgsbr = zwbs_header-vgsbr.
+*    <fs_table1>-prctr = ZWBS_ITEM-prctr.
+    IF <fs_table2>-posid IS NOT INITIAL.
+      IF <fs_table2>-izwek = 'LS'.
+        SELECT SINGLE posid FROM impr
+        INTO @DATA(ls_impr1)
+        WHERE posid  =  @<fs_table2>-posid
+         AND  izwek  = @<fs_table2>-izwek
+        AND   bukrs  = @<fs_table2>-pbukr
+       " AND   gsber  = @<fs_table2>-pgsbr
+        AND   usr11  = @space.
+        IF ls_impr1 NE <fs_table2>-posid." and ls_impr1 is not INITIAL.
+*          CLEAR: lv_message.
+*          CONCATENATE 'Please enter valid Position ID' lv_message INTO
+*          lv_message.
+*          MESSAGE lv_message TYPE 'E'. "DISPLAY LIKE 'E'.
+          MESSAGE s368(00) WITH 'Position ID is a not valid,'
+                                'please choose from drop down list'
+                      DISPLAY LIKE 'E'.
+          CONCATENATE 'Position ID is a not valid,'
+                  'please choose from drop down list' lv_message1 INTO
+                                                       lv_message1.
+*          MESSAGE lv_message TYPE 'E'. " DISPLAY LIKE 'E'.
+*      ELSE.
+*        CLEAR: lv_message1.
+        ENDIF.
+        CLEAR: ls_impr1.
+      ELSE.
+        "SHIFT <fs_table2>-posid  LEFT DELETING LEADING '0'.
+        SELECT SINGLE posid FROM impr
+          INTO @ls_impr1
+          WHERE posid  =  @<fs_table2>-posid
+           AND  izwek  = @<fs_table2>-izwek
+          AND   bukrs  = @<fs_table2>-pbukr
+          AND   gsber  = @<fs_table2>-pgsbr
+          AND   usr11  = @space.
+        IF ls_impr1 NE <fs_table2>-posid." and ls_impr1 is not INITIAL.
+*          CLEAR: lv_message.
+*          CONCATENATE 'Please enter valid Position ID' lv_message INTO
+*          lv_message.
+*          MESSAGE lv_message TYPE 'E'. "DISPLAY LIKE 'E'.
+          IF lv_message IS INITIAL.
+            MESSAGE s368(00) WITH 'Position ID is a not valid,'
+                                  'please choose from drop down list'
+                        DISPLAY LIKE 'E'.
+            CONCATENATE 'Position ID is a not valid,'
+                    'please choose from drop down list' lv_message1 INTO
+                                                         lv_message1.
+*          MESSAGE lv_message TYPE 'E'. " DISPLAY LIKE 'E'.
+*      ELSE.
+*        CLEAR: lv_message1.
+          ENDIF.
+        ENDIF.
+        CLEAR: ls_impr1.
+      ENDIF.
+    ENDIF.
+*    IF zwbs_header-type EQ 1.
+*      READ TABLE lt_table INTO ls_table WITH KEY pspid = lv_pspid_itm.
+*      IF sy-subrc = 0.
+*        CLEAR: lv_msg_miss_wbs.
+*      ELSE.
+*        IF lv_msg_miss_wbs IS INITIAL.
+*          MESSAGE s368(00) WITH 'The Parent WBS is missing, please add it'
+*                         DISPLAY LIKE 'E'.
+*          CONCATENATE 'The Parent WBS is missing, please add it' lv_msg_miss_wbs INTO
+*           lv_msg_miss_wbs.
+*          EXIT.
+*        ENDIF.
+*      ENDIF.
+*    ENDIF.
+    IF <fs_table2>-stufe NE '1' AND zwbs_header-type EQ 2.
+*      DATA(lv_pspid) = <fs_table2>-pspid.
+*      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+*        CHANGING
+*          c_value = lv_pspid.
+*      lv_pspid_len = strlen( lv_pspid ).
+*      lv_pspid_len1 = lv_pspid_len - 1.
+*      IF zwbs_item-stufe = '5'.
+*        CONCATENATE lv_pspid+0(lv_pspid_len1) '0' INTO lv_pspid.
+*      ELSEIF zwbs_item-stufe = '4'.
+*        CONCATENATE lv_pspid+0(lv_pspid_len1) '0' '0' INTO lv_pspid.
+*      ELSEIF zwbs_item-stufe = '3'.
+*        CONCATENATE lv_pspid+0(lv_pspid_len1) '0' '0' '0' INTO lv_pspid.
+*      ELSEIF zwbs_item-stufe = '2'.
+*        CONCATENATE lv_pspid+0(lv_pspid_len1) '0' '0' '0' '0' INTO lv_pspid.
+*      ENDIF.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = <fs_table2>-pspid
+        IMPORTING
+          output = lv_pspid_itm.
+
+      FIND ALL OCCURRENCES OF '.'
+      IN lv_pspid_itm
+      RESULTS result_tab.
+
+      SORT result_tab BY offset DESCENDING.
+      READ TABLE result_tab INTO DATA(ls_res_tab) INDEX 1.
+      IF sy-subrc = 0.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+          EXPORTING
+            input  = lv_pspid_itm+0(ls_res_tab-offset)
+          IMPORTING
+            output = lv_pspid_itm.
+        CLEAR: lv_objnr1.
+        SELECT SINGLE objnr FROM prps INTO @lv_objnr1
+       WHERE posid =  @lv_pspid_itm. "@lv_pspid+0(lv_pspid_len).
+        IF sy-subrc = 0.
+          CLEAR: ls_jest.
+          SELECT SINGLE * FROM jest INTO @ls_jest
+             WHERE objnr = @lv_objnr1
+              AND  stat  = 'I0046'
+              AND  inact = @space.
+          IF sy-subrc = 0.
+            IF lv_msg_clsd_wbs IS INITIAL.
+              MESSAGE s368(00) WITH 'Not possible to create new WBS,' 'parent WBS is closed'
+                            DISPLAY LIKE 'E'.
+              CONCATENATE 'Not possible to create new WBS,' 'parent WBS is closed' lv_msg_clsd_wbs INTO
+               lv_msg_clsd_wbs.
+              EXIT.
+            ENDIF.
+          ELSE.
+            CLEAR: lv_msg_clsd_wbs.
+          ENDIF.
+          CLEAR: lv_objnr1, ls_jest.
+        ENDIF.
+      ENDIF.
+
+*      READ TABLE lt_table INTO ls_table WITH KEY pspid = lv_pspid_itm.
+*      IF sy-subrc = 0.
+*        CLEAR: lv_msg_miss_wbs.
+*      ELSE.
+*        IF lv_msg_miss_wbs IS INITIAL.
+*          MESSAGE s368(00) WITH 'The Parent WBS is missing, please add it'
+*                         DISPLAY LIKE 'E'.
+*          CONCATENATE 'The Parent WBS is missing, please add it' lv_msg_miss_wbs INTO
+*           lv_msg_miss_wbs.
+*          EXIT.
+*        ENDIF.
+*      ENDIF.
+      IF sy-tcode = 'ZCJ01'.
+        CLEAR: lv_pspid_len.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+          EXPORTING
+            input  = zwbs_header-pspid
+          IMPORTING
+            output = lv_pspid_hdr.
+
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+          EXPORTING
+            input  = <fs_table2>-pspid
+          IMPORTING
+            output = lv_pspid_itm.
+
+        lv_pspid_len = strlen( lv_pspid_hdr ).
+        IF lv_pspid_itm+0(lv_pspid_len) NE lv_pspid_hdr.
+          IF lv_msg_diff_wbs IS INITIAL.
+            MESSAGE s368(00)
+            WITH 'The project number is wrong, please remove the' 'line and provide correct project no'
+               DISPLAY LIKE 'E'.
+            "MESSAGE 'The Parent WBS is different, Please delete the WBS and give correct Wbs' TYPE 'S' DISPLAY LIKE 'E'.
+            CONCATENATE 'The project number is wrong, please remove the' 'line and provide correct project no'
+            lv_msg_diff_wbs INTO lv_msg_diff_wbs SEPARATED BY space.
+            EXIT.
+          ELSE.
+
+          ENDIF.
+        ELSE.
+          CLEAR: lv_msg_diff_wbs.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    zwbs_item-werks = <fs_table2>-werks = zwbs_header-werks.
+*    IF lv_proj3 IS NOT INITIAL OR gv_capex IS NOT INITIAL.
+    IF lv_proj_type = 'TC' OR gv_capex IS NOT INITIAL.
+      IF <fs_table2>-akstl IS NOT INITIAL.
+        CONCATENATE sy-datum+0(4) '12' '31' INTO lv_datum.
+        DATA(lv_datum1) = sy-datum.
+        lv_datum1 = lv_datum.
+
+        SELECT SINGLE kostl
+           FROM csks
+           INTO @DATA(ls_csks)
+           WHERE kostl = @<fs_table2>-akstl
+               AND datbi GE @lv_datum1
+               AND bukrs = @<fs_table2>-pbukr "@zwbs_header-vbukr
+               AND gsber = @<fs_table2>-pgsbr. "@zwbs_item-pgsbr.
+        IF ls_csks NE <fs_table2>-akstl.
+*          CLEAR: lv_message.
+          IF lv_message IS INITIAL.
+            MESSAGE s368(00) WITH 'Cost center is a not valid,'
+                                   'please choose from drop down list'
+                                   DISPLAY LIKE 'E'.
+            CONCATENATE 'Cost center is a not valid,'
+                     'please choose from drop down list' lv_message INTO
+            lv_message.
+*          MESSAGE lv_message TYPE 'E'. " DISPLAY LIKE 'E'.
+*        ELSE.
+*          CLEAR: lv_message.
+          ENDIF.
+        ENDIF.
+        CLEAR: ls_csks.
+      ENDIF.
+
+      IF <fs_table2>-lstar IS NOT INITIAL.
+*        SHIFT <fs_table2>-posid  LEFT DELETING LEADING '0'.
+        SELECT SINGLE lstar FROM cssl
+          INTO @DATA(ls_cssl)
+          WHERE lstar = @<fs_table2>-lstar
+            AND gjahr = @sy-datum+0(4).
+        IF ls_cssl NE <fs_table2>-lstar." and ls_impr1 is not INITIAL.
+          IF lv_message2 IS INITIAL.
+            MESSAGE s368(00) WITH 'Activity type is a not valid'
+                                    'please choose from drop down list'
+                        DISPLAY LIKE 'E'.
+            CONCATENATE 'Activity type is a not valid,'
+                     'please choose from drop down list' lv_message2 INTO
+                                                              lv_message2.
+*          MESSAGE lv_message TYPE 'E'. " DISPLAY LIKE 'E'.
+*        ELSE.
+*          CLEAR: lv_message2.
+          ENDIF.
+        ENDIF.
+        CLEAR: ls_cssl.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDMODULE.
+
+*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_CAPEX'. DO NOT CHANGE THIS LINE!
+*&SPWIZARD: MOVE ITAB TO DYNPRO
+MODULE tc_capex_move OUTPUT.
+  MOVE-CORRESPONDING g_tc_capex_wa TO zwbs_item.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  SUBSCREENS  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  SCREEN_SELECTION  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE screen_selection OUTPUT.
+
+*  IF sy-tcode = 'ZCJ03' OR sy-tcode = 'ZCJ02N'.
+*    LOOP AT lt_table INTO ls_table WHERE pspid+0(2) NE 'TC'." OR
+**                                         pspid+0(2) = 'CI' OR
+**                                         pspid+0(2) = 'CM'.
+*      gv_screen = '0500'.
+*      EXIT.
+*    ENDLOOP.
+*    IF sy-subrc <> 0.
+*      gv_screen = '0900'.
+*    ENDIF.
+*  ELSE.
+*    IF lv_proj3 IS NOT INITIAL OR
+  IF lv_proj_type = 'TC' OR
+     gv_capex IS NOT INITIAL.
+    gv_screen = '0900'.
+  ELSE.
+    gv_screen = '0500'.
+  ENDIF.
+*  ENDIF.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  TC_CAPEX_GET_LINES  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE tc_capex_get_lines OUTPUT.
+
+  g_tc_capex_lines = sy-loopc.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  TC_CAPEX_CHANGE_FIELD_ATTR  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE tc_capex_change_field_attr OUTPUT.
+*  DATA:ls_screen TYPE screen,
+
+  DATA:lv_field_tc  TYPE fieldname.
+  DATA: lv_change TYPE char10.
+  DATA: lv_prctr_cpx2 TYPE char4.
+  DATA: lv_prctr_conv TYPE prctr.
+*  IF ls_table-akstl IS INITIAL.
+*    ls_table-akstl = lv_akstl.
+*  ENDIF.
+  "CLEAR: ls_table-pgsbr, ls_table-prctr.
+
+  MOVE-CORRESPONDING ls_table TO zwbs_item.
+  IF ls_table-status IS INITIAL.
+    MOVE zwbs_header-izwek TO zwbs_item-izwek.
+    MOVE zwbs_header-izwek TO ls_table-izwek.
+  ENDIF.
+  lv_prctr_cpx2 = zwbs_item-pgsbr.
+  SHIFT lv_prctr_cpx2 LEFT DELETING LEADING '0'.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_prctr_cpx2
+    IMPORTING
+      output = lv_prctr_conv.
+  ls_table-prctr = zwbs_item-prctr = lv_prctr_conv.  "lv_prctr_cpx2.
+  IF lv_type = 1.
+    lv_change = 'CREATE'.
+  ELSE.
+    lv_change = 'CHANGE'.
+  ENDIF.
+
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'TC_CAPEX_SUM'.
+        screen-input = 1.
+        MODIFY SCREEN.
+    ENDCASE.
+  ENDLOOP.
+  IF sy-tcode = 'ZCJ03'.
+    LOOP AT SCREEN.
+      screen-input = 0.
+      MODIFY SCREEN.
+    ENDLOOP.
+*  ELSEIF lv_insr_flag = 'X'.
+*
+  ELSE.
+*    IF lv_insr_flag = 'X'.
+*      IF ls_table-pspid IS INITIAL.
+*        READ TABLE lt_table ASSIGNING <fs_ins> WITH KEY pspid = ls_table-pspid.
+*        IF sy-subrc = 0.
+*          <fs_ins>-zinsert = 'X'.
+*          CLEAR: lv_insr_flag.
+*          Modify table lt_table from <FS_INS> TRANSPORTING zinsert.
+*          READ TABLE lt_table INTO ls_table WITH KEY pspid = <fs_ins>-pspid.
+*        ENDIF.
+*      ENDIF.
+*    ENDIF.
+
+
+    IF ls_table-zinsert = 'X' AND ls_table-pspid IS INITIAL.
+      LOOP AT SCREEN.
+        CASE screen-name.
+          WHEN  'ZWBS_ITEM-STUFE'     OR
+               'ZWBS_ITEM-PSPID'     OR
+               'ZWBS_ITEM-POST1'     OR
+               'ZWBS_ITEM-VERNR'     OR
+               'ZWBS_ITEM-PLSEZ'     OR
+               'ZWBS_ITEM-PLFAZ'.
+            screen-input = 1.
+          WHEN OTHERS.
+            screen-input = 0.
+        ENDCASE.
+        MODIFY SCREEN.
+      ENDLOOP.
+    ELSEIF ls_table-zinsert = 'X' AND ls_table-pspid IS NOT INITIAL..
+      LOOP AT SCREEN.
+        CASE screen-name.
+          WHEN 'ZWBS_ITEM-POST1' OR
+               'LS_TABLE-SELECT'.
+            screen-input = 1.
+            MODIFY SCREEN.
+          WHEN OTHERS.
+            screen-input = 0.
+            MODIFY SCREEN.
+        ENDCASE.
+      ENDLOOP.
+
+      LOOP AT SCREEN INTO ls_screen.
+        SPLIT ls_screen-name AT '-' INTO DATA(lv_table) lv_field_tc.
+        CASE ls_screen-name.
+          WHEN 'ZWBS_ITEM-AKSTL'   OR
+               'ZWBS_ITEM-BUDGET'  OR
+               'ZWBS_ITEM-AKOKR'   OR
+               'ZWBS_ITEM-PGSBR'   OR
+               'ZWBS_ITEM-WERKS'   OR
+               'ZWBS_ITEM-PLAKZ'   OR
+               'ZWBS_ITEM-PLFAZ'   OR
+               "'ZWBS_ITEM-PLSEZ'   OR
+               'ZWBS_ITEM-ESTRT'   OR
+               'ZWBS_ITEM-EENDE'   OR
+               'ZWBS_ITEM-ASTNR'   OR
+               'ZWBS_ITEM-VERNR'   OR
+               'ZWBS_ITEM-IMPRF'   OR
+               'LS_TABLE-POSID'    OR"'ZWBS_ITEM-POSID'   OR
+               'ZWBS_ITEM-LSTAR'.
+            PERFORM item_table_fc USING lv_field_tc
+                                        lv_change.
+          WHEN 'ZWBS_ITEM-PLSEZ'.
+            ls_screen-input = 1.
+            MODIFY SCREEN.
+          WHEN OTHERS.
+        ENDCASE.
+        MODIFY SCREEN FROM ls_screen.
+      ENDLOOP.
+    ELSE.
+      LOOP AT SCREEN.
+        CASE screen-name.
+          WHEN 'ZWBS_ITEM-POST1' OR
+               'LS_TABLE-SELECT'.
+            screen-input = 1.
+            MODIFY SCREEN.
+          WHEN OTHERS.
+            screen-input = 0.
+            MODIFY SCREEN.
+        ENDCASE.
+      ENDLOOP.
+
+      LOOP AT SCREEN INTO ls_screen.
+        SPLIT ls_screen-name AT '-' INTO lv_table lv_field_tc.
+        CASE ls_screen-name.
+          WHEN 'ZWBS_ITEM-AKSTL'   OR
+               'ZWBS_ITEM-BUDGET'  OR
+               'ZWBS_ITEM-AKOKR'   OR
+               'ZWBS_ITEM-PGSBR'   OR
+               'ZWBS_ITEM-WERKS'   OR
+               'ZWBS_ITEM-PLAKZ'   OR
+               'ZWBS_ITEM-PLFAZ'   OR
+               'ZWBS_ITEM-PLSEZ'   OR
+               'ZWBS_ITEM-ESTRT'   OR
+               'ZWBS_ITEM-EENDE'   OR
+               'ZWBS_ITEM-ASTNR'   OR
+               'ZWBS_ITEM-VERNR'   OR
+               'ZWBS_ITEM-IMPRF'   OR
+               'LS_TABLE-POSID'    OR"'ZWBS_ITEM-POSID'   OR
+               'ZWBS_ITEM-LSTAR'.
+            PERFORM item_table_fc USING lv_field_tc
+                                        lv_change.
+          WHEN OTHERS.
+        ENDCASE.
+        MODIFY SCREEN FROM ls_screen.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+  IF lv_change = 'CHANGE'.
+    LOOP AT SCREEN.
+      CASE screen-name.
+        WHEN 'ZWBS_ITEM-PGSBR'.
+          SELECT SINGLE objnr FROM prps INTO @DATA(lv_objnr_pgsbr)
+            WHERE posid = @ls_table-pspid.
+          IF sy-subrc = 0.
+            SELECT SINGLE wrttp FROM rpsco INTO @DATA(lv_wrttp)
+              WHERE objnr = @lv_objnr_pgsbr
+               AND  wrttp = '04'.
+            IF sy-subrc = 0.
+              screen-input = 0.
+              MODIFY SCREEN.
+            ENDIF.
+          ENDIF.
+
+      ENDCASE.
+    ENDLOOP.
+  ENDIF.
+*Highlight Changed Values for Change Project/WBS
+  IF lv_type = '2' AND ls_table-zchange = 'U' AND
+                 ( NOT lt_table_init IS INITIAL OR
+                   NOT lt_prps       IS INITIAL ).
+    CLEAR:ls_table_init,ls_prps.
+    IF sy-tcode = 'ZCJ01'.
+      READ TABLE lt_table_init INTO ls_table_init WITH KEY pspid =
+      zwbs_item-pspid.
+    ELSE.
+      READ TABLE lt_prps INTO ls_prps WITH KEY posid = zwbs_item-pspid.
+    ENDIF.
+    LOOP AT SCREEN INTO ls_screen.
+      CASE ls_screen-name.
+        WHEN 'ZWBS_ITEM-POST1'           OR
+             'ZWBS_ITEM-PBUKR'           OR
+             'ZWBS_ITEM-PGSBR'           OR
+             'ZWBS_ITEM-PRCTR'           OR
+             'ZWBS_ITEM-WERKS'           OR
+             'ZWBS_ITEM-ABGSL'           OR
+             'ZWBS_ITEM-ZASSET'          OR
+             'ZWBS_ITEM-ZREVSTR'         OR
+             'ZWBS_ITEM-ZAREA'           OR
+             'ZWBS_ITEM-ZSCOPCHA'        OR
+             'ZWBS_ITEM-ZOPPORTUNITY_ID' OR
+             'ZWBS_ITEM-ZSYNERGY_ID'     OR
+             'ZWBS_ITEM-ZCUSTOM'         OR
+             'ZWBS_ITEM-MTART'           OR
+             'ZWBS_ITEM-Z_MATERIAL'      OR
+             'ZWBS_ITEM-ZIBPEBELN'       OR
+             'ZWBS_ITEM-ZFCW'            OR
+             'ZWBS_ITEM-ZIPM_PR_CODE'    OR
+             'ZWBS_ITEM-ZZFCST_STATUS'   OR
+             'ZWBS_ITEM-ZZSERV_BUND'     OR
+             'ZWBS_ITEM-ZZFREE_TEXT'     OR
+             'ZWBS_ITEM-BELKZ'           OR
+             'ZWBS_ITEM-FAKKZ'           OR
+* Begin of changes by LCHENNA for CR 797199
+             'ZWBS_ITEM-ZSTAGE_ST_DT'    OR
+             'ZWBS_ITEM-ZSTAGE_END_DT'   OR
+             'ZWBS_ITEM-ZREV_REC_DT'     OR
+             'ZWBS_ITEM-ZPRODCAT'        OR
+             'ZWBS_ITEM-ZBUSINESS_CASE'  OR
+             'ZWBS_ITEM-ZLIFECYCLE_MODULE'.
+* End of changes by LCHENNA for CR 797199
+          CLEAR lv_field.
+          lv_field = ls_screen-name+10.
+          ASSIGN COMPONENT lv_field OF STRUCTURE ls_table TO <fs1>.
+          IF sy-tcode = 'ZCJ01'.
+            ASSIGN COMPONENT lv_field OF STRUCTURE ls_table_init TO <fs2>.
+          ELSE.
+            ASSIGN COMPONENT lv_field OF STRUCTURE ls_prps TO <fs2>.
+          ENDIF.
+          IF <fs1> IS ASSIGNED AND
+             <fs2> IS ASSIGNED AND
+             <fs1> NE <fs2>.
+            ls_screen-intensified = 1.
+          ENDIF.
+          UNASSIGN:<fs1>,<fs2>.
+      ENDCASE.
+      MODIFY SCREEN FROM ls_screen.
+    ENDLOOP.
+  ENDIF.
+
+  IF lv_type = 2.
+*    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+*      EXPORTING
+*        input  = ls_table-pspid
+*      IMPORTING
+*        output = lv_pspid_itm.
+*
+*    CLEAR: result_tab.
+*    FIND ALL OCCURRENCES OF '.'
+*    IN lv_pspid_itm
+*    RESULTS result_tab.
+*
+*    SORT result_tab BY offset DESCENDING.
+*    CLEAR: ls_res_tab.
+*    READ TABLE result_tab INTO ls_res_tab INDEX 1.
+*    IF sy-subrc = 0.
+*      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+*        EXPORTING
+*          input  = lv_pspid_itm+0(ls_res_tab-offset)
+*        IMPORTING
+*          output = lv_pspid_itm.
+
+    CLEAR: lv_objnr1.
+    SELECT SINGLE objnr FROM prps INTO @lv_objnr1
+   WHERE posid =  @ls_table-pspid. "lv_pspid_itm. "@lv_pspid+0(lv_pspid_len).
+    IF sy-subrc = 0.
+      CLEAR: ls_jest.
+      SELECT SINGLE * FROM jest INTO @ls_jest
+         WHERE objnr = @lv_objnr1
+          AND  stat  = 'I0046'
+          AND  inact = @space.
+      IF sy-subrc = 0.
+        LOOP AT SCREEN.
+          screen-input = 0.
+          MODIFY SCREEN.
+        ENDLOOP.
+        LOOP AT SCREEN.
+          CASE screen-name.
+            WHEN 'LS_TABLE-SELECT'.
+              screen-input = 1.
+              MODIFY SCREEN.
+          ENDCASE.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+*  ENDIF.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0900  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0900 OUTPUT.
+
+  DATA: lt_table5 TYPE STANDARD TABLE OF ts_table,
+        lt_table4 TYPE STANDARD TABLE OF ts_table,
+        lt_table3 TYPE STANDARD TABLE OF ts_table,
+        lt_table2 TYPE STANDARD TABLE OF ts_table,
+        lt_table1 TYPE STANDARD TABLE OF ts_table.
+
+*   DATA: lv_pspid_len5 TYPE numc2.
+*   DATA: lv_pspid_len4 TYPE numc2.
+*   DATA: lv_pspid_len3 TYPE numc2.
+*   DATA: lv_pspid_len2 TYPE numc2.
+*   DATA: lv_pspid_len1 TYPE numc2.
+  "DATA: lv_pspid_len_eende TYPE numc2.
+
+*  SET PF-STATUS 'xxxxxxxx'.
+*  SET TITLEBAR 'xxx'.
+
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'ZWBS_ITEM-REQUEST'.
+        screen-invisible = 1.
+        MODIFY SCREEN.
+    ENDCASE.
+  ENDLOOP.
+  CASE sy-tcode.
+    WHEN 'ZCJ01'.
+      IF zwbs_header-type = 1.
+        LOOP AT SCREEN.
+          CASE screen-name.
+            WHEN 'TC_WBS_INSERT'   OR
+                 'TC_WBS_DELETE'   OR
+                 'TC_WBS_MARK'     OR
+                 'TC_WBS_DEMARK'.
+              screen-active = 0.
+              MODIFY SCREEN.
+          ENDCASE.
+        ENDLOOP.
+*      ELSEIF zwbs_header-type = 2.
+*        IF lv_insr_flag = ' '.
+*          LOOP AT SCREEN.
+*            CASE screen-name.
+*              WHEN 'ZWBS_ITEM-PLSEZ' OR
+*                   'ZWBS_ITEM-PLFAZ'.
+*                screen-input = 0.
+*                MODIFY SCREEN.
+*            ENDCASE.
+*          ENDLOOP.
+*        ENDIF.
+      ENDIF.
+    WHEN 'ZCJ03'.
+      LOOP AT SCREEN.
+        CASE screen-name.
+          WHEN 'TC_WBS_INSERT'   OR
+               'TC_WBS_DELETE'   OR
+*               'TC_WBS_TOP'      OR
+*               'TC_WBS_PREVIOUS' OR
+*               'TC_WBS_NEXT'     OR
+*               'TC_WBS_BOTTOM'   OR
+               'TC_WBS_MARK'     OR
+               'TC_WBS_DEMARK'.
+            screen-active = 0.
+            MODIFY SCREEN.
+        ENDCASE.
+      ENDLOOP.
+  ENDCASE.
+
+* LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa>).
+*     IF <wa>-stufe = '5'.
+*     ELSEIF <wa>-stufe = '2'.
+*       DATA(lv_pspid_new2) = <wa>-pspid.
+*       CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+*         CHANGING
+*           c_value = lv_pspid_new2.
+*       lv_pspid_len_eende = strlen( lv_pspid_new2 ).
+*     ENDIF.
+*   ENDLOOP.
+*
+*   LOOP AT lt_table INTO DATA(ls_frct_2) WHERE stufe = '2'.
+*     LOOP AT lt_table INTO DATA(ls_frct_3) WHERE stufe > '2'.
+*       IF ls_frct_3-pspid+0(lv_pspid_len_eende) = ls_frct_2-pspid+0(lv_pspid_len_eende).
+*         ls_frct_3-eende = ls_frct_2-eende.
+*
+*         IF ls_frct_3-eende IS NOT INITIAL.
+*           MODIFY lt_table FROM ls_frct_3 TRANSPORTING eende.
+*         ENDIF.
+*       ENDIF.
+*     ENDLOOP.
+*   ENDLOOP.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Form  ITEM_TABLE_FC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LV_FIELD_TC  text
+*----------------------------------------------------------------------*
+FORM item_table_fc  USING    p_lv_field_tc
+                             p_lv_change.
+
+  SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                INTO @DATA(ls_cf_ctrl_tc)
+                WHERE fieldname = @p_lv_field_tc
+                AND   levels    = @ls_table-stufe
+                AND   izwek     = @ls_table-izwek
+                AND   bukrs     = @ls_table-pbukr
+                AND   crt_chg   = @p_lv_change.
+  IF sy-subrc NE 0.
+*    IF ls_cf_ctrl_tc-mandatory_flag IS NOT INITIAL.
+*      ls_screen-required = 1.
+*    ENDIF.
+*
+*    IF ls_cf_ctrl_tc-editable_flag IS NOT INITIAL.
+*      ls_screen-input = 1.
+*    ENDIF.
+*  ELSE.
+    SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+              INTO @ls_cf_ctrl_tc
+              WHERE fieldname = @p_lv_field_tc
+              AND   levels    = '*' "@space
+              AND   izwek     = @ls_table-izwek
+              AND   bukrs     = @ls_table-pbukr
+              AND   crt_chg   = @p_lv_change.
+    IF sy-subrc NE 0.
+      SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                    INTO @ls_cf_ctrl_tc
+                    WHERE fieldname = @p_lv_field_tc
+                    AND   levels    = @ls_table-stufe
+                    AND   izwek     = '*' "@space
+                    AND   bukrs     = @ls_table-pbukr
+                    AND   crt_chg   = @p_lv_change.
+      IF sy-subrc NE 0.
+        SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                   INTO @ls_cf_ctrl_tc
+                   WHERE fieldname = @p_lv_field_tc
+                   AND   levels    = @ls_table-stufe
+                   AND   izwek     = @ls_table-izwek
+                   AND   bukrs     = '*' "@space
+                   AND   crt_chg   = @p_lv_change.
+        IF sy-subrc NE 0.
+          SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                    INTO @ls_cf_ctrl_tc
+                     WHERE fieldname = @p_lv_field_tc
+                     AND   levels    = '*' "@space
+                     AND   izwek     = '*' "@space
+                     AND   bukrs     = '*' "@space
+                     AND   crt_chg   = @p_lv_change.
+          IF sy-subrc NE 0.
+            SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                      INTO @ls_cf_ctrl_tc
+                       WHERE fieldname = @p_lv_field_tc
+                       AND   levels    = '*' "@space
+                       AND   izwek     = '*' "@space
+                       AND   bukrs     = @ls_table-pbukr
+                       AND   crt_chg   = @p_lv_change.
+            IF sy-subrc NE 0.
+              SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                        INTO @ls_cf_ctrl_tc
+                         WHERE fieldname = @p_lv_field_tc
+                         AND   levels    = @ls_table-stufe
+                         AND   izwek     = '*' "@space
+                         AND   bukrs     = '*' "@space
+                         AND   crt_chg   = @p_lv_change.
+
+              IF sy-subrc NE 0.
+                SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                          INTO @ls_cf_ctrl_tc
+                          WHERE fieldname = @p_lv_field_tc
+                         AND   levels    = @ls_table-stufe
+                         AND   izwek     = '*' "@space
+                         AND   bukrs     = @ls_table-pbukr
+                         AND   crt_chg   = @p_lv_change.
+                IF sy-subrc NE 0.
+                  SELECT SINGLE * FROM zwbs_cf_ctrl_tc
+                          INTO @ls_cf_ctrl_tc
+                        WHERE fieldname = @p_lv_field_tc
+                  AND   levels    = '*' "@ls_table-stufe
+                  AND   izwek     =  @ls_table-izwek
+                  AND   bukrs     = '*' "@ls_table-pbukr
+                  AND   crt_chg   = @p_lv_change.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+  IF ls_cf_ctrl_tc IS NOT INITIAL.
+    IF ls_cf_ctrl_tc-mandatory_flag IS NOT INITIAL.
+      "ls_screen-required = 1.
+      DATA(lv_req_flag) = 'X'.
+    ENDIF.
+
+    IF ls_cf_ctrl_tc-editable_flag IS NOT INITIAL.
+      ls_screen-input = 1.
+    ENDIF.
+    "LSEIF ls_cf_ctrl_tc-fieldname = 'LSTAR'.
+
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0810  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0810 OUTPUT.
+  SET PF-STATUS '810'.
+  SET TITLEBAR '810'.
+
+  PERFORM create_appr_log_editor.
+
+ENDMODULE.
