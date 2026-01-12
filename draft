@@ -1,0 +1,143 @@
+CLASS zcl_a2r_wbs_builder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    TYPES:
+      BEGIN OF ty_input,
+        posnr TYPE impr-posnr,
+        post1 TYPE proj-post1,
+        verna TYPE tcj04-verna,
+        plsez TYPE proj-plsez,
+      END OF ty_input.
+
+    METHODS create_project
+      IMPORTING
+        is_input TYPE ty_input
+      RETURNING
+        VALUE(rv_request_id) TYPE ztb_a2r_wbsheader-request_id
+      RAISING
+        cx_static_check.
+
+  PRIVATE SECTION.
+    DATA:
+      gs_impr      TYPE impr,
+      gs_conf      TYPE ztb_a2r_conftab1,
+      gv_request   TYPE ztb_a2r_wbsheader-request_id.
+
+    METHODS:
+      read_im_data,
+      determine_profile_template,
+      create_header,
+      create_wbs_items.
+ENDCLASS.
+
+
+
+
+
+CLASS zcl_a2r_wbs_builder IMPLEMENTATION.
+
+  METHOD create_project.
+    read_im_data( ).
+    determine_profile_template( ).
+    create_header( ).
+    create_wbs_items( ).
+    rv_request_id = gv_request.
+  ENDMETHOD.
+
+  METHOD read_im_data.
+    SELECT SINGLE *
+      FROM impr
+      INTO gs_impr
+      WHERE posnr = @is_input-posnr.
+
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE cx_static_check.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD determine_profile_template.
+    SELECT SINGLE *
+      FROM ztb_a2r_conftab1
+      INTO gs_conf
+      WHERE izwek = @gs_impr-izwek.
+
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE cx_static_check.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD create_header.
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr = '01'
+        object      = 'ZPS_NUM_RANGE'
+      IMPORTING
+        number      = gv_request.
+
+    INSERT ztb_a2r_wbsheader FROM VALUE #(
+      request_id     = gv_request
+      reqtype        = 'A1'
+      posnr          = is_input-posnr
+      profl          = gs_conf-profl
+      template_pspid = gs_conf-pspid
+      post1          = is_input-post1
+      verna          = is_input-verna
+      plsez          = is_input-plsez
+      bukrs          = gs_impr-bukrs
+      werks          = gs_impr-werks
+      prctr          = gs_impr-prctr
+      kostl          = gs_impr-kostl
+      status         = '0'
+      created_by     = sy-uname
+      created_on     = sy-datum
+      created_at     = sy-uzeit ).
+  ENDMETHOD.
+
+  METHOD create_wbs_items.
+    DATA lt_prps TYPE STANDARD TABLE OF prps.
+
+    SELECT *
+      FROM prps
+      INTO TABLE lt_prps
+      WHERE pspnr = (
+        SELECT pspnr FROM proj WHERE pspid = @gs_conf-pspid ).
+
+    LOOP AT lt_prps ASSIGNING FIELD-SYMBOL(<fs_prps>).
+      INSERT ztb_a2r_wbsitem FROM VALUE #(
+        request_id     = gv_request
+        pspid_template = gs_conf-pspid
+        pspid          = <fs_prps>-posid
+        post1          = <fs_prps>-post1
+        stufe          = <fs_prps>-stufe
+        created_by     = sy-uname
+        created_on     = sy-datum
+        created_at     = sy-uzeit ).
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+REPORT zcj00.
+
+PARAMETERS:
+  p_posnr TYPE impr-posnr OBLIGATORY,
+  p_post1 TYPE proj-post1 OBLIGATORY,
+  p_verna TYPE tcj04-verna OBLIGATORY,
+  p_plsez TYPE proj-plsez OBLIGATORY.
+
+START-OF-SELECTION.
+  DATA(lo_builder) = NEW zcl_a2r_wbs_builder( ).
+
+  DATA(lv_req) = lo_builder->create_project(
+    VALUE #( posnr = p_posnr
+             post1 = p_post1
+             verna = p_verna
+             plsez = p_plsez ) ).
+
+  WRITE: / 'Project Request Created:', lv_req.
