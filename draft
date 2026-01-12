@@ -1,200 +1,35 @@
-CLASS zcl_a2r_wbs_builder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    TYPES:
-      BEGIN OF ty_input,
-        posnr TYPE impr-posnr,      " IM Number
-        post1 TYPE proj-post1,      " Project Description
-        verna TYPE tcj04-verna,     " Person Responsible
-        plsez TYPE proj-plsez,      " Finish Date
-      END OF ty_input.
-
-    METHODS create_project
-      IMPORTING
-        is_input TYPE ty_input
-      RETURNING
-        VALUE(rv_request_id) TYPE ztb_a2r_wbsheader-request_id.
-
-  PRIVATE SECTION.
-
-    DATA:
-      gs_input   TYPE ty_input,
-      gs_impr    TYPE impr,
-      gs_conf    TYPE ztb_a2r_conftab1,
-      gv_request TYPE ztb_a2r_wbsheader-request_id.
-
-    METHODS:
-      read_im_data,
-      determine_profile_template,
-      create_header,
-      create_wbs_items.
-
-ENDCLASS.
-
-
-CLASS zcl_a2r_wbs_builder IMPLEMENTATION.
+REPORT zcj00.
 
 *---------------------------------------------------------------------*
-* Public Entry Method – Sprint 1
+* Selection Screen – Sprint 1 (Create Project Only)
 *---------------------------------------------------------------------*
-  METHOD create_project.
-
-    gs_input = is_input.
-
-    read_im_data( ).
-    determine_profile_template( ).
-    create_header( ).
-    create_wbs_items( ).
-
-    rv_request_id = gv_request.
-
-  ENDMETHOD.
+PARAMETERS:
+  p_posnr TYPE impr-posnr OBLIGATORY,
+  p_post1 TYPE proj-post1 OBLIGATORY,
+  p_verna TYPE tcj04-verna OBLIGATORY,
+  p_plsez TYPE proj-plsez OBLIGATORY.
 
 *---------------------------------------------------------------------*
-* Read IM Master Data
+* Start of Selection
 *---------------------------------------------------------------------*
-  METHOD read_im_data.
+START-OF-SELECTION.
 
-    CLEAR gs_impr.
+  DATA(lo_builder) = NEW zcl_a2r_wbs_builder( ).
+  DATA(lv_request_id) TYPE ztb_a2r_wbsheader-request_id.
 
-    SELECT SINGLE *
-      FROM impr
-      INTO gs_impr
-      WHERE posnr = gs_input-posnr.
+  TRY.
+      lv_request_id = lo_builder->create_project(
+        VALUE zcl_a2r_wbs_builder=>ty_input(
+          posnr = p_posnr
+          post1 = p_post1
+          verna = p_verna
+          plsez = p_plsez
+        )
+      ).
 
-    IF sy-subrc <> 0.
-      MESSAGE 'IM number not found' TYPE 'E'.
-    ENDIF.
+      WRITE: / '✅ Project Request successfully created'.
+      WRITE: / 'Request ID:', lv_request_id.
 
-  ENDMETHOD.
-
-*---------------------------------------------------------------------*
-* Determine Project Profile & Template from Config Table
-*---------------------------------------------------------------------*
-  METHOD determine_profile_template.
-
-    CLEAR gs_conf.
-
-    SELECT SINGLE *
-      FROM ztb_a2r_conftab1
-      INTO gs_conf
-      WHERE izwek = gs_impr-izwek.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'No configuration found for Investment Reason' TYPE 'E'.
-    ENDIF.
-
-  ENDMETHOD.
-
-*---------------------------------------------------------------------*
-* Create Request Header Record
-*---------------------------------------------------------------------*
-  METHOD create_header.
-
-    DATA ls_header TYPE ztb_a2r_wbsheader.
-
-    CLEAR gv_request.
-
-    CALL FUNCTION 'NUMBER_GET_NEXT'
-      EXPORTING
-        nr_range_nr = '01'
-        object      = 'ZPS_NUM_RANGE'
-      IMPORTING
-        number      = gv_request
-      EXCEPTIONS
-        OTHERS      = 1.
-
-    IF sy-subrc <> 0 OR gv_request IS INITIAL.
-      MESSAGE 'Failed to generate request number' TYPE 'E'.
-    ENDIF.
-
-    CLEAR ls_header.
-
-    ls_header-mandt          = sy-mandt.
-    ls_header-request_id     = gv_request.
-    ls_header-reqtype        = 'A1'.
-    ls_header-posnr          = gs_input-posnr.
-    ls_header-profl          = gs_conf-profl.
-    ls_header-template_pspid = gs_conf-pspid.
-    ls_header-post1          = gs_input-post1.
-    ls_header-verna          = gs_input-verna.
-    ls_header-plsez          = gs_input-plsez.
-    ls_header-bukrs          = gs_impr-bukrs.
-    ls_header-werks          = gs_impr-werks.
-    ls_header-prctr          = gs_impr-prctr.
-    ls_header-kostl          = gs_impr-kostl.
-    ls_header-status         = '0'. " Saved
-    ls_header-created_by     = sy-uname.
-    ls_header-created_on     = sy-datum.
-    ls_header-created_at     = sy-uzeit.
-
-    INSERT ztb_a2r_wbsheader FROM ls_header.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'Failed to insert request header' TYPE 'E'.
-    ENDIF.
-
-  ENDMETHOD.
-
-*---------------------------------------------------------------------*
-* Copy WBS Elements from Template Project
-*---------------------------------------------------------------------*
-  METHOD create_wbs_items.
-
-    DATA:
-      lv_pspnr TYPE proj-pspnr,
-      lt_prps  TYPE STANDARD TABLE OF prps,
-      ls_prps  TYPE prps,
-      ls_item  TYPE ztb_a2r_wbsitem.
-
-    CLEAR lv_pspnr.
-
-    SELECT SINGLE pspnr
-      FROM proj
-      INTO lv_pspnr
-      WHERE pspid = gs_conf-pspid.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'Project template not found in PROJ' TYPE 'E'.
-    ENDIF.
-
-    CLEAR lt_prps.
-
-    SELECT *
-      FROM prps
-      INTO TABLE lt_prps
-      WHERE pspnr = lv_pspnr.
-
-    IF lt_prps IS INITIAL.
-      MESSAGE 'No WBS elements found for project template' TYPE 'E'.
-    ENDIF.
-
-    LOOP AT lt_prps INTO ls_prps.
-
-      CLEAR ls_item.
-
-      ls_item-mandt          = sy-mandt.
-      ls_item-request_id     = gv_request.
-      ls_item-pspid_template = gs_conf-pspid.
-      ls_item-pspid          = ls_prps-posid.
-      ls_item-post1          = ls_prps-post1.
-      ls_item-stufe          = ls_prps-stufe.
-      ls_item-created_by     = sy-uname.
-      ls_item-created_on     = sy-datum.
-      ls_item-created_at     = sy-uzeit.
-
-      INSERT ztb_a2r_wbsitem FROM ls_item.
-
-      IF sy-subrc <> 0.
-        MESSAGE 'Failed to insert WBS item' TYPE 'E'.
-      ENDIF.
-
-    ENDLOOP.
-
-  ENDMETHOD.
-
-ENDCLASS.
+    CATCH cx_static_check.
+      MESSAGE 'Error during project creation' TYPE 'E'.
+  ENDTRY.
