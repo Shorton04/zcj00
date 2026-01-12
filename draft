@@ -1,3 +1,72 @@
+METHOD create_wbs_items.
+
+  DATA:
+    lv_pspnr TYPE proj-pspnr,
+    lt_prps  TYPE STANDARD TABLE OF prps,
+    ls_prps  TYPE prps,
+    ls_item  TYPE ztb_a2r_wbsitem.
+
+*---------------------------------------------------------------------*
+* Get internal project number of template
+*---------------------------------------------------------------------*
+  CLEAR lv_pspnr.
+
+  SELECT SINGLE pspnr
+    FROM proj
+    INTO lv_pspnr
+    WHERE pspid = gs_conf-pspid.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Project template not found in PROJ' TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read WBS elements from template project
+*---------------------------------------------------------------------*
+  CLEAR lt_prps.
+
+  SELECT *
+    FROM prps
+    INTO TABLE lt_prps
+    WHERE pspnr = lv_pspnr.
+
+  IF lt_prps IS INITIAL.
+    MESSAGE 'No WBS elements found for project template' TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Insert WBS items into request item table
+*---------------------------------------------------------------------*
+  LOOP AT lt_prps INTO ls_prps.
+
+    CLEAR ls_item.
+
+    ls_item-mandt          = sy-mandt.
+    ls_item-request_id     = gv_request.
+    ls_item-pspid_template = gs_conf-pspid.
+    ls_item-pspid          = ls_prps-posid.
+    ls_item-post1          = ls_prps-post1.
+    ls_item-stufe          = ls_prps-stufe.
+    ls_item-created_by     = sy-uname.
+    ls_item-created_on     = sy-datum.
+    ls_item-created_at     = sy-uzeit.
+
+    INSERT ztb_a2r_wbsitem FROM ls_item.
+
+    IF sy-subrc <> 0.
+      MESSAGE 'Failed to insert WBS item' TYPE 'E'.
+      RETURN.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMETHOD.
+
+
+
+
 CLASS zcl_a2r_wbs_builder DEFINITION
   PUBLIC
   FINAL
