@@ -1,19 +1,22 @@
-METHOD update_plan_values.
-  " Fetch the available budget for the specified WBS element (POSID)
-  SELECT SINGLE approved_budget 
-    FROM ZTB_A2R_WBSITEM 
-    WHERE posid = @iv_posid
-    INTO @DATA(lv_available_budget).
+METHOD create_project.
+  " Generate Request Number
+  CALL FUNCTION 'NUMBER_GET_NEXT'
+    EXPORTING
+      nr_range_nr = '01'
+      object = 'ZCJ00_REQN'
+    IMPORTING
+      number = lv_req_no.
 
-  " Check if the plan value exceeds the available budget
-  IF iv_plan_value > lv_available_budget.
-    MESSAGE 'Plan value exceeds available budget' TYPE 'E'.
-  ENDIF.
+  " Create Project Header Entry
+  INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
+    VALUES (iv_pspnr, lv_req_no, 'Draft', iv_bukrs, iv_werks, iv_plsez).
 
-  " Update the plan values in the WBSITEM table
-  UPDATE ZTB_A2R_WBSITEM 
-    SET approved_budget = iv_plan_value
-    WHERE posid = @iv_posid.
+  " Create WBS Elements
+  LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
+    INSERT INTO ZTB_A2R_WBSITEM (pspnr, posid, description, zbudget_check)
+      VALUES (iv_pspnr, ls_wbs-posid, ls_wbs-description, ls_wbs-zbudget_check).
+  ENDLOOP.
 
   COMMIT WORK.
+  MESSAGE 'Project created successfully' TYPE 'S'.
 ENDMETHOD.
