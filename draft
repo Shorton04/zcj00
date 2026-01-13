@@ -1,35 +1,287 @@
-REPORT zcj00.
+REPORT ZTR_A2R_WSB.
 
-*---------------------------------------------------------------------*
-* Selection Screen – Sprint 1 (Create Project Only)
-*---------------------------------------------------------------------*
-PARAMETERS:
-  p_posnr TYPE impr-posnr OBLIGATORY,
-  p_post1 TYPE proj-post1 OBLIGATORY,
-  p_verna TYPE tcj04-verna OBLIGATORY,
-  p_plsez TYPE proj-plsez OBLIGATORY.
+* --- Data Declarations ---
+DATA: lv_pspnr TYPE ps_pspnr,
+      lv_status TYPE string,
+      lv_posid TYPE ps_posid,
+      lv_projname TYPE string,
+      lv_bukrs TYPE bukrs,
+      lv_werks TYPE werks,
+      lv_plsez TYPE dats,
+      lv_plan_value TYPE curr,
+      lv_error TYPE abap_bool,
+      lv_req_no TYPE zreq_num.
 
-*---------------------------------------------------------------------*
-* Start of Selection
-*---------------------------------------------------------------------*
+PARAMETERS: p_pspnr TYPE ps_pspnr,
+            p_projname TYPE string,
+            p_bukrs TYPE bukrs,
+            p_werks TYPE werks,
+            p_plsez TYPE dats,
+            p_plan_value TYPE curr.
+
 START-OF-SELECTION.
 
-  DATA(lo_builder) = NEW zcl_a2r_wbs_builder( ).
-  DATA(lv_request_id) TYPE ztb_a2r_wbsheader-request_id.
+  " Create an object of the class
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
 
-  TRY.
-      lv_request_id = lo_builder->create_project(
-        VALUE zcl_a2r_wbs_builder=>ty_input(
-          posnr = p_posnr
-          post1 = p_post1
-          verna = p_verna
-          plsez = p_plsez
-        )
-      ).
+  " Selection screen handling
+  PERFORM handle_selection_screen.
 
-      WRITE: / '✅ Project Request successfully created'.
-      WRITE: / 'Request ID:', lv_request_id.
+  " Call the methods for processing
+  PERFORM project_routine USING lo_wbs_builder.
 
-    CATCH cx_static_check.
-      MESSAGE 'Error during project creation' TYPE 'E'.
-  ENDTRY.
+  MESSAGE 'Project creation process completed' TYPE 'S'.
+
+
+
+* --- ZTR_A2R_WSB_TOP: Data Declarations ---
+
+DATA: lt_wbs_elements TYPE TABLE OF ZTB_A2R_WBSITEM,
+      lv_error TYPE abap_bool,
+      lv_req_no TYPE zreq_num,
+      lv_template TYPE ps_pspnr,
+      lv_pspid TYPE ps_pspid,
+      lt_wbs_data TYPE TABLE OF ZTB_A2R_WBSITEM.
+
+" Internal Structures for Project Data
+TYPES: BEGIN OF ty_wbs_element,
+         posid TYPE ps_posid,
+         description TYPE string,
+         approved_budget TYPE curr,
+       END OF ty_wbs_element.
+
+
+
+* --- ZTR_A2R_WSB_SEL: Selection Screen Logic ---
+
+FORM handle_selection_screen.
+
+  CASE p_pspnr.
+    WHEN 'A1'. " Create New Project
+      PERFORM create_project USING p_pspnr p_projname p_bukrs p_werks p_plsez.
+
+    WHEN 'B1'. " Add CAR Project
+      PERFORM add_car_project USING p_pspnr.
+
+    WHEN 'C1'. " Partial Capitalization
+      PERFORM partial_capitalization USING p_pspnr.
+
+    WHEN OTHERS.
+      MESSAGE 'Invalid request type selected' TYPE 'E'.
+  ENDCASE.
+
+ENDFORM.
+
+
+
+* --- ZTR_A2R_WSB_F01: Project Routine Logic ---
+
+FORM project_routine USING lo_wbs_builder TYPE REF TO ZCL_A2R_WBS_BUILDER.
+
+  " Create Project Logic
+  lo_wbs_builder->create_project(
+    iv_pspnr = p_pspnr
+    iv_projname = p_projname
+    iv_bukrs = p_bukrs
+    iv_werks = p_werks
+    iv_plsez = p_plsez
+  ).
+
+  " Create Settlement Rule Logic
+  lo_wbs_builder->create_settlement_rule(
+    iv_pspnr = p_pspnr
+    iv_posid = lv_posid
+  ).
+
+  " Update Plan Values Logic
+  lo_wbs_builder->update_plan_values(
+    iv_pspnr = p_pspnr
+    iv_posid = lv_posid
+    iv_plan_value = p_plan_value
+  ).
+
+  " Activate System Status Logic
+  lo_wbs_builder->activate_system_status(
+    iv_pspnr = p_pspnr
+    iv_status = lv_status
+    iv_posid = lv_posid
+  ).
+
+ENDFORM.
+
+
+
+
+CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS: create_project
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_projname TYPE string
+                       iv_bukrs TYPE bukrs
+                       iv_werks TYPE werks
+                       iv_plsez TYPE dats,
+             create_settlement_rule
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_posid TYPE ps_posid,
+             update_plan_values
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_posid TYPE ps_posid
+                       iv_plan_value TYPE curr,
+             activate_system_status
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_status TYPE string
+                       iv_posid TYPE ps_posid.
+
+  PRIVATE SECTION.
+    DATA: lv_error TYPE abap_bool.
+
+ENDCLASS.
+
+CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
+
+  METHOD create_project.
+    " Generate Request Number
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr = '01'
+        object = 'ZCJ00_REQN'
+      IMPORTING
+        number = lv_req_no.
+
+    " Create Project Header Entry
+    INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
+      VALUES (iv_pspnr, lv_req_no, 'Draft', iv_bukrs, iv_werks, iv_plsez).
+
+    " Create WBS Elements
+    LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
+      INSERT INTO ZTB_A2R_WBSITEM (pspnr, posid, description, approved_budget)
+        VALUES (iv_pspnr, ls_wbs-posid, ls_wbs-description, ls_wbs-approved_budget).
+    ENDLOOP.
+
+    COMMIT WORK.
+    MESSAGE 'Project created successfully' TYPE 'S'.
+  ENDMETHOD.
+
+  METHOD create_settlement_rule.
+    " Settlement Rule Creation Logic
+    CALL FUNCTION 'K_SRULE_SAVE_UTASK'
+      EXPORTING
+        object_number = iv_posid
+        settlement_receiver = iv_pspnr
+        percentage = 100
+        settlement_type = 'FUL'.
+    COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD update_plan_values.
+    " Update Plan Values Logic
+    SELECT SINGLE approved_budget FROM ZTB_A2R_WBSITEM WHERE pspnr = iv_pspnr AND posid = iv_posid INTO @DATA(lv_available_budget).
+
+    IF iv_plan_value > lv_available_budget.
+      MESSAGE 'Plan value exceeds available budget' TYPE 'E'.
+    ENDIF.
+
+    UPDATE ZTB_A2R_WBSITEM SET approved_budget = iv_plan_value
+      WHERE pspnr = iv_pspnr AND posid = iv_posid.
+
+    COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD activate_system_status.
+    " System Status Activation
+    CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
+      EXPORTING
+        object_type = 'PS'
+        object_key = iv_pspnr
+        status = iv_status
+        reason = 'Project Initialization'.
+    COMMIT WORK.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+FORM create_settlement_rule USING iv_pspnr TYPE ps_pspnr
+                                iv_posid TYPE ps_posid.
+
+  DATA: lv_settlement_receiver TYPE ps_posid,
+        lv_percent TYPE percent,
+        lv_settlement_type TYPE char2.
+
+  " Get WBS Settlement Receiver (higher-level WBS element)
+  SELECT SINGLE posid INTO lv_settlement_receiver
+    FROM prps
+    WHERE pspid = iv_pspnr AND stufe = 1.  " Assuming the first level is the settlement receiver
+
+  lv_settlement_type = 'FUL'.  " Full settlement
+
+  " Create Settlement Rule using SAP function module
+  CALL FUNCTION 'K_SRULE_SAVE_UTASK'
+    EXPORTING
+      object_number         = iv_posid
+      settlement_receiver   = lv_settlement_receiver
+      percentage            = lv_percent
+      settlement_type       = lv_settlement_type
+    EXCEPTIONS
+      others                = 1.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error creating settlement rule' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+
+
+FORM update_plan_values USING iv_pspnr TYPE ps_pspnr
+                           iv_posid TYPE ps_posid
+                           iv_plan_value TYPE curr.
+
+  DATA: lv_available_budget TYPE curr.
+
+  " Fetch available budget from project header
+  SELECT SINGLE available_budget FROM ZTB_A2R_WBSHDR WHERE pspnr = iv_pspnr
+    INTO lv_available_budget.
+
+  " Validate that plan value does not exceed the available budget
+  IF iv_plan_value > lv_available_budget.
+    MESSAGE 'Plan value exceeds available budget' TYPE 'E'.
+  ENDIF.
+
+  " Update the plan values in the WBS table
+  UPDATE ZTB_A2R_WBSITEM SET approved_budget = iv_plan_value
+    WHERE pspnr = iv_pspnr AND posid = iv_posid.
+
+  COMMIT WORK.
+  MESSAGE 'Plan values updated successfully' TYPE 'S'.
+
+ENDFORM.
+
+
+FORM activate_system_status USING iv_pspnr TYPE ps_pspnr
+                                 iv_status TYPE string
+                                 iv_posid TYPE ps_posid.
+
+  " Call function module to change status of WBS element
+  CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
+    EXPORTING
+      object_type     = 'PS'
+      object_key      = iv_pspnr
+      status          = iv_status
+      reason          = 'Project Initialization'
+    EXCEPTIONS
+      others          = 1.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error activating system status' TYPE 'E'.
+  ENDIF.
+
+  " Update PRPS table for WBS element status
+  UPDATE prps SET status = iv_status
+    WHERE pspid = iv_pspnr AND posid = iv_posid.
+
+  COMMIT WORK.
+  MESSAGE 'System status activated successfully' TYPE 'S'.
+
+ENDFORM.
