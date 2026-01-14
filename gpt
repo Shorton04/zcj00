@@ -1,3 +1,45 @@
+*&---------------------------------------------------------------------*
+*& Report ZTR_A2R_WBS_TEST
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZTR_A2R_WBS_TEST.
+
+*---------------------------------------------------------------------*
+* Selection Screen – Sprint 1 (Create Project Only)
+*---------------------------------------------------------------------*
+PARAMETERS:
+  p_posnr TYPE impr-posnr OBLIGATORY,
+  p_post1 TYPE proj-post1 OBLIGATORY,
+  p_verna TYPE tcj04-verna OBLIGATORY,
+  p_plsez TYPE proj-plsez OBLIGATORY.
+
+*---------------------------------------------------------------------*
+* Start of Selection
+*---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  DATA(lo_builder) = NEW zcl_a2r_wbs_builder( ).
+  DATA lv_request_id TYPE ztb_a2r_wbshdr-zreq_num.
+
+  TRY.
+      lv_request_id = lo_builder->create_project(
+        VALUE zcl_a2r_wbs_builder=>ty_input(
+          posnr = p_posnr
+          post1 = p_post1
+          verna = p_verna
+          plsez = p_plsez
+        )
+      ).
+
+      WRITE: / 'Project Request successfully created'.
+      WRITE: / 'Request ID:', lv_request_id.
+
+    CATCH cx_static_check.
+      MESSAGE 'Error during project creation' TYPE 'E'.
+  ENDTRY.
+
+
 class ZCL_A2R_WBS_BUILDER definition
   public
   final
