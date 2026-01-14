@@ -1,250 +1,28 @@
-*&---------------------------------------------------------------------*
-*& Report ZTR_A2R_WBS_TEST
-*&---------------------------------------------------------------------*
-*&
-*&---------------------------------------------------------------------*
-REPORT ZTR_A2R_WBS_TEST.
+1. Project Creation
+	•	Initiate New Project: Users initiate the creation of a new project by selecting the request type “Create New Project” (A1). This triggers the process of establishing a WBS (Work Breakdown Structure) hierarchy.
+	•	Default Values: The system auto-populates default values such as the Project Profile and Template based on the selected Investment Number.
+	•	Data Entry: Users enter specific project details (e.g., project description, person responsible, finish date, profit center, cost center).
+	•	System Validation: The system performs validations to ensure data integrity, such as verifying if cost centers and profit centers are valid for the current year.
+	•	Request Creation: Once validated, the request is saved as a draft, awaiting further actions (e.g., submission).
 
-*---------------------------------------------------------------------*
-* Selection Screen – Sprint 1 (Create Project Only)
-*---------------------------------------------------------------------*
-PARAMETERS:
-  p_posnr TYPE impr-posnr OBLIGATORY,
-  p_post1 TYPE proj-post1 OBLIGATORY,
-  p_verna TYPE tcj04-verna OBLIGATORY,
-  p_plsez TYPE proj-plsez OBLIGATORY.
+2. Update Plan Values
+	•	Plan Values Assignment: After the project’s details are entered, the system assigns plan values (budgets) to the project, ensuring they align with the financial parameters set by the organization.
+	•	Automatic Population: If the investment program allows, the system auto-populates plan values from templates or investment reasons.
 
-*---------------------------------------------------------------------*
-* Start of Selection
-*---------------------------------------------------------------------*
-START-OF-SELECTION.
+3. Update Budget
+	•	Budget Distribution: The system distributes the budget from the Investment Management (IM) level to the 1st level of WBS.
+	•	Budget Check: Users ensure the budget for the first level WBS does not exceed the available IM budget, using SAP function modules like IM_CHECK_WBS_ASSIGNMENT and IM_AVAILABILITY_CHECK.
+	•	Budget Validation: The system performs validation to ensure the assigned budget is within limits and flags any discrepancies for review.
 
-  DATA(lo_builder) = NEW zcl_a2r_wbs_builder( ).
-  DATA lv_request_id TYPE ztb_a2r_wbshdr-zreq_num.
+4. Settlement Rule Creation
+	•	Create Settlement Rule: A settlement rule is generated for the WBS element based on the project’s parameters.
+	•	Activate System Status: After the settlement rule is created, the system activates the appropriate statuses (e.g., SETC for Capitalized).
 
-  TRY.
-      lv_request_id = lo_builder->create_project(
-        VALUE zcl_a2r_wbs_builder=>ty_input(
-          posnr = p_posnr
-          post1 = p_post1
-          verna = p_verna
-          plsez = p_plsez
-        )
-      ).
+5. Workflow
+	•	Approval Workflow: Once the project request is submitted, it triggers a workflow for approval based on the approval matrix defined in the system.
+	•	Status Tracking: The request status is updated through the workflow (e.g., draft, pending approval, approved, rejected).
+	•	Error Handling: If the workflow encounters errors, the request is either rejected or sent back for amendments.
 
-      WRITE: / 'Project Request successfully created'.
-      WRITE: / 'Request ID:', lv_request_id.
-
-    CATCH cx_static_check.
-      MESSAGE 'Error during project creation' TYPE 'E'.
-  ENDTRY.
-
-
-class ZCL_A2R_WBS_BUILDER definition
-  public
-  final
-  create public .
-
-public section.
-
-  types:
-    BEGIN OF ty_input,
-        posnr TYPE impr-posnr,
-        post1 TYPE proj-post1,
-        verna TYPE tcj04-verna,
-        plsez TYPE proj-plsez,
-      END OF ty_input .
-
-  methods CREATE_PROJECT
-    importing
-      !IS_INPUT type TY_INPUT
-    returning
-      value(RV_ZREQ_NUM) type ZTB_A2R_WBSHDR-ZREQ_NUM .
-private section.
-
-  data GS_INPUT type TY_INPUT .
-  data GS_IMPR type IMPR .
-  data GS_CONF type ZTB_A2R_CONFTAB1 .
-  data GV_REQUEST type ZTB_A2R_WBSHDR-ZREQ_NUM .
-
-  methods READ_IM_DATA .
-  methods DETERMINE_PROFILE_TEMPLATE .
-  methods CREATE_HEADER .
-  methods CREATE_WBS_ITEMS .
-ENDCLASS.
-
-
-
-CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->CREATE_HEADER
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD create_header.
-
-    DATA ls_header TYPE ztb_a2r_wbshdr.
-
-    CLEAR gv_request.
-
-    CALL FUNCTION 'NUMBER_GET_NEXT'
-      EXPORTING
-        nr_range_nr = '01'
-        object      = 'ZPS_NUM_RANGE'
-      IMPORTING
-        number      = gv_request
-      EXCEPTIONS
-        OTHERS      = 1.
-
-    IF sy-subrc <> 0 OR gv_request IS INITIAL.
-      MESSAGE 'Failed to generate request number' TYPE 'E'.
-    ENDIF.
-
-    CLEAR ls_header.
-
-    ls_header-mandt          = sy-mandt.
-    ls_header-zreq_num     = gv_request.
-    ls_header-ZZ_REQUEST_TYPE        = 'A1'.
-    ls_header-posnr          = gs_input-posnr.
-
-    ls_header-pspid = gs_conf-pspid.
-    ls_header-post1          = gs_input-post1.
-    ls_header-verna          = gs_input-verna.
-    ls_header-plsez          = gs_input-plsez.
-    ls_header-bukrs          = gs_impr-bukrs.
-    ls_header-werks          = gs_impr-werks.
-    ls_header-prctr          = gs_impr-prctr.
-    ls_header-kostl          = gs_impr-kostl.
-    ls_header-status         = '0'. " Saved
-    ls_header-created_by     = sy-uname.
-    ls_header-created_on     = sy-datum.
-    ls_header-creation_time     = sy-uzeit.
-
-    INSERT ztb_a2r_wbshdr FROM ls_header.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'Failed to insert request header' TYPE 'E'.
-    ENDIF.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_BUILDER->CREATE_PROJECT
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IS_INPUT                       TYPE        TY_INPUT
-* | [<-()] RV_ZREQ_NUM                    TYPE        ZTB_A2R_WBSHDR-ZREQ_NUM
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD create_project.
-
-    gs_input = is_input.
-
-    read_im_data( ).
-    determine_profile_template( ).
-    create_header( ).
-    create_wbs_items( ).
-
-    rv_zreq_num = gv_request.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->CREATE_WBS_ITEMS
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD create_wbs_items.
-
-    DATA:
-      lv_pspnr TYPE proj-pspnr,
-      lt_prps  TYPE STANDARD TABLE OF prps,
-      ls_prps  TYPE prps,
-      ls_item  TYPE ztb_a2r_wbsitem.
-
-    CLEAR lv_pspnr.
-
-    SELECT SINGLE pspnr
-      FROM proj
-      INTO lv_pspnr
-      WHERE pspid = gs_conf-pspid.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'Project template not found in PROJ' TYPE 'E'.
-    ENDIF.
-
-    CLEAR lt_prps.
-
-    SELECT *
-      FROM prps
-      INTO TABLE lt_prps
-      WHERE pspnr = lv_pspnr.
-
-    IF lt_prps IS INITIAL.
-      MESSAGE 'No WBS elements found for project template' TYPE 'E'.
-    ENDIF.
-
-    LOOP AT lt_prps INTO ls_prps.
-
-      CLEAR ls_item.
-
-      ls_item-mandt          = sy-mandt.
-      ls_item-zreq_num     = gv_request.
-      ls_item-zproj_template = gs_conf-pspid.
-      ls_item-pspid          = ls_prps-posid.
-      ls_item-post1          = ls_prps-post1.
-      ls_item-stufe          = ls_prps-stufe.
-      ls_item-created_by     = sy-uname.
-      ls_item-created_on     = sy-datum.
-      ls_item-creation_time     = sy-uzeit.
-
-      INSERT ztb_a2r_wbsitem FROM ls_item.
-
-      IF sy-subrc <> 0.
-        MESSAGE 'Failed to insert WBS item' TYPE 'E'.
-      ENDIF.
-
-    ENDLOOP.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->DETERMINE_PROFILE_TEMPLATE
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD determine_profile_template.
-
-    CLEAR gs_conf.
-
-    SELECT SINGLE *
-      FROM ztb_a2r_conftab1
-      INTO gs_conf
-      WHERE izwek = gs_impr-izwek.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'No configuration found for Investment Reason' TYPE 'E'.
-    ENDIF.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->READ_IM_DATA
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD read_im_data.
-
-    CLEAR gs_impr.
-
-    SELECT SINGLE *
-      FROM impr
-      INTO gs_impr
-      WHERE posnr = gs_input-posnr.
-
-    IF sy-subrc <> 0.
-      MESSAGE 'IM number not found' TYPE 'E'.
-    ENDIF.
-
-  ENDMETHOD.
-ENDCLASS.
+6. Report
+	•	Generate Report: A report is generated to provide details on the project request, including the WBS elements, budget, and any updates made during the project creation process.
+	•	WBS Request Reporting: The report is based on data from custom tables (e.g., ZTB_A2R_WBSHDR, ZTB_A2R_WBSITEM), which store all project-related information and the status of the WBS elements.
