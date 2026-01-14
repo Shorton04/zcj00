@@ -20,9 +20,7 @@ CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
                        iv_posid TYPE ps_posid.
 
   PRIVATE SECTION.
-    DATA: lv_error TYPE abap_bool,
-          lv_req_no TYPE zreq_num,  " Declare the request number
-          lt_wbs_elements TYPE TABLE OF ZTB_A2R_WBSITEM.  " Declare WBS elements table
+    DATA: lv_error TYPE abap_bool.
 
 ENDCLASS.
 
@@ -38,13 +36,27 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
         number = lv_req_no.  " Store the generated request number in lv_req_no
 
     " Create Project Header Entry
-    INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
-      VALUES (iv_pspnr, lv_req_no, 'Draft', iv_bukrs, iv_werks, iv_plsez).
+    DATA: lv_wbs_header TYPE ZTB_A2R_WBSHDR.
+
+    lv_wbs_header-pspnr = iv_pspnr.
+    lv_wbs_header-request = lv_req_no.
+    lv_wbs_header-status = 'Draft'.
+    lv_wbs_header-bukrs = iv_bukrs.
+    lv_wbs_header-werks = iv_werks.
+    lv_wbs_header-plsez = iv_plsez.
+
+    INSERT ZTB_A2R_WBSHDR FROM lv_wbs_header.
 
     " Create WBS Elements
     LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
-      INSERT INTO ZTB_A2R_WBSITEM (pspnr, posid, description, zbudget_check)
-        VALUES (iv_pspnr, ls_wbs-posid, ls_wbs-description, ls_wbs-zbudget_check).
+      DATA: lv_wbs_item TYPE ZTB_A2R_WBSITEM.
+
+      lv_wbs_item-pspnr = iv_pspnr.
+      lv_wbs_item-posid = ls_wbs-posid.
+      lv_wbs_item-description = ls_wbs-description.
+      lv_wbs_item-zbudget_check = ls_wbs-zbudget_check.
+
+      INSERT ZTB_A2R_WBSITEM FROM lv_wbs_item.
     ENDLOOP.
 
     COMMIT WORK.
