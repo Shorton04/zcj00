@@ -1,124 +1,39 @@
-CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
+REPORT ZTR_A2R_WBS.
 
-  PUBLIC SECTION.
-    METHODS: create_project
-             IMPORTING iv_pspnr TYPE ps_pspnr
-                       iv_projname TYPE string
-                       iv_bukrs TYPE bukrs
-                       iv_werks TYPE werks
-                       iv_plsez TYPE dats,
-             create_settlement_rule
-             IMPORTING iv_pspnr TYPE ps_pspnr
-                       iv_posid TYPE ps_posid,
-             update_plan_values
-             IMPORTING iv_pspnr TYPE ps_pspnr
-                       iv_posid TYPE ps_posid
-                       iv_plan_value TYPE curr,
-             activate_system_status
-             IMPORTING iv_pspnr TYPE ps_pspnr
-                       iv_status TYPE string
-                       iv_posid TYPE ps_posid,
-             add_car_project   " Add CAR Project method
-             IMPORTING iv_pspnr TYPE ps_pspnr,
-             partial_capitalization  " Partial Capitalization method
-             IMPORTING iv_pspnr TYPE ps_pspnr.
+* --- Data Declarations ---
+DATA: lv_pspnr TYPE ps_pspnr,
+      lv_projname TYPE string,
+      lv_bukrs TYPE bukrs,
+      lv_werks TYPE werks,
+      lv_plsez TYPE dats,
+      lv_plan_value TYPE curr,
+      lv_error TYPE abap_bool,
+      lv_req_no TYPE zreq_num.
 
-  PRIVATE SECTION.
-    DATA: lv_error TYPE abap_bool.
+PARAMETERS: p_pspnr TYPE ps_pspnr,
+            p_projname TYPE string,
+            p_bukrs TYPE bukrs,
+            p_werks TYPE werks,
+            p_plsez TYPE dats,
+            p_plan_value TYPE curr.
 
-ENDCLASS.
+START-OF-SELECTION.
 
-CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
+  " Collect input parameters
+  lv_pspnr = p_pspnr.
+  lv_projname = p_projname.
+  lv_bukrs = p_bukrs.
+  lv_werks = p_werks.
+  lv_plsez = p_plsez.
+  lv_plan_value = p_plan_value.
 
-  METHOD create_project.
-    " Generate Request Number
-    CALL FUNCTION 'NUMBER_GET_NEXT'
-      EXPORTING
-        nr_range_nr = '01'
-        object = 'ZCJ00_REQN'
-      IMPORTING
-        number = lv_req_no.  " Store the generated request number in lv_req_no
+  " Create an object of the class ZCL_A2R_WBS_BUILDER
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
 
-    " Create Project Header Entry
-    DATA: lv_wbs_header TYPE ZTB_A2R_WBSHDR.
+  " Handle the selection screen for request type
+  PERFORM handle_selection_screen.
 
-    lv_wbs_header-pspnr = iv_pspnr.
-    lv_wbs_header-request = lv_req_no.
-    lv_wbs_header-status = 'Draft'.
-    lv_wbs_header-bukrs = iv_bukrs.
-    lv_wbs_header-werks = iv_werks.
-    lv_wbs_header-plsez = iv_plsez.
+  " Call the methods for processing based on the selection
+  PERFORM project_routine USING lo_wbs_builder.
 
-    INSERT ZTB_A2R_WBSHDR FROM lv_wbs_header.
-
-    " Create WBS Elements
-    LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
-      DATA: lv_wbs_item TYPE ZTB_A2R_WBSITEM.
-
-      lv_wbs_item-pspnr = iv_pspnr.
-      lv_wbs_item-posid = ls_wbs-posid.
-      lv_wbs_item-description = ls_wbs-description.
-      lv_wbs_item-zbudget_check = ls_wbs-zbudget_check.
-
-      INSERT ZTB_A2R_WBSITEM FROM lv_wbs_item.
-    ENDLOOP.
-
-    COMMIT WORK.
-    MESSAGE 'Project created successfully' TYPE 'S'.
-  ENDMETHOD.
-
-  METHOD create_settlement_rule.
-    " Settlement Rule Creation Logic
-    CALL FUNCTION 'K_SRULE_SAVE_UTASK'
-      EXPORTING
-        object_number         = iv_posid
-        settlement_receiver   = iv_pspnr
-        percentage            = 100
-        settlement_type       = 'FUL'.
-    COMMIT WORK.
-  ENDMETHOD.
-
-  METHOD update_plan_values.
-    " Update Plan Values Logic
-    SELECT SINGLE zbudget_check FROM ZTB_A2R_WBSITEM WHERE posid = iv_posid
-      INTO @DATA(lv_available_budget).
-
-    IF iv_plan_value > lv_available_budget.
-      MESSAGE 'Plan value exceeds available budget' TYPE 'E'.
-    ENDIF.
-
-    UPDATE ZTB_A2R_WBSITEM SET zbudget_check = iv_plan_value
-      WHERE posid = iv_posid.
-
-    COMMIT WORK.
-  ENDMETHOD.
-
-  METHOD activate_system_status.
-    " System Status Activation
-    CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
-      EXPORTING
-        object_type = 'PS'
-        object_key = iv_pspnr
-        status = iv_status
-        reason = 'Project Initialization'.
-    COMMIT WORK.
-  ENDMETHOD.
-
-  METHOD add_car_project.
-    " Logic for adding CAR project
-    " Add necessary logic for handling CAR project addition
-    " For example, insert data into relevant tables for CAR project type
-
-    " For demonstration, using a simple message for CAR project addition
-    MESSAGE 'CAR project added successfully' TYPE 'S'.
-  ENDMETHOD.
-
-  METHOD partial_capitalization.
-    " Logic for partial capitalization
-    " Add logic for partial capitalization process, e.g., update project budget
-
-    " For demonstration, using a simple message for partial capitalization completion
-    MESSAGE 'Partial capitalization completed successfully' TYPE 'S'.
-  ENDMETHOD.
-
-ENDCLASS.
+  MESSAGE 'Project creation process completed' TYPE 'S'.
