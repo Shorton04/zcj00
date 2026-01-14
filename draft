@@ -1,16 +1,14 @@
-TRY.
-      " Try to convert p_pspnr to a number
-      DATA(lv_numeric_pspnr) TYPE i.
-      lv_numeric_pspnr = p_pspnr.
-    CATCH cx_sy_conversion_no_number.
-      MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
-  ENDTRY.
+  " Validate Project Number (P_PSPNR) to ensure it's numeric
+  IF p_pspnr IS INITIAL OR p_pspnr CP '[0-9]*'. " Valid if it only contains digits
+    " Proceed if valid numeric project number
+  ELSE.
+    MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
+  ENDIF.
 
-  TRY.
-      " Try to convert p_plan_value to a number
-      DATA(lv_numeric_plan_value) TYPE i.
-      lv_numeric_plan_value = p_plan_value.
-    CATCH cx_sy_conversion_no_number.
-      MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
-  ENDTRY.
+  " Validate Plan Value (P_PLANV) to ensure it's numeric
+  IF p_plan_value IS INITIAL OR p_plan_value CP '[0-9]*'. " Valid if it only contains digits
+    " Proceed if valid numeric plan value
+  ELSE.
+    MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
+  ENDIF.
 
