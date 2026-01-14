@@ -1,50 +1,3 @@
-FORM add_car_project USING iv_pspnr TYPE ps_pspnr.
-
-  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
-
-  " Call the class method to add CAR project (adjust as needed)
-  lo_wbs_builder->add_car_project( iv_pspnr = iv_pspnr ).
-
-  MESSAGE 'CAR project added successfully' TYPE 'S'.
-
-ENDFORM.
-
-
-FORM partial_capitalization USING iv_pspnr TYPE ps_pspnr.
-
-  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
-
-  " Call the class method to handle partial capitalization logic
-  lo_wbs_builder->partial_capitalization( iv_pspnr = iv_pspnr ).
-
-  MESSAGE 'Partial capitalization completed' TYPE 'S'.
-
-ENDFORM.
-
-
-FORM create_project USING iv_pspnr TYPE ps_pspnr
-                         iv_projname TYPE string
-                         iv_bukrs TYPE bukrs
-                         iv_werks TYPE werks
-                         iv_plsez TYPE dats.
-
-  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
-
-  " Call the class method to create the project
-  lo_wbs_builder->create_project(
-    iv_pspnr = iv_pspnr
-    iv_projname = iv_projname
-    iv_bukrs = iv_bukrs
-    iv_werks = iv_werks
-    iv_plsez = iv_plsez
-  ).
-
-  MESSAGE 'Project created successfully' TYPE 'S'.
-
-ENDFORM.
-
-
-
 CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
 
   PUBLIC SECTION.
@@ -64,14 +17,12 @@ CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
              activate_system_status
              IMPORTING iv_pspnr TYPE ps_pspnr
                        iv_status TYPE string
-                       iv_posid TYPE ps_posid,
-             add_car_project   " Add CAR Project method
-             IMPORTING iv_pspnr TYPE ps_pspnr,
-             partial_capitalization  " Partial Capitalization method
-             IMPORTING iv_pspnr TYPE ps_pspnr.
+                       iv_posid TYPE ps_posid.
 
   PRIVATE SECTION.
-    DATA: lv_error TYPE abap_bool.
+    DATA: lv_error TYPE abap_bool,
+          lv_req_no TYPE zreq_num,  " Declare the request number
+          lt_wbs_elements TYPE TABLE OF ZTB_A2R_WBSITEM.  " Declare WBS elements table
 
 ENDCLASS.
 
@@ -84,7 +35,7 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
         nr_range_nr = '01'
         object = 'ZCJ00_REQN'
       IMPORTING
-        number = lv_req_no.
+        number = lv_req_no.  " Store the generated request number in lv_req_no
 
     " Create Project Header Entry
     INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
@@ -135,18 +86,6 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
         status = iv_status
         reason = 'Project Initialization'.
     COMMIT WORK.
-  ENDMETHOD.
-
-  METHOD add_car_project.
-    " Logic for adding CAR project
-    " Implement the necessary logic for adding a CAR project
-    MESSAGE 'CAR project added successfully' TYPE 'S'.
-  ENDMETHOD.
-
-  METHOD partial_capitalization.
-    " Logic for partial capitalization
-    " Implement the necessary logic for partial capitalization of a project
-    MESSAGE 'Partial capitalization completed successfully' TYPE 'S'.
   ENDMETHOD.
 
 ENDCLASS.
