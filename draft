@@ -1,50 +1,16 @@
-* --- Selection Screen Validation --- 
-IF p_pspnr IS NOT NUMERIC.
-  MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
-ENDIF.
+TRY.
+      " Try to convert p_pspnr to a number
+      DATA(lv_numeric_pspnr) TYPE i.
+      lv_numeric_pspnr = p_pspnr.
+    CATCH cx_sy_conversion_no_number.
+      MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
+  ENDTRY.
 
-IF p_plan_value IS NOT NUMERIC.
-  MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
-ENDIF.
+  TRY.
+      " Try to convert p_plan_value to a number
+      DATA(lv_numeric_plan_value) TYPE i.
+      lv_numeric_plan_value = p_plan_value.
+    CATCH cx_sy_conversion_no_number.
+      MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
+  ENDTRY.
 
-
-
-REPORT ZTR_A2R_WBS.
-
-* --- Data Declarations ---
-DATA: lv_pspnr TYPE ps_pspnr,
-      lv_projname TYPE string,
-      lv_bukrs TYPE bukrs,
-      lv_werks TYPE werks,
-      lv_plsez TYPE dats,
-      lv_plan_value TYPE curr,
-      lv_error TYPE abap_bool,
-      lv_req_no TYPE zreq_num.
-
-PARAMETERS: p_pspnr TYPE ps_pspnr,
-            p_projname TYPE string,
-            p_bukrs TYPE bukrs,
-            p_werks TYPE werks,
-            p_plsez TYPE dats,
-            p_plan_value TYPE curr.
-
-START-OF-SELECTION.
-
-  " Collect input parameters
-  lv_pspnr = p_pspnr.
-  lv_projname = p_projname.
-  lv_bukrs = p_bukrs.
-  lv_werks = p_werks.
-  lv_plsez = p_plsez.
-  lv_plan_value = p_plan_value.
-
-  " Create an object of the class ZCL_A2R_WBS_BUILDER
-  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
-
-  " Handle the selection screen for request type
-  PERFORM handle_selection_screen.
-
-  " Call the methods for processing based on the selection
-  PERFORM project_routine USING lo_wbs_builder.
-
-  MESSAGE 'Project creation process completed' TYPE 'S'.
