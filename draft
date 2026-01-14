@@ -1,17 +1,134 @@
-" Validate Project Number (P_PSPNR) to ensure it's numeric
+REPORT ZTR_A2R_WBS_TEST.
+
+DATA: lv_reqtype TYPE string,
+      lv_projprof TYPE string,
+      lv_approval TYPE string,
+      lv_error_msg TYPE string,
+      lv_plan_value_str TYPE string,
+      lv_pspnr TYPE ps_pspnr,
+      lv_projname TYPE string,
+      lv_bukrs TYPE bukrs,
+      lv_werks TYPE werks,
+      lv_plsez TYPE dats.
+
+PARAMETERS: p_pspnr TYPE ps_pspnr,
+            p_projname TYPE string,
+            p_bukrs TYPE bukrs,
+            p_werks TYPE werks,
+            p_plsez TYPE dats,
+            p_plan_value TYPE curr,
+            p_reqtype TYPE string,
+            p_projprof TYPE string.
+
+START-OF-SELECTION.
+
+  " Handle the selection screen logic
+  PERFORM handle_selection_screen.
+
+  " Create an object of the class ZCL_A2R_WBS_BUILDER
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
+
+  " Call the methods for processing based on the selection
+  PERFORM project_routine USING lo_wbs_builder.
+
+  MESSAGE 'Project creation process completed' TYPE 'S'.
+
+" Handle selection screen logic
+FORM handle_selection_screen.
+
+  " Validate Project Number (P_PSPNR) to ensure it's numeric
   IF p_pspnr IS INITIAL OR p_pspnr CP '[0-9]*'.
     " Proceed if valid numeric project number
   ELSE.
     MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
   ENDIF.
 
-  " Convert LV_PLAN_VALUE to a string for validation if it's a number
-  DATA(lv_plan_value_str) TYPE string.
-  WRITE p_plan_value TO lv_plan_value_str.
+  " Validate Request Type (P_REQTYPE) to ensure it's alphanumeric
+  IF p_reqtype IS INITIAL OR p_reqtype CP '[A-Za-z0-9]*'.  " Valid for alphanumeric input (letters and numbers)
+    " Proceed if valid alphanumeric request type
+  ELSE.
+    MESSAGE 'Please enter a valid Request Type' TYPE 'E'.
+  ENDIF.
+
+  " Convert LV_PLAN_VALUE (WERTV8 type) to a character-like field (C)
+  DATA(lv_plan_value_str) TYPE c LENGTH 20.  " Declare as character type (C) with length 20
+  WRITE p_plan_value TO lv_plan_value_str.   " Convert P_PLANV to string-like value
 
   " Validate Plan Value (P_PLANV) to ensure it's numeric
-  IF p_plan_value IS INITIAL OR lv_plan_value_str CP '[0-9]*'.
+  IF lv_plan_value_str CP '[0-9]*'. " Check if plan value contains only digits
     " Proceed if valid numeric plan value
   ELSE.
     MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
   ENDIF.
+
+  " Query configuration tables to retrieve approval details
+  PERFORM query_configuration_tables.
+
+  CASE p_reqtype.
+    WHEN 'A1'. " Create New Project
+      PERFORM create_project USING p_pspnr p_projname p_bukrs p_werks p_plsez.
+
+    WHEN 'B1'. " Add CAR Project
+      PERFORM add_car_project USING p_pspnr.
+
+    WHEN 'C1'. " Partial Capitalization
+      PERFORM partial_capitalization USING p_pspnr.
+
+    WHEN OTHERS.
+      MESSAGE 'Invalid request type selected' TYPE 'E'.
+  ENDCASE.
+
+ENDFORM.
+
+" Query configuration tables for approval and error messages
+FORM query_configuration_tables.
+
+  " Retrieve Approval and Error Msg from ZTB_A2R_CONFTAB2 based on Request Type
+  SELECT SINGLE approval, error_msg
+    INTO (lv_approval, lv_error_msg)
+    FROM ztb_a2r_conftab2
+    WHERE reqtype = p_reqtype AND projprof = p_projprof.
+
+  IF sy-subrc = 0.
+    " Process retrieved approval and error message
+    WRITE: / 'Approval:', lv_approval, 'Error Message:', lv_error_msg.
+  ELSE.
+    MESSAGE 'No matching data found in configuration table for request type' TYPE 'E'.
+  ENDIF.
+
+  " Retrieve Project Profile and Current Project details from ZTB_A2R_CONFTAB1
+  SELECT SINGLE projprof, curr_proj
+    INTO (lv_projprof, lv_curr_proj)
+    FROM ztb_a2r_conftab1
+    WHERE projprof = p_projprof.
+
+  IF sy-subrc = 0.
+    " Process retrieved project configuration
+    WRITE: / 'Project Profile:', lv_projprof, 'Current Project:', lv_curr_proj.
+  ELSE.
+    MESSAGE 'No matching data found in configuration table for project profile' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+
+" Create Project subroutine
+FORM create_project USING iv_pspnr TYPE ps_pspnr
+                         iv_projname TYPE string
+                         iv_bukrs TYPE bukrs
+                         iv_werks TYPE werks
+                         iv_plsez TYPE dats.
+
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
+
+  " Call the class method to create the project
+  lo_wbs_builder->create_project(
+    iv_pspnr = iv_pspnr
+    iv_projname = iv_projname
+    iv_bukrs = iv_bukrs
+    iv_werks = iv_werks
+    iv_plsez = iv_plsez
+  ).
+
+  MESSAGE 'Project created successfully' TYPE 'S'.
+
+ENDFORM.
