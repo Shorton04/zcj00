@@ -1,14 +1,17 @@
-  " Validate Project Number (P_PSPNR) to ensure it's numeric
-  IF p_pspnr IS INITIAL OR p_pspnr CP '[0-9]*'. " Valid if it only contains digits
+" Validate Project Number (P_PSPNR) to ensure it's numeric
+  IF p_pspnr IS INITIAL OR p_pspnr CP '[0-9]*'.
     " Proceed if valid numeric project number
   ELSE.
     MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
   ENDIF.
 
+  " Convert LV_PLAN_VALUE to a string for validation if it's a number
+  DATA(lv_plan_value_str) TYPE string.
+  WRITE p_plan_value TO lv_plan_value_str.
+
   " Validate Plan Value (P_PLANV) to ensure it's numeric
-  IF p_plan_value IS INITIAL OR p_plan_value CP '[0-9]*'. " Valid if it only contains digits
+  IF p_plan_value IS INITIAL OR lv_plan_value_str CP '[0-9]*'.
     " Proceed if valid numeric plan value
   ELSE.
     MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
   ENDIF.
-
