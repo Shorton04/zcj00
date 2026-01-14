@@ -1,22 +1,44 @@
-METHOD create_project.
-  " Generate Request Number
-  CALL FUNCTION 'NUMBER_GET_NEXT'
-    EXPORTING
-      nr_range_nr = '01'
-      object = 'ZCJ00_REQN'
-    IMPORTING
-      number = lv_req_no.
+FORM add_car_project USING iv_pspnr TYPE ps_pspnr.
 
-  " Create Project Header Entry
-  INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
-    VALUES (iv_pspnr, lv_req_no, 'Draft', iv_bukrs, iv_werks, iv_plsez).
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
 
-  " Create WBS Elements
-  LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
-    INSERT INTO ZTB_A2R_WBSITEM (pspnr, posid, description, zbudget_check)
-      VALUES (iv_pspnr, ls_wbs-posid, ls_wbs-description, ls_wbs-zbudget_check).
-  ENDLOOP.
+  " Call the class method to add CAR project (adjust as needed)
+  lo_wbs_builder->add_car_project( iv_pspnr = iv_pspnr ).
 
-  COMMIT WORK.
+  MESSAGE 'CAR project added successfully' TYPE 'S'.
+
+ENDFORM.
+
+
+FORM partial_capitalization USING iv_pspnr TYPE ps_pspnr.
+
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
+
+  " Call the class method to handle partial capitalization logic
+  lo_wbs_builder->partial_capitalization( iv_pspnr = iv_pspnr ).
+
+  MESSAGE 'Partial capitalization completed' TYPE 'S'.
+
+ENDFORM.
+
+
+FORM create_project USING iv_pspnr TYPE ps_pspnr
+                         iv_projname TYPE string
+                         iv_bukrs TYPE bukrs
+                         iv_werks TYPE werks
+                         iv_plsez TYPE dats.
+
+  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
+
+  " Call the class method to create the project
+  lo_wbs_builder->create_project(
+    iv_pspnr = iv_pspnr
+    iv_projname = iv_projname
+    iv_bukrs = iv_bukrs
+    iv_werks = iv_werks
+    iv_plsez = iv_plsez
+  ).
+
   MESSAGE 'Project created successfully' TYPE 'S'.
-ENDMETHOD.
+
+ENDFORM.
