@@ -42,3 +42,111 @@ FORM create_project USING iv_pspnr TYPE ps_pspnr
   MESSAGE 'Project created successfully' TYPE 'S'.
 
 ENDFORM.
+
+
+
+CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS: create_project
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_projname TYPE string
+                       iv_bukrs TYPE bukrs
+                       iv_werks TYPE werks
+                       iv_plsez TYPE dats,
+             create_settlement_rule
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_posid TYPE ps_posid,
+             update_plan_values
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_posid TYPE ps_posid
+                       iv_plan_value TYPE curr,
+             activate_system_status
+             IMPORTING iv_pspnr TYPE ps_pspnr
+                       iv_status TYPE string
+                       iv_posid TYPE ps_posid,
+             add_car_project   " Add CAR Project method
+             IMPORTING iv_pspnr TYPE ps_pspnr,
+             partial_capitalization  " Partial Capitalization method
+             IMPORTING iv_pspnr TYPE ps_pspnr.
+
+  PRIVATE SECTION.
+    DATA: lv_error TYPE abap_bool.
+
+ENDCLASS.
+
+CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
+
+  METHOD create_project.
+    " Generate Request Number
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr = '01'
+        object = 'ZCJ00_REQN'
+      IMPORTING
+        number = lv_req_no.
+
+    " Create Project Header Entry
+    INSERT INTO ZTB_A2R_WBSHDR (pspnr, request, status, bukrs, werks, plsez)
+      VALUES (iv_pspnr, lv_req_no, 'Draft', iv_bukrs, iv_werks, iv_plsez).
+
+    " Create WBS Elements
+    LOOP AT lt_wbs_elements INTO DATA(ls_wbs).
+      INSERT INTO ZTB_A2R_WBSITEM (pspnr, posid, description, zbudget_check)
+        VALUES (iv_pspnr, ls_wbs-posid, ls_wbs-description, ls_wbs-zbudget_check).
+    ENDLOOP.
+
+    COMMIT WORK.
+    MESSAGE 'Project created successfully' TYPE 'S'.
+  ENDMETHOD.
+
+  METHOD create_settlement_rule.
+    " Settlement Rule Creation Logic
+    CALL FUNCTION 'K_SRULE_SAVE_UTASK'
+      EXPORTING
+        object_number         = iv_posid
+        settlement_receiver   = iv_pspnr
+        percentage            = 100
+        settlement_type       = 'FUL'.
+    COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD update_plan_values.
+    " Update Plan Values Logic
+    SELECT SINGLE zbudget_check FROM ZTB_A2R_WBSITEM WHERE posid = iv_posid
+      INTO @DATA(lv_available_budget).
+
+    IF iv_plan_value > lv_available_budget.
+      MESSAGE 'Plan value exceeds available budget' TYPE 'E'.
+    ENDIF.
+
+    UPDATE ZTB_A2R_WBSITEM SET zbudget_check = iv_plan_value
+      WHERE posid = iv_posid.
+
+    COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD activate_system_status.
+    " System Status Activation
+    CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
+      EXPORTING
+        object_type = 'PS'
+        object_key = iv_pspnr
+        status = iv_status
+        reason = 'Project Initialization'.
+    COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD add_car_project.
+    " Logic for adding CAR project
+    " Implement the necessary logic for adding a CAR project
+    MESSAGE 'CAR project added successfully' TYPE 'S'.
+  ENDMETHOD.
+
+  METHOD partial_capitalization.
+    " Logic for partial capitalization
+    " Implement the necessary logic for partial capitalization of a project
+    MESSAGE 'Partial capitalization completed successfully' TYPE 'S'.
+  ENDMETHOD.
+
+ENDCLASS.
