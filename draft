@@ -1,39 +1,3 @@
-REPORT ZTR_A2R_WBS_TEST.
-
-DATA: lv_reqtype TYPE string,
-      lv_projprof TYPE string,
-      lv_approval TYPE string,
-      lv_error_msg TYPE string,
-      lv_plan_value_str TYPE string,
-      lv_pspnr TYPE ps_pspnr,
-      lv_projname TYPE string,
-      lv_bukrs TYPE bukrs,
-      lv_werks TYPE werks,
-      lv_plsez TYPE dats.
-
-PARAMETERS: p_pspnr TYPE ps_pspnr,
-            p_projname TYPE string,
-            p_bukrs TYPE bukrs,
-            p_werks TYPE werks,
-            p_plsez TYPE dats,
-            p_plan_value TYPE curr,
-            p_reqtype TYPE string,
-            p_projprof TYPE string.
-
-START-OF-SELECTION.
-
-  " Handle the selection screen logic
-  PERFORM handle_selection_screen.
-
-  " Create an object of the class ZCL_A2R_WBS_BUILDER
-  DATA(lo_wbs_builder) = NEW ZCL_A2R_WBS_BUILDER( ).
-
-  " Call the methods for processing based on the selection
-  PERFORM project_routine USING lo_wbs_builder.
-
-  MESSAGE 'Project creation process completed' TYPE 'S'.
-
-" Handle selection screen logic
 FORM handle_selection_screen.
 
   " Validate Project Number (P_PSPNR) to ensure it's numeric
