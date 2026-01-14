@@ -1,3 +1,14 @@
+* --- Selection Screen Validation --- 
+IF p_pspnr IS NOT NUMERIC.
+  MESSAGE 'Please enter a valid numeric Project Number' TYPE 'E'.
+ENDIF.
+
+IF p_plan_value IS NOT NUMERIC.
+  MESSAGE 'Please enter a valid numeric Plan Value' TYPE 'E'.
+ENDIF.
+
+
+
 REPORT ZTR_A2R_WBS.
 
 * --- Data Declarations ---
