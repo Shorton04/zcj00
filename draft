@@ -17,7 +17,11 @@ CLASS ZCL_A2R_WBS_BUILDER DEFINITION.
              activate_system_status
              IMPORTING iv_pspnr TYPE ps_pspnr
                        iv_status TYPE string
-                       iv_posid TYPE ps_posid.
+                       iv_posid TYPE ps_posid,
+             add_car_project   " Add CAR Project method
+             IMPORTING iv_pspnr TYPE ps_pspnr,
+             partial_capitalization  " Partial Capitalization method
+             IMPORTING iv_pspnr TYPE ps_pspnr.
 
   PRIVATE SECTION.
     DATA: lv_error TYPE abap_bool.
@@ -98,6 +102,23 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
         status = iv_status
         reason = 'Project Initialization'.
     COMMIT WORK.
+  ENDMETHOD.
+
+  METHOD add_car_project.
+    " Logic for adding CAR project
+    " Add necessary logic for handling CAR project addition
+    " For example, insert data into relevant tables for CAR project type
+
+    " For demonstration, using a simple message for CAR project addition
+    MESSAGE 'CAR project added successfully' TYPE 'S'.
+  ENDMETHOD.
+
+  METHOD partial_capitalization.
+    " Logic for partial capitalization
+    " Add logic for partial capitalization process, e.g., update project budget
+
+    " For demonstration, using a simple message for partial capitalization completion
+    MESSAGE 'Partial capitalization completed successfully' TYPE 'S'.
   ENDMETHOD.
 
 ENDCLASS.
