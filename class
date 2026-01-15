@@ -1,0 +1,442 @@
+*&---------------------------------------------------------------------*
+*& Class ZCL_A2R_WBSBUILDER Definition
+*&---------------------------------------------------------------------*
+CLASS zcl_a2r_wbsbuilder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    METHODS:
+      " Copy template structure to WBS items
+      copy_template_structure
+        IMPORTING
+          iv_pspid     TYPE ps_spdid
+        CHANGING
+          ct_wbs_items TYPE ANY TABLE,
+
+      " Total up budget from children to parents
+      total_up_budget
+        CHANGING
+          ct_wbs_items TYPE ANY TABLE,
+
+      " Save request (DRAFT status)
+      save_request
+        IMPORTING
+          is_header     TYPE ztb_a2r_wbshdr
+          it_wbs_items  TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_reqnum) TYPE char10,
+
+      " Submit request and trigger workflow
+      submit_request
+        IMPORTING
+          is_header    TYPE ztb_a2r_wbshdr
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Create project after approval
+      create_project
+        IMPORTING
+          is_header    TYPE ztb_a2r_wbshdr
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool.
+
+  PRIVATE SECTION.
+
+    METHODS:
+      " Get next request number from number range
+      get_next_request_number
+        RETURNING
+          VALUE(rv_reqnum) TYPE char10,
+
+      " Check approver matrix
+      check_approver_matrix
+        IMPORTING
+          iv_bukrs  TYPE bukrs
+          iv_profl  TYPE profidproj
+          iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
+        EXPORTING
+          ev_appr1  TYPE ztb_a2r_conftab2-zapproval_1
+          ev_appr2  TYPE ztb_a2r_conftab2-zapproval_2
+          ev_auto   TYPE ztb_a2r_conftab2-zerror_handling
+        RETURNING
+          VALUE(rv_found) TYPE abap_bool,
+
+      " Trigger workflow
+      trigger_workflow
+        IMPORTING
+          is_header TYPE ztb_a2r_wbshdr
+          iv_appr1  TYPE ztb_a2r_conftab2-zapproval_1
+          iv_appr2  TYPE ztb_a2r_conftab2-zapproval_2
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Create WBS elements
+      create_wbs_elements
+        IMPORTING
+          is_header    TYPE ztb_a2r_wbshdr
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Assign plan values
+      assign_plan_values
+        IMPORTING
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Distribute IM budget
+      distribute_im_budget
+        IMPORTING
+          is_header    TYPE ztb_a2r_wbshdr
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Create settlement rules
+      create_settlement_rules
+        IMPORTING
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool,
+
+      " Activate system statuses
+      activate_statuses
+        IMPORTING
+          it_wbs_items TYPE ANY TABLE
+        RETURNING
+          VALUE(rv_success) TYPE abap_bool.
+
+ENDCLASS.
+
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Class ZCL_A2R_WBSBUILDER Implementation
+*&---------------------------------------------------------------------*
+CLASS zcl_a2r_wbsbuilder IMPLEMENTATION.
+
+  METHOD copy_template_structure.
+
+    DATA: lt_prpss TYPE TABLE OF prpss,
+          ls_prpss TYPE prpss,
+          ls_wbs   TYPE ztb_a2r_wbsitem.
+
+    FIELD-SYMBOLS: <fs_wbs_item> TYPE any.
+
+    " Get WBS hierarchy from template
+    SELECT * FROM prpss
+      INTO TABLE lt_prpss
+      WHERE pspid = iv_pspid
+      ORDER BY stufe posid.
+
+    LOOP AT lt_prpss INTO ls_prpss.
+      CLEAR ls_wbs.
+
+      " Map fields
+      ls_wbs-stufe = ls_prpss-stufe.
+      ls_wbs-posid = ls_prpss-posid.
+      ls_wbs-post1 = ls_prpss-post1.
+      ls_wbs-imprf = ls_prpss-imprf.
+      ls_wbs-prart = ls_prpss-prart.
+
+      " Append to output table
+      APPEND ls_wbs TO ct_wbs_items.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD total_up_budget.
+
+    DATA: lt_wbs TYPE TABLE OF ztb_a2r_wbsitem,
+          ls_wbs TYPE ztb_a2r_wbsitem,
+          lv_total TYPE bpge-wlges,
+          lv_parent_posid TYPE ps_posid,
+          lv_max_level TYPE ps_stufe.
+
+    FIELD-SYMBOLS: <fs_wbs> TYPE any,
+                   <fs_wbs_parent> TYPE any.
+
+    " Copy to work table
+    lt_wbs = ct_wbs_items.
+
+    " Get maximum level
+    LOOP AT lt_wbs INTO ls_wbs.
+      IF ls_wbs-stufe > lv_max_level.
+        lv_max_level = ls_wbs-stufe.
+      ENDIF.
+    ENDLOOP.
+
+    " Process from bottom up
+    DO lv_max_level TIMES.
+      DATA(lv_current_level) = lv_max_level - sy-index + 1.
+
+      LOOP AT lt_wbs INTO ls_wbs WHERE stufe = lv_current_level.
+        " Find parent (one level up)
+        " Simplified logic - needs actual parent determination
+        LOOP AT lt_wbs ASSIGNING <fs_wbs_parent>
+          WHERE stufe = lv_current_level - 1.
+          " Add child budget to parent
+          " This is simplified - implement proper parent-child logic
+        ENDLOOP.
+      ENDLOOP.
+    ENDDO.
+
+    " Update output table
+    ct_wbs_items = lt_wbs.
+
+  ENDMETHOD.
+
+  METHOD save_request.
+
+    DATA: ls_header TYPE ztb_a2r_wbshdr,
+          lt_items  TYPE TABLE OF ztb_a2r_wbsitem,
+          ls_item   TYPE ztb_a2r_wbsitem.
+
+    " Get request number
+    rv_reqnum = get_next_request_number( ).
+
+    IF rv_reqnum IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Prepare header
+    ls_header = is_header.
+    ls_header-zreq_num = rv_reqnum.
+    ls_header-request_status = 'DRAFT'.
+    ls_header-erdat = sy-datum.
+    ls_header-ernam = sy-uname.
+
+    " Save header
+    INSERT ztb_a2r_wbshdr FROM ls_header.
+
+    IF sy-subrc = 0.
+      " Save items
+      LOOP AT it_wbs_items ASSIGNING FIELD-SYMBOL(<fs_item>).
+        ls_item = <fs_item>.
+        ls_item-zreq_num = rv_reqnum.
+        INSERT ztb_a2r_wbsitem FROM ls_item.
+      ENDLOOP.
+
+      COMMIT WORK.
+    ELSE.
+      CLEAR rv_reqnum.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD submit_request.
+
+    DATA: lv_reqnum TYPE char10,
+          lv_appr1  TYPE ztb_a2r_conftab2-zapproval_1,
+          lv_appr2  TYPE ztb_a2r_conftab2-zapproval_2,
+          lv_auto   TYPE ztb_a2r_conftab2-zerror_handling,
+          lv_found  TYPE abap_bool,
+          ls_header TYPE ztb_a2r_wbshdr.
+
+    " First save the request
+    lv_reqnum = save_request(
+      is_header    = is_header
+      it_wbs_items = it_wbs_items
+    ).
+
+    IF lv_reqnum IS INITIAL.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Check approver matrix
+    lv_found = check_approver_matrix(
+      EXPORTING
+        iv_bukrs   = is_header-bukrs
+        iv_profl   = is_header-profl
+        iv_reqtype = is_header-zz_request_type
+      IMPORTING
+        ev_appr1   = lv_appr1
+        ev_appr2   = lv_appr2
+        ev_auto    = lv_auto
+    ).
+
+    IF lv_found = abap_false.
+      MESSAGE e008(zcj00).
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Update status to PENDING
+    ls_header = is_header.
+    ls_header-zreq_num = lv_reqnum.
+    ls_header-request_status = 'PENDING'.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'PENDING'
+      WHERE zreq_num = lv_reqnum.
+
+    " Trigger workflow
+    rv_success = trigger_workflow(
+      is_header = ls_header
+      iv_appr1  = lv_appr1
+      iv_appr2  = lv_appr2
+    ).
+
+    IF rv_success = abap_true.
+      COMMIT WORK.
+    ELSE.
+      ROLLBACK WORK.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD create_project.
+
+    " Main orchestration method for project creation
+    rv_success = abap_false.
+
+    " Step 1: Create WBS elements
+    IF create_wbs_elements(
+         is_header    = is_header
+         it_wbs_items = it_wbs_items
+       ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Step 2: Assign plan values
+    IF assign_plan_values(
+         it_wbs_items = it_wbs_items
+       ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Step 3: Distribute IM budget
+    IF distribute_im_budget(
+         is_header    = is_header
+         it_wbs_items = it_wbs_items
+       ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Step 4: Create settlement rules
+    IF create_settlement_rules(
+         it_wbs_items = it_wbs_items
+       ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Step 5: Activate statuses
+    IF activate_statuses(
+         it_wbs_items = it_wbs_items
+       ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD get_next_request_number.
+
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr             = '01'
+        object                  = 'ZCJ00_REQN'
+      IMPORTING
+        number                  = rv_reqnum
+      EXCEPTIONS
+        interval_not_found      = 1
+        number_range_not_intern = 2
+        object_not_found        = 3
+        OTHERS                  = 4.
+
+    IF sy-subrc <> 0.
+      CLEAR rv_reqnum.
+      MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
+        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD check_approver_matrix.
+
+    DATA: ls_config TYPE ztb_a2r_conftab2.
+
+    SELECT SINGLE * FROM ztb_a2r_conftab2
+      INTO ls_config
+      WHERE bukrs = iv_bukrs
+        AND profl = iv_profl
+        AND zz_request_type = iv_reqtype.
+
+    IF sy-subrc = 0.
+      ev_appr1 = ls_config-zapproval_1.
+      ev_appr2 = ls_config-zapproval_2.
+      ev_auto  = ls_config-zerror_handling.
+      rv_found = abap_true.
+    ELSE.
+      rv_found = abap_false.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD trigger_workflow.
+
+    " Placeholder for workflow triggering
+    " Implement using SAP Business Workflow
+    " CALL FUNCTION 'SAP_WAPI_START_WORKFLOW'
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD create_wbs_elements.
+
+    " Placeholder for project/WBS creation
+    " Use BAPI_PROJECT_MAINTAIN or similar
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD assign_plan_values.
+
+    " Placeholder for plan values assignment
+    " Reference transaction CJ40
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD distribute_im_budget.
+
+    " Placeholder for IM budget distribution
+    " Reference transaction IM52
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD create_settlement_rules.
+
+    " Placeholder for settlement rule creation
+    " Use FM K_SRULE_SAVE_UTASK
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD activate_statuses.
+
+    " Placeholder for status activation
+    " Use FM STATUS_CHANGE_INTERN_VB
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+ENDCLASS.
