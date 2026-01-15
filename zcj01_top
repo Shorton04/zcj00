@@ -1,0 +1,74 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ01_TOP
+*& Global Data Declarations for ZCJ01
+*&---------------------------------------------------------------------*
+
+TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
+
+*----------------------------------------------------------------------*
+* Type Definitions
+*----------------------------------------------------------------------*
+TYPES: BEGIN OF ty_wbs_display,
+         stufe         TYPE ps_stufe,
+         posid         TYPE ps_posid,
+         post1         TYPE ps_post1,
+         kostl         TYPE kostl,
+         zapproved_budg TYPE bpge-wlges,
+         zbudget_check TYPE char1,
+         imprf         TYPE im_profil,
+         prart         TYPE ps_prart,
+         mark          TYPE char1,
+       END OF ty_wbs_display.
+
+*----------------------------------------------------------------------*
+* Global Variables - Screen 1
+*----------------------------------------------------------------------*
+DATA: p_posnr TYPE im_posnr,        " IM Number
+      p_profl TYPE profidproj,      " Project Profile
+      p_pspid TYPE ps_spdid,        " Project Template
+      p_prnam TYPE im_prnam,        " IM Program
+      p_gjahr TYPE im_gnjhr,        " Approval Year
+      p_post1 TYPE ps_post1,        " Project Description
+      p_verna TYPE ps_verna,        " Person Responsible
+      p_plsez TYPE ps_plsez_chg,    " Finish Date
+      p_prctr TYPE prctr,           " Profit Center
+      p_kostl TYPE kostl,           " Cost Center
+      p_usr10 TYPE char1.           " GE Ariba WF Flag
+
+DATA: gv_posnr_old TYPE im_posnr.   " To track changes
+
+*----------------------------------------------------------------------*
+* Global Variables - Screen 2
+*----------------------------------------------------------------------*
+DATA: gs_header     TYPE ztb_a2r_wbshdr,
+      gt_wbs_items  TYPE TABLE OF ztb_a2r_wbsitem,
+      gs_wbs_item   TYPE ztb_a2r_wbsitem.
+
+DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
+      gs_wbs_display TYPE ty_wbs_display.
+
+*----------------------------------------------------------------------*
+* Global Variables - Additional IM Data
+*----------------------------------------------------------------------*
+DATA: gv_bukrs            TYPE bukrs,
+      gv_werks            TYPE werks_d,
+      gv_izwek            TYPE izwek,
+      gv_usr008           TYPE dats,
+      gv_available_budget TYPE bpge-wlges,
+      gv_request_type     TYPE ztb_a2r_reqtype-z_reqtype,
+      gv_request_number   TYPE char10.
+
+*----------------------------------------------------------------------*
+* Global Objects
+*----------------------------------------------------------------------*
+DATA: go_builder TYPE REF TO zcl_a2r_wbsbuilder.
+
+*----------------------------------------------------------------------*
+* Constants
+*----------------------------------------------------------------------*
+CONSTANTS: gc_x TYPE char1 VALUE 'X'.
+
+*----------------------------------------------------------------------*
+* Table Control
+*----------------------------------------------------------------------*
+CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 200.
