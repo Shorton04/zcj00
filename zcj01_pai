@@ -1,0 +1,440 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ01_PAI
+*& Process After Input Modules
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& Module USER_COMMAND_0100 INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+  DATA: lv_ok_code TYPE sy-ucomm.
+
+  lv_ok_code = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE lv_ok_code.
+    WHEN 'NEXT' OR 'ENTER'.
+      PERFORM validate_screen1.
+      IF sy-subrc = 0.
+        PERFORM prepare_screen2.
+        CALL SCREEN 200.
+      ENDIF.
+
+    WHEN 'BACK' OR 'EXIT' OR 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'PREVIEW'.
+      PERFORM show_template_preview USING p_pspid.
+
+  ENDCASE.
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module USER_COMMAND_0200 INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0200 INPUT.
+  DATA: lv_ok_code TYPE sy-ucomm.
+
+  lv_ok_code = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE lv_ok_code.
+    WHEN 'SAVE'.
+      PERFORM save_request.
+
+    WHEN 'CHECK'.
+      PERFORM check_data.
+
+    WHEN 'SUBMIT'.
+      PERFORM check_data.
+      IF sy-subrc = 0.
+        PERFORM submit_request.
+      ENDIF.
+
+    WHEN 'TOTALUP'.
+      PERFORM total_up_budget.
+
+    WHEN 'ADDROW'.
+      PERFORM add_wbs_row.
+
+    WHEN 'DELROW'.
+      PERFORM delete_wbs_rows.
+
+    WHEN 'ATTACH'.
+      PERFORM handle_attachments.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 100.
+
+    WHEN 'EXIT' OR 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+  ENDCASE.
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module MODIFY_TABLE_CONTROL INPUT
+*&---------------------------------------------------------------------*
+MODULE modify_table_control INPUT.
+  " Update table when user changes values
+  MODIFY gt_wbs_display FROM gs_wbs_display INDEX tc_wbs-current_line.
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Form PREPARE_SCREEN2
+*&---------------------------------------------------------------------*
+FORM prepare_screen2.
+
+  " Get additional IM data
+  PERFORM get_additional_im_data USING p_posnr.
+
+  " Copy template structure
+  CALL METHOD go_builder->copy_template_structure
+    EXPORTING
+      iv_pspid     = p_pspid
+    CHANGING
+      ct_wbs_items = gt_wbs_items.
+
+  " Convert to display format
+  PERFORM convert_to_display.
+
+  " Set default values
+  PERFORM set_wbs_default_values.
+
+  " Initialize header
+  PERFORM populate_header_structure.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form GET_ADDITIONAL_IM_DATA
+*&---------------------------------------------------------------------*
+FORM get_additional_im_data USING iv_posnr TYPE im_posnr.
+
+  SELECT SINGLE bukrs werks izwek usr008
+    FROM impr
+    INTO (gv_bukrs, gv_werks, gv_izwek, gv_usr008)
+    WHERE posnr = iv_posnr.
+
+  " Get available budget
+  PERFORM get_available_im_budget USING iv_posnr
+                                  CHANGING gv_available_budget.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form CONVERT_TO_DISPLAY
+*&---------------------------------------------------------------------*
+FORM convert_to_display.
+
+  REFRESH gt_wbs_display.
+
+  LOOP AT gt_wbs_items INTO gs_wbs_item.
+    gs_wbs_display-stufe = gs_wbs_item-stufe.
+    gs_wbs_display-posid = gs_wbs_item-posid.
+    gs_wbs_display-post1 = gs_wbs_item-post1.
+    gs_wbs_display-kostl = gs_wbs_item-kostl.
+    gs_wbs_display-zapproved_budg = gs_wbs_item-wert2.
+    gs_wbs_display-zbudget_check = gs_wbs_item-zbudget_check.
+    gs_wbs_display-imprf = gs_wbs_item-imprf.
+    gs_wbs_display-prart = gs_wbs_item-prart.
+    APPEND gs_wbs_display TO gt_wbs_display.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form SET_WBS_DEFAULT_VALUES
+*&---------------------------------------------------------------------*
+FORM set_wbs_default_values.
+
+  LOOP AT gt_wbs_display INTO gs_wbs_display.
+    " Set cost center from header
+    gs_wbs_display-kostl = p_kostl.
+
+    " Set budget check for level 1
+    IF gs_wbs_display-stufe = 1.
+      gs_wbs_display-zbudget_check = gc_x.
+      gs_wbs_display-post1 = p_post1.
+    ENDIF.
+
+    MODIFY gt_wbs_display FROM gs_wbs_display.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form POPULATE_HEADER_STRUCTURE
+*&---------------------------------------------------------------------*
+FORM populate_header_structure.
+
+  gs_header-posnr = p_posnr.
+  gs_header-prnam = p_prnam.
+  gs_header-pspnr = p_post1.
+  gs_header-vernr = p_verna.
+  gs_header-plsez = p_plsez.
+  gs_header-bukrs = gv_bukrs.
+  gs_header-werks = gv_werks.
+  gs_header-prctr = p_prctr.
+  gs_header-kostl = p_kostl.
+  gs_header-izwek = gv_izwek.
+  gs_header-zunifier_proj = p_usr10.
+  gs_header-usr008 = gv_usr008.
+  gs_header-ernam = sy-uname.
+  gs_header-zz_request_type = gv_request_type.
+  gs_header-erdat = sy-datum.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form SAVE_REQUEST
+*&---------------------------------------------------------------------*
+FORM save_request.
+
+  DATA: lv_reqnum TYPE char10.
+
+  " Convert display to internal format
+  PERFORM convert_from_display.
+
+  " Update header
+  PERFORM populate_header_structure.
+
+  " Call builder method
+  CALL METHOD go_builder->save_request
+    EXPORTING
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    RECEIVING
+      rv_reqnum    = lv_reqnum.
+
+  IF lv_reqnum IS NOT INITIAL.
+    gv_request_number = lv_reqnum.
+    MESSAGE s012 WITH lv_reqnum. " Request saved
+    COMMIT WORK.
+  ELSE.
+    MESSAGE e013. " Error saving request
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form CHECK_DATA
+*&---------------------------------------------------------------------*
+FORM check_data.
+
+  DATA: lv_error TYPE abap_bool.
+
+  " Convert display to internal
+  PERFORM convert_from_display.
+
+  " Populate header
+  PERFORM populate_header_structure.
+
+  " Mandatory fields
+  PERFORM check_mandatory_fields CHANGING lv_error.
+
+  " Cost center validation
+  PERFORM validate_cost_center USING gs_header-kostl
+                                     gs_header-plsez
+                               CHANGING lv_error.
+
+  " Profit center validation
+  PERFORM validate_profit_center USING gs_header-prctr
+                                       gs_header-plsez
+                                 CHANGING lv_error.
+
+  " CC to PC assignment
+  PERFORM validate_cc_pc_assignment USING gs_header-kostl
+                                          gs_header-prctr
+                                    CHANGING lv_error.
+
+  " IM budget validation
+  PERFORM validate_im_budget CHANGING lv_error.
+
+  " Approver matrix
+  PERFORM validate_approver_matrix USING gs_header-bukrs
+                                         p_profl
+                                         gs_header-zz_request_type
+                                   CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    sy-subrc = 4.
+    MESSAGE e004. " Validation errors found
+  ELSE.
+    sy-subrc = 0.
+    MESSAGE s014. " All validations passed
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form CONVERT_FROM_DISPLAY
+*&---------------------------------------------------------------------*
+FORM convert_from_display.
+
+  REFRESH gt_wbs_items.
+
+  LOOP AT gt_wbs_display INTO gs_wbs_display.
+    CLEAR gs_wbs_item.
+    gs_wbs_item-stufe = gs_wbs_display-stufe.
+    gs_wbs_item-posid = gs_wbs_display-posid.
+    gs_wbs_item-post1 = gs_wbs_display-post1.
+    gs_wbs_item-kostl = gs_wbs_display-kostl.
+    gs_wbs_item-wert2 = gs_wbs_display-zapproved_budg.
+    gs_wbs_item-zbudget_check = gs_wbs_display-zbudget_check.
+    gs_wbs_item-imprf = gs_wbs_display-imprf.
+    gs_wbs_item-prart = gs_wbs_display-prart.
+    gs_wbs_item-bukrs = gv_bukrs.
+    APPEND gs_wbs_item TO gt_wbs_items.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form SUBMIT_REQUEST
+*&---------------------------------------------------------------------*
+FORM submit_request.
+
+  DATA: lv_success TYPE abap_bool.
+
+  " Convert and populate
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
+
+  " Set status to pending
+  gs_header-request_status = 'PENDING'.
+
+  " Submit via builder
+  CALL METHOD go_builder->submit_request
+    EXPORTING
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    RECEIVING
+      rv_success   = lv_success.
+
+  IF lv_success = abap_true.
+    MESSAGE s015 WITH gs_header-zreq_num. " Request submitted
+    COMMIT WORK.
+    LEAVE TO SCREEN 0.
+  ELSE.
+    MESSAGE e016. " Error submitting
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form TOTAL_UP_BUDGET
+*&---------------------------------------------------------------------*
+FORM total_up_budget.
+
+  " Convert to internal
+  PERFORM convert_from_display.
+
+  " Call builder method
+  CALL METHOD go_builder->total_up_budget
+    CHANGING
+      ct_wbs_items = gt_wbs_items.
+
+  " Convert back to display
+  PERFORM convert_to_display.
+
+  MESSAGE s017. " Budget totaled up
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form ADD_WBS_ROW
+*&---------------------------------------------------------------------*
+FORM add_wbs_row.
+
+  CLEAR gs_wbs_display.
+  gs_wbs_display-kostl = gs_header-kostl.
+  gs_wbs_display-zbudget_check = gc_x.
+  APPEND gs_wbs_display TO gt_wbs_display.
+
+  MESSAGE s018. " Row added
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form DELETE_WBS_ROWS
+*&---------------------------------------------------------------------*
+FORM delete_wbs_rows.
+
+  DELETE gt_wbs_display WHERE mark = gc_x.
+
+  IF sy-subrc = 0.
+    MESSAGE s019 WITH sy-dbcnt. " Rows deleted
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form HANDLE_ATTACHMENTS
+*&---------------------------------------------------------------------*
+FORM handle_attachments.
+
+  " Placeholder for attachment handling
+  MESSAGE i020. " Attachment functionality
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form CHECK_MANDATORY_FIELDS
+*&---------------------------------------------------------------------*
+FORM check_mandatory_fields CHANGING cv_error TYPE abap_bool.
+
+  IF gs_header-posnr IS INITIAL OR
+     gs_header-vernr IS INITIAL OR
+     gs_header-plsez IS INITIAL OR
+     gs_header-prctr IS INITIAL OR
+     gs_header-kostl IS INITIAL.
+    MESSAGE e021. " Fill in all required fields
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_IM_BUDGET
+*&---------------------------------------------------------------------*
+FORM validate_im_budget CHANGING cv_error TYPE abap_bool.
+
+  DATA: lv_level1_budget TYPE bpge-wlges.
+
+  READ TABLE gt_wbs_items INTO gs_wbs_item
+    WITH KEY stufe = 1.
+
+  IF sy-subrc = 0.
+    lv_level1_budget = gs_wbs_item-wert2.
+
+    IF lv_level1_budget > gv_available_budget.
+      MESSAGE e022. " Budget exceeds available
+      cv_error = gc_x.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_APPROVER_MATRIX
+*&---------------------------------------------------------------------*
+FORM validate_approver_matrix USING iv_bukrs TYPE bukrs
+                                    iv_profl TYPE profidproj
+                                    iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
+                              CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_config TYPE ztb_a2r_conftab2.
+
+  SELECT SINGLE * FROM ztb_a2r_conftab2
+    INTO ls_config
+    WHERE bukrs = iv_bukrs
+      AND profl = iv_profl
+      AND zz_request_type = iv_reqtype.
+
+  IF sy-subrc <> 0.
+    MESSAGE e023. " Approver not found in matrix
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
