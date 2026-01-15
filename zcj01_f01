@@ -1,0 +1,308 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ01_F01
+*& Form Routines for ZCJ01
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& Form F4_IM_NUMBER
+*&---------------------------------------------------------------------*
+FORM f4_im_number CHANGING cv_posnr TYPE im_posnr.
+
+  DATA: lt_impr   TYPE TABLE OF impr,
+        lt_return TYPE TABLE OF ddshretval,
+        ls_return TYPE ddshretval.
+
+  " Get list of IM positions
+  SELECT posnr prnam gjahr FROM impr
+    INTO CORRESPONDING FIELDS OF TABLE lt_impr
+    UP TO 500 ROWS.
+
+  " Display F4 help
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'POSNR'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_POSNR'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_impr
+      return_tab      = lt_return
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+  IF sy-subrc = 0.
+    READ TABLE lt_return INTO ls_return INDEX 1.
+    IF sy-subrc = 0.
+      cv_posnr = ls_return-fieldval.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form GET_IM_DATA
+*&---------------------------------------------------------------------*
+FORM get_im_data USING iv_posnr TYPE im_posnr.
+
+  DATA: ls_impr TYPE impr.
+
+  SELECT SINGLE * FROM impr
+    INTO ls_impr
+    WHERE posnr = iv_posnr.
+
+  IF sy-subrc = 0.
+    " Populate fields from IM
+    p_prnam = ls_impr-prnam.
+    p_gjahr = ls_impr-gjahr.
+    p_prctr = ls_impr-prctr.
+    p_kostl = ls_impr-kostl.
+
+    " Store for Screen 2
+    gv_bukrs = ls_impr-bukrs.
+    gv_werks = ls_impr-werks.
+    gv_izwek = ls_impr-izwek.
+    gv_usr008 = ls_impr-usr008.
+
+    " Get Project Profile and Template
+    PERFORM get_profile_template USING ls_impr-izwek
+                                 CHANGING p_profl p_pspid.
+
+    " Check GE Ariba flag
+    PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
+
+    " Set finish date for lumpsum
+    IF ls_impr-izwek = 'LS'.
+      p_plsez = sy-datum.
+      p_plsez+4(4) = '1231'. " Last day of year
+    ENDIF.
+
+  ELSE.
+    MESSAGE e002 WITH iv_posnr. " IM Number not found
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form GET_PROFILE_TEMPLATE
+*&---------------------------------------------------------------------*
+FORM get_profile_template USING iv_izwek TYPE izwek
+                          CHANGING cv_profl TYPE profidproj
+                                   cv_pspid TYPE ps_spdid.
+
+  DATA: ls_config TYPE ztb_a2r_conftab1.
+
+  SELECT SINGLE * FROM ztb_a2r_conftab1
+    INTO ls_config
+    WHERE izwek = iv_izwek.
+
+  IF sy-subrc = 0.
+    cv_profl = ls_config-profl.
+    cv_pspid = ls_config-pspid.
+  ELSE.
+    MESSAGE w003. " No entry found for profile and template
+    CLEAR: cv_profl, cv_pspid.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form CHECK_GE_ARIBA
+*&---------------------------------------------------------------------*
+FORM check_ge_ariba USING is_impr TYPE impr
+                    CHANGING cv_flag TYPE char1.
+
+  " Check if project management field = GE (Global Engineering)
+  " This is a placeholder - adjust based on actual IM field
+  IF is_impr-usr10 = 'GE'.
+    cv_flag = gc_x.
+  ELSE.
+    CLEAR cv_flag.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_SCREEN1
+*&---------------------------------------------------------------------*
+FORM validate_screen1.
+
+  DATA: lv_error TYPE abap_bool.
+
+  " Cost Center validation
+  PERFORM validate_cost_center USING p_kostl p_plsez
+                               CHANGING lv_error.
+
+  " Profit Center validation
+  PERFORM validate_profit_center USING p_prctr p_plsez
+                                 CHANGING lv_error.
+
+  " CC to PC assignment
+  PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
+                                    CHANGING lv_error.
+
+  " FR Unit validation
+  PERFORM validate_fr_unit USING p_posnr p_prctr
+                           CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004. " Validation errors found
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_COST_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_cost_center USING iv_kostl TYPE kostl
+                                iv_plsez TYPE ps_plsez_chg
+                          CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_csks TYPE csks.
+
+  SELECT SINGLE * FROM csks
+    INTO ls_csks
+    WHERE kostl = iv_kostl.
+
+  IF sy-subrc = 0.
+    IF ls_csks-datbi < iv_plsez.
+      MESSAGE e005 WITH iv_kostl. " Cost center not valid
+      cv_error = gc_x.
+    ENDIF.
+  ELSE.
+    MESSAGE e006 WITH iv_kostl. " Cost center does not exist
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_PROFIT_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_profit_center USING iv_prctr TYPE prctr
+                                  iv_plsez TYPE ps_plsez_chg
+                            CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_cepc TYPE cepc.
+
+  SELECT SINGLE * FROM cepc
+    INTO ls_cepc
+    WHERE prctr = iv_prctr.
+
+  IF sy-subrc = 0.
+    IF ls_cepc-datbi < iv_plsez.
+      MESSAGE e007 WITH iv_prctr. " Profit center not valid
+      cv_error = gc_x.
+    ENDIF.
+  ELSE.
+    MESSAGE e008 WITH iv_prctr. " Profit center does not exist
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_CC_PC_ASSIGNMENT
+*&---------------------------------------------------------------------*
+FORM validate_cc_pc_assignment USING iv_kostl TYPE kostl
+                                     iv_prctr TYPE prctr
+                               CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_csks TYPE csks,
+        ls_cepc TYPE cepc.
+
+  SELECT SINGLE * FROM csks
+    INTO ls_csks
+    WHERE kostl = iv_kostl.
+
+  IF ls_csks-prctr IS INITIAL.
+    MESSAGE e009 WITH iv_kostl. " CC has no PC assigned
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE * FROM cepc
+    INTO ls_cepc
+    WHERE prctr = iv_prctr.
+
+  IF ls_cepc-bukrs IS NOT INITIAL AND
+     ls_cepc-bukrs NE ls_csks-bukrs.
+    MESSAGE e010. " Company codes do not match
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_FR_UNIT
+*&---------------------------------------------------------------------*
+FORM validate_fr_unit USING iv_posnr TYPE im_posnr
+                            iv_prctr TYPE prctr
+                      CHANGING cv_error TYPE abap_bool.
+
+  " Placeholder for FR Unit validation
+  " Implement based on actual custom tables
+  " Reference: Table ZTXCA_ORG01
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form SHOW_TEMPLATE_PREVIEW
+*&---------------------------------------------------------------------*
+FORM show_template_preview USING iv_pspid TYPE ps_spdid.
+
+  DATA: lt_prpss TYPE TABLE OF prpss,
+        ls_prpss TYPE prpss.
+
+  SELECT * FROM prpss
+    INTO TABLE lt_prpss
+    WHERE pspid = iv_pspid
+    ORDER BY stufe posid.
+
+  IF sy-subrc = 0.
+    CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+      EXPORTING
+        i_title       = 'Project Template Preview'
+        i_tabname     = 'PRPSS'
+      TABLES
+        t_outtab      = lt_prpss
+      EXCEPTIONS
+        program_error = 1
+        OTHERS        = 2.
+  ELSE.
+    MESSAGE i011 WITH iv_pspid. " Template not found
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form GET_AVAILABLE_IM_BUDGET
+*&---------------------------------------------------------------------*
+FORM get_available_im_budget USING iv_posnr TYPE im_posnr
+                             CHANGING cv_budget TYPE bpge-wlges.
+
+  DATA: lv_objnr TYPE j_objnr,
+        ls_bpge  TYPE bpge.
+
+  SELECT SINGLE objnr FROM impr
+    INTO lv_objnr
+    WHERE posnr = iv_posnr.
+
+  IF sy-subrc = 0.
+    SELECT SINGLE wlges wtgev
+      FROM bpge
+      INTO (ls_bpge-wlges, ls_bpge-wtgev)
+      WHERE objnr = lv_objnr.
+
+    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
+
+    IF cv_budget > 0.
+      gv_available_budget = cv_budget.
+    ELSE.
+      CLEAR gv_available_budget.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
