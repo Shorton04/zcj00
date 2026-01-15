@@ -1,0 +1,24 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ00_TOP
+*& Global Data Declarations for ZCJ00
+*&---------------------------------------------------------------------*
+
+TABLES: ztb_a2r_reqtype.
+
+*----------------------------------------------------------------------*
+* Global Variables
+*----------------------------------------------------------------------*
+DATA: gv_request_type TYPE ztb_a2r_reqtype-z_reqtype.
+
+*----------------------------------------------------------------------*
+* Constants
+*----------------------------------------------------------------------*
+CONSTANTS: gc_reqtype_a1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'A1',
+           gc_reqtype_b1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'B1',
+           gc_reqtype_b2 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'B2',
+           gc_reqtype_b3 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'B3',
+           gc_reqtype_c1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'C1',
+           gc_reqtype_d1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'D1',
+           gc_reqtype_e1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'E1',
+           gc_reqtype_f1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'F1',
+           gc_reqtype_g1 TYPE ztb_a2r_reqtype-z_reqtype VALUE 'G1'.
