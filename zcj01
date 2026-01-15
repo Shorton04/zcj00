@@ -1,0 +1,48 @@
+*&---------------------------------------------------------------------*
+*& Report ZCJ01
+*& Create/Modify Project - Screens 1 & 2
+*&---------------------------------------------------------------------*
+REPORT zcj01 MESSAGE-ID zcj00.
+
+* Include files
+INCLUDE ztr_a2r_wbszcj01_top.  " Global data declarations
+INCLUDE ztr_a2r_wbszcj01_sel.  " Selection screens
+INCLUDE ztr_a2r_wbszcj01_f01.  " Form routines
+INCLUDE ztr_a2r_wbszcj01_pbo.  " PBO modules
+INCLUDE ztr_a2r_wbszcj01_pai.  " PAI modules
+
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  " Import request type from memory
+  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
+  
+  IF gv_request_type IS INITIAL.
+    gv_request_type = 'A1'. " Default
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& AT SELECTION-SCREEN
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_posnr.
+  " F4 help for IM Number
+  PERFORM f4_im_number CHANGING p_posnr.
+
+AT SELECTION-SCREEN.
+  " Validate and populate fields when IM Number changes
+  IF p_posnr IS NOT INITIAL AND p_posnr <> gv_posnr_old.
+    PERFORM get_im_data USING p_posnr.
+    gv_posnr_old = p_posnr.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  " Initialize builder object
+  CREATE OBJECT go_builder.
+
+  " Call Screen 1 (Screen 100)
+  CALL SCREEN 100.
