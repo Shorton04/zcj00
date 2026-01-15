@@ -1,0 +1,37 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ00_F01
+*& Form Routines for ZCJ00
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& Form GET_REQUEST_TYPE
+*& Determine selected request type from radio buttons
+*&---------------------------------------------------------------------*
+FORM get_request_type CHANGING cv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
+
+  CLEAR cv_reqtype.
+
+  CASE 'X'.
+    WHEN p_a1.
+      cv_reqtype = gc_reqtype_a1.
+    WHEN p_b1.
+      cv_reqtype = gc_reqtype_b1.
+    WHEN p_b2.
+      cv_reqtype = gc_reqtype_b2.
+    WHEN p_b3.
+      cv_reqtype = gc_reqtype_b3.
+    WHEN p_c1.
+      cv_reqtype = gc_reqtype_c1.
+    WHEN p_d1.
+      cv_reqtype = gc_reqtype_d1.
+    WHEN p_e1.
+      cv_reqtype = gc_reqtype_e1.
+    WHEN p_f1.
+      cv_reqtype = gc_reqtype_f1.
+    WHEN p_g1.
+      cv_reqtype = gc_reqtype_g1.
+    WHEN OTHERS.
+      cv_reqtype = gc_reqtype_a1. " Default to Create Project
+  ENDCASE.
+
+ENDFORM.
