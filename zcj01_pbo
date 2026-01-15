@@ -1,0 +1,44 @@
+*&---------------------------------------------------------------------*
+*& Include ZTR_A2R_WBSZCJ01_PBO
+*& Process Before Output Modules
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& Module STATUS_0100 OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  SET PF-STATUS 'STATUS_100'.
+  SET TITLEBAR 'TITLE_100'.
+
+  " Make display-only fields non-editable
+  LOOP AT SCREEN.
+    IF screen-group1 = 'DIS'.
+      screen-input = 0.
+      screen-invisible = 0.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module STATUS_0200 OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0200 OUTPUT.
+  SET PF-STATUS 'STATUS_200'.
+  SET TITLEBAR 'TITLE_200'.
+
+  " Initialize table control
+  DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module FILL_TABLE_CONTROL OUTPUT
+*&---------------------------------------------------------------------*
+MODULE fill_table_control OUTPUT.
+  " Read current line of table control
+  READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
+  IF sy-subrc = 0.
+    " Fields are automatically filled from gs_wbs_display
+  ENDIF.
+ENDMODULE.
