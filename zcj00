@@ -1,0 +1,62 @@
+*&---------------------------------------------------------------------*
+*& Report ZCJ00
+*& Internal Projects Cockpit - Main Entry Point
+*&---------------------------------------------------------------------*
+REPORT zcj00 MESSAGE-ID zcj00.
+
+INCLUDE ztr_a2r_wbszcj00_top.
+INCLUDE ztr_a2r_wbszcj00_sel.
+INCLUDE ztr_a2r_wbszcj00_f01.
+
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  " Set default text elements
+  %_grp1_%_app_%-text = 'Internal Projects Cockpit'.
+
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
+
+  " Get selected request type
+  PERFORM get_request_type CHANGING lv_reqtype.
+
+  " Store request type in memory for next program
+  EXPORT lv_reqtype FROM lv_reqtype TO MEMORY ID 'ZCJ00_REQTYPE'.
+
+  " Route to appropriate program/screen
+  CASE lv_reqtype.
+    WHEN 'A1'.  " Create New Project
+      SUBMIT zcj01 AND RETURN.
+
+    WHEN 'B1'.  " Add CAR
+      SUBMIT zcj01 AND RETURN.
+
+    WHEN 'B2'.  " Non-critical change
+      SUBMIT zcj01 AND RETURN.
+
+    WHEN 'B3'.  " Critical change
+      SUBMIT zcj01 AND RETURN.
+
+    WHEN 'C1'.  " Partial Capitalization
+      MESSAGE i001 WITH 'Request Type C1 not yet implemented'.
+
+    WHEN 'D1'.  " Close WBS
+      MESSAGE i001 WITH 'Request Type D1 not yet implemented'.
+
+    WHEN 'E1'.  " Unclose WBS
+      MESSAGE i001 WITH 'Request Type E1 not yet implemented'.
+
+    WHEN 'F1'.  " Edit Request
+      MESSAGE i001 WITH 'Request Type F1 not yet implemented'.
+
+    WHEN 'G1'.  " WBS Request Reporting
+      SUBMIT zcj00_report AND RETURN.
+
+    WHEN OTHERS.
+      MESSAGE e001 WITH lv_reqtype.
+  ENDCASE.
