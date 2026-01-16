@@ -1,8 +1,9 @@
 *&---------------------------------------------------------------------*
-*& Report ZCJ01
-*& Create/Modify Project - Screens 1 & 2
+*& Report ZTR_A2R_WBSCJ01
 *&---------------------------------------------------------------------*
-REPORT zcj01 MESSAGE-ID zcj00.
+*&
+*&---------------------------------------------------------------------*
+REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
 
 * Include files
 INCLUDE ztr_a2r_wbszcj01_top.  " Global data declarations
@@ -17,13 +18,13 @@ INCLUDE ztr_a2r_wbszcj01_pai.  " PAI modules
 INITIALIZATION.
   " Import request type from memory
   IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-  
+
   IF gv_request_type IS INITIAL.
     gv_request_type = 'A1'. " Default
   ENDIF.
 
 *&---------------------------------------------------------------------*
-*& AT SELECTION-SCREEN
+*& AT SELECTION-SCREEN EVENTS
 *&---------------------------------------------------------------------*
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_posnr.
   " F4 help for IM Number
@@ -36,6 +37,15 @@ AT SELECTION-SCREEN.
     gv_posnr_old = p_posnr.
   ENDIF.
 
+AT SELECTION-SCREEN OUTPUT.
+  " Make display-only fields non-editable
+  LOOP AT SCREEN.
+    IF screen-group1 = 'DIS'.
+      screen-input = 0.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+
 *&---------------------------------------------------------------------*
 *& START-OF-SELECTION
 *&---------------------------------------------------------------------*
@@ -44,5 +54,12 @@ START-OF-SELECTION.
   " Initialize builder object
   CREATE OBJECT go_builder.
 
-  " Call Screen 1 (Screen 100)
-  CALL SCREEN 100.
+  " Call Screen 100 (when created)
+  " For now, just display parameters
+  WRITE: / 'IM Number:', p_posnr,
+         / 'Profile:', p_profl,
+         / 'Template:', p_pspid,
+         / 'Description:', p_post1.
+
+  " When screens are created, replace above with:
+  " CALL SCREEN 100.
