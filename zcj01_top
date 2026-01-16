@@ -1,8 +1,6 @@
 *&---------------------------------------------------------------------*
-*& Include ZTR_A2R_WBSZCJ01_TOP
-*& Global Data Declarations for ZCJ01
+*& Include          ZTR_A2R_WBSZCJ01_TOP
 *&---------------------------------------------------------------------*
-
 TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
 *----------------------------------------------------------------------*
@@ -19,21 +17,6 @@ TYPES: BEGIN OF ty_wbs_display,
          prart         TYPE ps_prart,
          mark          TYPE char1,
        END OF ty_wbs_display.
-
-*----------------------------------------------------------------------*
-* Global Variables - Screen 1
-*----------------------------------------------------------------------*
-DATA: p_posnr TYPE im_posnr,        " IM Number
-      p_profl TYPE profidproj,      " Project Profile
-      p_pspid TYPE ps_spdid,        " Project Template
-      p_prnam TYPE im_prnam,        " IM Program
-      p_gjahr TYPE im_gnjhr,        " Approval Year
-      p_post1 TYPE ps_post1,        " Project Description
-      p_verna TYPE ps_verna,        " Person Responsible
-      p_plsez TYPE ps_plsez_chg,    " Finish Date
-      p_prctr TYPE prctr,           " Profit Center
-      p_kostl TYPE kostl,           " Cost Center
-      p_usr10 TYPE char1.           " GE Ariba WF Flag
 
 DATA: gv_posnr_old TYPE im_posnr.   " To track changes
 
@@ -61,7 +44,7 @@ DATA: gv_bukrs            TYPE bukrs,
 *----------------------------------------------------------------------*
 * Global Objects
 *----------------------------------------------------------------------*
-DATA: go_builder TYPE REF TO zcl_a2r_wbsbuilder.
+DATA: go_builder TYPE REF TO ZCL_A2R_WBS_BUILDER.
 
 *----------------------------------------------------------------------*
 * Constants
