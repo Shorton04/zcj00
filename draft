@@ -13,7 +13,7 @@ INCLUDE ztr_a2r_wbszcj01_pai.  " PAI modules
 *&---------------------------------------------------------------------*
 *& SELECTION SCREEN DEFINITION
 *&---------------------------------------------------------------------*
-SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-100.
+SELECTION-SCREEN BEGIN OF BLOCK blk_proj WITH FRAME TITLE TEXT-100.
 
 * IM Number with F4 help
 SELECTION-SCREEN BEGIN OF LINE.
@@ -80,7 +80,7 @@ SELECTION-SCREEN COMMENT 1(20) TEXT-112 FOR FIELD p_usr10.
 PARAMETERS: p_usr10 AS CHECKBOX.
 SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN END OF BLOCK b1.
+SELECTION-SCREEN END OF BLOCK blk_proj.
 
 *&---------------------------------------------------------------------*
 *& INITIALIZATION
@@ -124,8 +124,12 @@ START-OF-SELECTION.
   " Initialize builder object
   CREATE OBJECT go_builder.
 
-  " For now, display message - Screen creation comes later
-  MESSAGE i001(zcj00) WITH 'Screen 1 placeholder - Parameters accepted'.
+  " Call Screen 100 (when created)
+  " For now, just display parameters
+  WRITE: / 'IM Number:', p_posnr,
+         / 'Profile:', p_profl,
+         / 'Template:', p_pspid,
+         / 'Description:', p_post1.
 
   " When screens are created, replace above with:
   " CALL SCREEN 100.
