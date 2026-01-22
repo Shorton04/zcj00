@@ -1,135 +1,1233 @@
-*&---------------------------------------------------------------------*
-*& Report ZCJ01
-*& Create/Modify Project - Screens 1 & 2
-*&---------------------------------------------------------------------*
-REPORT zcj01 MESSAGE-ID zcj00.
+METHOD process_data.
+*======================================================================
+*Program  : Lift and Shift from program ZMVI0127
+*Title    : Result Record PDF generation
+*-------------------------------------------------------------------
+*Description : Result Record PDF generation
+* -------------------------------------------------------------------
+* Modification list.:
+* Date      Author    TR Number     Description
+* 10/16/25  EV92123   D30K904269    Data Retrieval - Lift and Shift
+*                                   Added new logic for DMS attachement
+*======================================================================
+  TYPES: BEGIN OF ty_inob,
+           tplnr  TYPE tplnr,
+           equnr  TYPE equnr,
+           objkey TYPE inob-objek,
+         END OF ty_inob.
 
-* Include files
-INCLUDE ztr_a2r_wbszcj01_top.  " Global data declarations
-INCLUDE ztr_a2r_wbszcj01_f01.  " Form routines
-INCLUDE ztr_a2r_wbszcj01_pbo.  " PBO modules
-INCLUDE ztr_a2r_wbszcj01_pai.  " PAI modules
+  TYPES: BEGIN OF ty_grp,
+           katalogart TYPE qpct-katalogart,
+           auswahlmge TYPE qpac-auswahlmge,
+           codegruppe TYPE qpct-codegruppe,
+           werks      TYPE qpac-werks,
+           zzspec     TYPE string,
+         END OF ty_grp.
 
-*&---------------------------------------------------------------------*
-*& SELECTION SCREEN DEFINITION
-*&---------------------------------------------------------------------*
-SELECTION-SCREEN BEGIN OF BLOCK blk_proj WITH FRAME TITLE TEXT-100.
+  DATA:
+    lt_code           TYPE TABLE OF ty_grp,
+    lv_code1          TYPE string,
+    lt_class_key      TYPE TABLE OF ty_inob,
+    lt_workorder_data TYPE STANDARD TABLE OF /merp/pm_woheader_entity_str,
+    lt_operation_data TYPE STANDARD TABLE OF /merp/pm_wooper_entity_str,
+    lt_component_data TYPE STANDARD TABLE OF /merp/pm_wocompmnt_entity_str,
+    lt_equipment_data TYPE STANDARD TABLE OF /merp/pm_equip_entity_str,
+    lt_arc_key        TYPE STANDARD TABLE OF gtyp_doc_tt,
+    ls_arc_key        TYPE gtyp_doc_tt,
+    lt_dd07v          TYPE TABLE OF dd07v,
+    lt_ext_notif      TYPE TABLE OF gtyp_ext_notif,
+    lt_new_notif      TYPE TABLE OF gtyp_new_notif,
+    lv_attach_flag    TYPE boolean,
+    lv_wrkhr          TYPE p DECIMALS 2, lv_acthr TYPE p DECIMALS 2,
+    lt_final_text     TYPE ztt_a2r_pdf_tline,
+    lv_zzno           TYPE i,
+    lv_zzno1          TYPE i,
+    lv_size           TYPE  i VALUE IS INITIAL,
+    lv_aufnr          TYPE aufnr,
+    ls_media          TYPE gtyp_media_resstr,
+    lv_temp           TYPE string,
+    lt_lines          TYPE leint_tline_t,
+    lv_result         TYPE c LENGTH 132,
 
-* IM Number with F4 help
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-101 FOR FIELD p_posnr.
-PARAMETERS: p_posnr TYPE im_posnr OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
+    lt_tlines         TYPE leint_tline_t,
+    lv_line_txt       TYPE string,
+    lv_orderltxt_str  TYPE string,
+    lv_notifltxt_str  TYPE string.
 
-* Project Profile - auto-populated
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-102 FOR FIELD p_profl.
-PARAMETERS: p_profl TYPE profidproj MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
 
-* Project Template - auto-populated
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-103 FOR FIELD p_pspid.
-PARAMETERS: p_pspid TYPE ps_spdid MODIF ID dis.
-SELECTION-SCREEN PUSHBUTTON 60(15) TEXT-104 USER-COMMAND preview.
-SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN SKIP 1.
+  DATA: lr_aueru TYPE RANGE OF aueru_vs.
 
-* Read-only fields from IM
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-105 FOR FIELD p_prnam.
-PARAMETERS: p_prnam TYPE im_prnam MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
+  lr_aueru = VALUE #( sign = 'I' option = 'EQ' ( low = abap_false )
+                                                ( low = '1' ) ).
 
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-106 FOR FIELD p_gjahr.
-PARAMETERS: p_gjahr TYPE im_gnjhr MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
+  CONSTANTS: lv_maxmb TYPE int4 VALUE '22000000'.
 
-SELECTION-SCREEN SKIP 1.
+  SELECT afih~qmnum,afih~warpl,afih~lacd_date AS erdat,
+         afko~aufnr,afko~gltrp,afko~gstrp, afko~gluzp, afko~gsuzp, afko~aufpl,
+         aufk~auart,aufk~ktext, aufk~werks, aufk~objnr,
+         afih~priok, afih~equnr, afih~iloan, afih~gewrk, afih~ingpr
+    FROM aufk
+   INNER JOIN afko ON aufk~aufnr = afko~aufnr
+   INNER JOIN afih ON aufk~aufnr = afih~aufnr
+    LEFT OUTER JOIN qals ON qals~aufnr = aufk~aufnr
+    INTO CORRESPONDING FIELDS OF TABLE @lt_workorder_data
+   WHERE afih~qmnum NE ' '
+     AND aufk~aufnr IN @gt_order
+     AND aufk~werks IN @gt_werks
+     AND aufk~auart IN @gt_auart
+     AND afih~gewrk IN @gt_arbpl
+     AND aufk~erdat IN @gt_creat
+     AND aufk~aedat IN @gt_chang
+     AND afih~iphas IN @gt_phase
+     AND qals~prueflos IN @gt_insp .
 
-* Editable fields
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-107 FOR FIELD p_post1.
-PARAMETERS: p_post1 TYPE ps_post1 OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
+  IF lt_workorder_data IS NOT INITIAL.
 
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-108 FOR FIELD p_verna.
-PARAMETERS: p_verna TYPE ps_verna OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-109 FOR FIELD p_plsez.
-PARAMETERS: p_plsez TYPE ps_plsez_chg OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-110 FOR FIELD p_prctr.
-PARAMETERS: p_prctr TYPE prctr OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-111 FOR FIELD p_kostl.
-PARAMETERS: p_kostl TYPE kostl OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-112 FOR FIELD p_usr10.
-PARAMETERS: p_usr10 AS CHECKBOX.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN END OF BLOCK blk_proj.
-
-*&---------------------------------------------------------------------*
-*& INITIALIZATION
-*&---------------------------------------------------------------------*
-INITIALIZATION.
-  " Import request type from memory
-  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-
-  IF gv_request_type IS INITIAL.
-    gv_request_type = 'A1'. " Default
-  ENDIF.
-
-*&---------------------------------------------------------------------*
-*& AT SELECTION-SCREEN EVENTS
-*&---------------------------------------------------------------------*
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_posnr.
-  " F4 help for IM Number
-  PERFORM f4_im_number CHANGING p_posnr.
-
-AT SELECTION-SCREEN.
-  " Validate and populate fields when IM Number changes
-  IF p_posnr IS NOT INITIAL AND p_posnr <> gv_posnr_old.
-    PERFORM get_im_data USING p_posnr.
-    gv_posnr_old = p_posnr.
-  ENDIF.
-
-AT SELECTION-SCREEN OUTPUT.
-  " Make display-only fields non-editable
-  LOOP AT SCREEN.
-    IF screen-group1 = 'DIS'.
-      screen-input = 0.
-      MODIFY SCREEN.
+    "get user and system status
+    SELECT jest~objnr, jest~stat,
+           tj02t~istat, tj02t~txt04,
+           tj30t~estat, tj30t~txt04 AS etxt04
+      FROM jest
+      LEFT OUTER JOIN tj02t ON jest~stat = tj02t~istat
+                           AND tj02t~spras = 'E'
+      LEFT OUTER JOIN tj30t ON jest~stat = tj30t~estat
+                           AND tj30t~spras = 'E'
+                           AND tj30t~stsma = 'ZPM_OR1'
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE jest~objnr = @lt_workorder_data-objnr
+        AND jest~inact = @abap_false
+      INTO TABLE @DATA(lt_status).
+    IF sy-subrc EQ 0.
+      SORT lt_status BY istat estat.
+      DELETE lt_status WHERE istat = 'I0215'.
+      SELECT SINGLE name_text, usr21~bname
+        FROM adrp
+        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+        INTO @DATA(ls_usr21)
+        WHERE usr21~bname = @sy-uname.
     ENDIF.
+
+    "get Notifcation activities
+    SELECT qmnum, manum, fenum, mnkat,mngrp, mncod, matxt,ernam,peter, indtx
+      FROM qmma
+      INTO TABLE @DATA(lt_qmma) FOR ALL ENTRIES IN @lt_workorder_data
+     WHERE qmnum = @lt_workorder_data-qmnum
+       AND kzloesch = ' '.
+
+    IF lt_qmma IS NOT INITIAL.
+      "get user name
+      SELECT name_text, usr21~bname
+        FROM adrp
+        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+        APPENDING  TABLE @DATA(lt_adrp)
+        FOR ALL ENTRIES IN @lt_qmma
+        WHERE usr21~bname = @lt_qmma-ernam.
+
+      "get acitvity code Description
+      "get code group texts
+      SELECT * FROM qpgt
+        INTO TABLE @DATA(lt_qpgt_notif)
+        FOR ALL ENTRIES IN @lt_qmma
+        WHERE qpgt~katalogart = @lt_qmma-mnkat
+          AND qpgt~codegruppe = @lt_qmma-mngrp
+          AND sprache = @sy-langu.
+
+      "Get Text for Codes
+      SELECT * FROM qpct
+      INTO TABLE @DATA(lt_qpct_notif)
+      FOR ALL ENTRIES IN @lt_qmma
+      WHERE katalogart = @lt_qmma-mnkat
+        AND codegruppe = @lt_qmma-mngrp
+        AND code = @lt_qmma-mncod
+        AND sprache = @sy-langu.
+    ENDIF.
+
+    "get defect notifcation
+    LOOP AT lt_qmma ASSIGNING FIELD-SYMBOL(<ls_def_notif>)
+                    WHERE mngrp = 'LPB-160' AND mncod = 'R001' .
+      APPEND INITIAL LINE TO lt_ext_notif ASSIGNING FIELD-SYMBOL(<ls_ext_notif>).
+      <ls_ext_notif>-newqmnum = <ls_def_notif>-matxt.
+      <ls_ext_notif>-extqmnum =  <ls_def_notif>-qmnum.
+    ENDLOOP.
+
+    "Get teco date
+    SELECT jcds~objnr, jcds~usnam, jcds~udate
+      FROM jcds INNER JOIN jest
+        ON ( jest~objnr =  jcds~objnr AND jest~stat = jcds~stat )
+      INTO TABLE @DATA(lt_teco)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE jcds~objnr = @lt_workorder_data-objnr
+        AND jcds~stat EQ 'I0045'
+        AND  jcds~inact EQ ' '.
+
+    SORT lt_teco BY objnr DESCENDING usnam DESCENDING udate DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM lt_teco COMPARING objnr.
+
+    IF lt_teco IS NOT INITIAL.
+      SELECT name_text, usr21~bname
+        FROM adrp INNER JOIN usr21
+          ON usr21~persnumber = adrp~persnumber
+        APPENDING  TABLE @lt_adrp
+          FOR ALL ENTRIES IN @lt_teco
+        WHERE usr21~bname = @lt_teco-usnam.
+    ENDIF.
+
+    IF lt_ext_notif IS NOT INITIAL.
+      SELECT qmnum, manum, mngrp, mncod, matxt,ernam,peter, indtx
+        FROM qmma
+        INTO TABLE @DATA(lt_def_qmma)
+        FOR ALL ENTRIES IN @lt_ext_notif
+      WHERE qmnum = @lt_ext_notif-newqmnum.
+      IF sy-subrc EQ 0.
+        LOOP AT lt_def_qmma ASSIGNING FIELD-SYMBOL(<ls_def_qmma>).
+          APPEND INITIAL LINE TO lt_new_notif ASSIGNING FIELD-SYMBOL(<ls_new_notif>).
+          SPLIT <ls_def_qmma>-matxt AT `:`  INTO TABLE DATA(lt_code_nt).
+          <ls_new_notif>-oldnotif = |{ VALUE #( lt_code_nt[ 1 ] OPTIONAL ) ALPHA = IN }|.
+          <ls_new_notif>-oldnotif  = |{ <ls_new_notif>-oldnotif ALPHA = IN }|.
+          <ls_new_notif>-qmnum = <ls_def_qmma>-qmnum.
+          <ls_new_notif>-vorglfnr = VALUE #( lt_code_nt[ 2 ] OPTIONAL ).
+          <ls_new_notif>-merknr = VALUE #( lt_code_nt[ 3 ] OPTIONAL ).
+          <ls_new_notif>-probenr = VALUE #( lt_code_nt[ 4 ] OPTIONAL ).
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
+    "Get Work center description
+    SELECT crtx~objid, crtx~ktext,crhd~arbpl
+      FROM crtx INNER JOIN crhd
+        ON crhd~objid = crtx~objid AND crhd~objty = 'A'
+      INTO TABLE @DATA(lt_crtx)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE crtx~objid = @lt_workorder_data-gewrk
+        AND crtx~spras = @sy-langu
+        AND crtx~objty = 'A'.
+
+    "priority
+    SELECT artpr, priok, priokx
+      FROM t356_t
+      INTO TABLE @DATA(lt_t356)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE priok = @lt_workorder_data-priok
+        AND artpr = 'PM'
+        AND spras = @sy-langu.
+
+    "Qmel
+    SELECT * FROM qmel
+      INTO TABLE  @DATA(lt_qmel)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE qmnum = @lt_workorder_data-qmnum.
+
+    IF lt_qmel IS NOT INITIAL.
+      "MHIO
+      SELECT * FROM mhio
+      INTO TABLE  @DATA(lt_mhio)
+      FOR ALL ENTRIES IN @lt_qmel
+      WHERE qmnum = @lt_qmel-qmnum.
+    ENDIF.
+
+    "T024I get INGRP INNAM IWERK
+    SELECT ingrp,innam,iwerk
+      FROM t024i
+      INTO TABLE  @DATA(lt_t024)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE ingrp = @lt_workorder_data-ingpr
+        AND iwerk = @lt_workorder_data-werks.
+
+    "T001W -name1,WERKS
+    SELECT werks, name1
+      FROM t001w
+      INTO TABLE  @DATA(lt_t00w)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE werks = @lt_workorder_data-werks.
+
+    SELECT afko~aufnr afvc~vornr afvc~ltxa1 afvc~arbid
+           afvv~arbei afvv~arbeh afvv~ismnw afvv~ismnw afvv~fsavd afvv~fsavz afvv~fseld afvv~fselz
+           afvv~ssavd afvv~ssavz afvv~ssedd afvv~ssedz afvc~aplzl afvc~aufpl
+    FROM afvc INNER JOIN afko
+      ON afvc~aufpl = afko~aufpl
+    INNER JOIN afvv
+      ON afvv~aufpl = afvc~aufpl AND afvv~aplzl = afvc~aplzl
+    INNER JOIN afvu
+      ON afvu~aufpl = afvc~aufpl AND afvu~aplzl = afvc~aplzl
+    INNER JOIN aufk
+      ON afko~aufnr = aufk~aufnr
+    INTO CORRESPONDING FIELDS OF TABLE lt_operation_data
+    FOR ALL ENTRIES IN lt_workorder_data
+    WHERE afko~aufnr = lt_workorder_data-aufnr.
+
+    IF lt_operation_data IS NOT INITIAL.
+      SORT lt_operation_data BY aufnr aplzl aufpl.
+      "operation final confirmation
+      SELECT  rueck, rmzhl AS counter, ersda, ernam, aueru, aufnr, vornr, stokz, stzhl, iedz
+        FROM afru
+        INTO TABLE @DATA(lt_final_afru)
+        FOR ALL ENTRIES IN @lt_operation_data
+        WHERE aufnr = @lt_operation_data-aufnr
+          AND vornr = @lt_operation_data-vornr
+          AND ersda IN @gt_cnfdate.
+*          AND aueru EQ @abap_true.
+      IF sy-subrc = 0.
+        DATA(lt_afru) = lt_final_afru[].
+        DELETE lt_final_afru WHERE aueru IN lr_aueru.
+      ENDIF.
+
+      IF lt_final_afru IS NOT INITIAL.
+        SELECT name_text, usr21~bname
+          FROM adrp
+          INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+          APPENDING TABLE @lt_adrp
+          FOR ALL ENTRIES IN @lt_final_afru
+          WHERE usr21~bname = @lt_final_afru-ernam.
+
+*        SORT lt_final_afru DESCENDING BY aufnr vornr rmzhl.
+        SORT lt_final_afru DESCENDING BY aufnr vornr counter.
+        DELETE ADJACENT DUPLICATES FROM lt_final_afru COMPARING aufnr vornr.
+        DELETE lt_final_afru WHERE stzhl GE 1.
+      ENDIF.
+
+      IF gv_op IS NOT INITIAL."Added RMZHL Field in select query
+*        SELECT rueck,rmzhl AS counter, aufnr, vornr,aueru,stzhl FROM afru
+*        INTO TABLE @DATA(lt_afru)
+*        FOR ALL ENTRIES IN @lt_operation_data
+*        WHERE aufnr = @lt_operation_data-aufnr
+*        AND vornr = @lt_operation_data-vornr
+*        AND ersda IN @gt_cnfdate.
+
+        IF sy-subrc EQ 0 AND lt_afru IS NOT INITIAL.
+          SORT lt_afru DESCENDING BY aufnr vornr counter.
+          DELETE ADJACENT DUPLICATES FROM lt_afru COMPARING aufnr vornr.
+          DELETE lt_afru WHERE stzhl GE 1.
+        ENDIF.
+
+
+        LOOP AT lt_operation_data ASSIGNING FIELD-SYMBOL(<ls_oper_data>).
+          DATA(lv_tabic) = sy-tabix. "Added aueru check to remove canceled confirmation Operations
+          IF NOT line_exists( lt_afru[ aufnr = <ls_oper_data>-aufnr aueru = abap_true ] )."to show all the oper even if one is confirmed
+            DELETE lt_operation_data INDEX sy-tabix.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
+    IF gv_skip IS NOT INITIAL.
+      DATA(lt_count_data) = lt_operation_data.
+      SORT lt_count_data BY aufnr.
+      DELETE ADJACENT DUPLICATES FROM lt_count_data COMPARING aufnr.
+      DESCRIBE TABLE lt_count_data LINES DATA(lv_work).
+      IF lv_work GT 1.
+        MESSAGE  'Enter specific order number to preview PDF document' TYPE 'I'. ##NO_TEXT
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    IF lt_operation_data IS NOT INITIAL.
+
+      "Get Work center description
+      SELECT crtx~objid, crtx~ktext, crhd~arbpl
+        FROM crtx
+        INNER JOIN crhd
+          ON crhd~objid = crtx~objid
+         AND crhd~objty = 'A'
+        APPENDING TABLE @lt_crtx
+        FOR ALL ENTRIES IN @lt_operation_data
+        WHERE crtx~objid = @lt_operation_data-arbid
+          AND crtx~spras = @sy-langu
+          AND crtx~objty = 'A'.
+
+      "unit of measure
+      SELECT msehi, msehl FROM  t006a
+         INTO TABLE @DATA(lt_t006a)
+        FOR ALL ENTRIES IN @lt_operation_data
+        WHERE msehi = @lt_operation_data-arbeh
+        AND spras = @sy-langu.
+
+      "componentfetch
+      SELECT DISTINCT afko~aufnr
+        resb~vornr resb~rsnum resb~rspos resb~rsart resb~ltxsp resb~matnr resb~bdmng resb~meins
+        FROM afko
+        INNER JOIN resb
+          ON resb~rsnum = afko~rsnum
+        INTO CORRESPONDING FIELDS OF TABLE lt_component_data
+        FOR ALL ENTRIES IN lt_operation_data
+        WHERE afko~aufnr = lt_operation_data-aufnr
+          AND resb~vornr = lt_operation_data-vornr
+          AND resb~xloek = abap_false.
+    ENDIF.
+
+    IF lt_component_data IS NOT INITIAL.
+      SELECT *
+        FROM makt
+        INTO TABLE @DATA(lt_makt)
+        FOR ALL ENTRIES IN @lt_component_data
+        WHERE matnr = @lt_component_data-matnr
+          AND spras EQ @sy-langu.
+    ENDIF.
+
+    SELECT equz~equnr equz~ingrp equz~iwerk equz~gewrk
+           iloa~stort iloa~msgrp
+           eqkt~eqktx
+      FROM ( ( equi INNER JOIN  equz
+                      ON  equi~equnr = equz~equnr AND  equz~datbi GT  sy-datum )
+                    INNER JOIN  iloa
+                      ON iloa~iloan = equz~iloan
+                    LEFT JOIN   eqkt
+                      ON  eqkt~equnr = equz~equnr  )
+     INTO CORRESPONDING FIELDS OF TABLE lt_equipment_data
+           FOR ALL ENTRIES IN lt_workorder_data
+           WHERE equi~equnr = lt_workorder_data-equnr.
+
+    SELECT iflo~tplnr, iflo~pltxt, iloa~stort, iloa~msgrp, iloa~iloan
+      FROM iflo
+      INNER JOIN  iloa ON iloa~tplnr = iflo~tplnr
+      INTO TABLE @DATA(lt_floc_data)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE iloa~iloan = @lt_workorder_data-iloan.
+
+
+    LOOP AT lt_floc_data ASSIGNING FIELD-SYMBOL(<ls_floc_data>).
+      APPEND INITIAL LINE TO lt_class_key ASSIGNING FIELD-SYMBOL(<ls_class_key>).
+      <ls_class_key>-tplnr = <ls_floc_data>-tplnr .
+      <ls_class_key>-objkey = <ls_floc_data>-tplnr.
+    ENDLOOP.
+
+    IF lt_class_key IS NOT INITIAL.
+      "Custom class char
+      SELECT  inob~objek , ausp~atinn AS atinn,ausp~atzhl,ausp~atwrt AS atwrt,cabn~atnam
+        FROM kssk                                         "#EC CI_HINTS
+        INNER JOIN ausp ON ausp~objek = kssk~objek
+                       AND ausp~klart = kssk~klart
+                       AND ausp~mafid = kssk~mafid
+        INNER JOIN cabn ON cabn~atinn = ausp~atinn
+                        AND cabn~adzhl = ausp~adzhl
+        INNER JOIN inob ON ausp~objek = inob~cuobj
+        INTO TABLE @DATA(lt_obj_key)
+        FOR ALL ENTRIES IN @lt_class_key
+        WHERE inob~objek = @lt_class_key-objkey
+          AND  kssk~klart IN ( '003' )"Equipment & Functional Location class
+          AND ausp~lkenz EQ ' '
+          AND cabn~atnam IN ( 'GMPRE', 'QSRE', 'SIRE' ).
+
+      IF lt_obj_key IS NOT INITIAL.
+        SELECT cawn~atinn,cawn~atwrt,cawnt~atzhl, cawnt~atwtb
+          FROM cawn
+          INNER JOIN ausp  ON ausp~atinn = cawn~atinn
+                          AND ausp~atwrt = cawn~atwrt
+          INNER JOIN cawnt ON cawnt~atinn = cawn~atinn
+                          AND cawnt~atzhl = cawn~atzhl
+                          AND cawnt~spras = @sy-langu
+          INTO TABLE @DATA(lt_cawn)
+          FOR ALL ENTRIES IN @lt_obj_key
+          WHERE cawn~atinn = @lt_obj_key-atinn
+            AND cawn~atwrt = @lt_obj_key-atwrt.
+      ENDIF.
+
+    ENDIF.
+
+    "inspection
+    SELECT prueflos,objnr FROM qals
+      INTO TABLE @DATA(lt_lot_obj_keys)
+      FOR ALL ENTRIES IN @lt_workorder_data
+      WHERE qals~aufnr = @lt_workorder_data-aufnr.
+    IF lt_lot_obj_keys IS NOT INITIAL.
+      SELECT qals~* FROM qals
+        LEFT JOIN qave ON qave~prueflos = qals~prueflos AND qave~kzart = 'L' "usage decision for inspection lot  "#EC CI_BUFFJOIN
+        INTO TABLE @DATA(lt_insp_lot)
+        FOR ALL ENTRIES IN @lt_lot_obj_keys
+        WHERE qals~prueflos = @lt_lot_obj_keys-prueflos.
+    ENDIF.
+    IF lt_insp_lot IS NOT INITIAL.
+      SELECT qals~aufpl,qapp~prueflos, qapp~vorglfnr,qapp~tplnr, qapp~equnr, qapp~probenr  FROM qapp
+      INNER JOIN qals ON qapp~prueflos = qals~prueflos "#EC CI_BUFFJOIN
+      INTO TABLE @DATA(lt_insp_point)
+      FOR ALL ENTRIES IN @lt_insp_lot
+      WHERE qapp~prueflos = @lt_insp_lot-prueflos.
+    ENDIF.
+*
+    "populate operation number - VORNR
+    IF lt_insp_point IS NOT INITIAL.
+      SELECT DISTINCT afvc~aufpl, afvc~aplzl, afvc~vornr
+        INTO TABLE @DATA(lt_operation)
+        FROM afvc
+        FOR ALL ENTRIES IN @lt_insp_point
+        WHERE aufpl = @lt_insp_point-aufpl
+        AND aplzl = @lt_insp_point-vorglfnr.
+      IF sy-subrc EQ 0.
+        SORT lt_operation BY aufpl aplzl.
+      ENDIF.
+    ENDIF.
+
+    IF lt_workorder_data IS NOT INITIAL.
+      SELECT DISTINCT aufpl, aplzl,vornr
+        INTO TABLE @DATA(lt_all_operations)
+        FROM afvc
+        FOR ALL ENTRIES IN @lt_workorder_data
+        WHERE aufpl = @lt_workorder_data-aufpl.
+      IF sy-subrc EQ 0.
+        SORT lt_all_operations BY aufpl aplzl.
+      ENDIF.
+    ENDIF.
+
+
+    IF lt_insp_point IS NOT INITIAL.
+      "Query for getting the specificiations
+      SELECT * FROM qamv                               "#EC CI_BUFFJOIN
+        INTO TABLE @DATA(lt_insp_char)
+        FOR ALL ENTRIES IN @lt_insp_point
+        WHERE prueflos = @lt_insp_point-prueflos
+        AND vorglfnr = @lt_insp_point-vorglfnr.
+
+*      "Sample Results
+      SELECT * FROM qasr
+        INTO TABLE @DATA(lt_qasr)
+        FOR ALL ENTRIES IN @lt_insp_point
+        WHERE prueflos = @lt_insp_point-prueflos
+        AND vorglfnr = @lt_insp_point-vorglfnr.
+    ENDIF.
+
+    IF lt_qasr IS NOT INITIAL.
+      SELECT name_text, usr21~bname
+        FROM adrp
+        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+        APPENDING TABLE @lt_adrp
+        FOR ALL ENTRIES IN @lt_qasr
+        WHERE usr21~bname = @lt_qasr-pruefer.
+    ENDIF.
+
+    IF lt_insp_char IS NOT INITIAL.
+      SELECT DISTINCT qamv~prueflos,
+          plmk~plnty ,
+          plmk~plnnr ,
+          qamv~vorglfnr ,
+          plmk~kzeinstell,
+          qamv~merknr ,
+          qamv~zaehl ,
+          plmk~ltextkz ,
+          qamv~ltextspr ,
+          qasv~probenr ,
+          plmk~plnkn
+      FROM qamv
+      INNER JOIN qasv
+          ON qasv~prueflos = qamv~prueflos
+          AND qasv~vorglfnr = qamv~vorglfnr
+          AND qasv~merknr = qamv~merknr
+      INNER JOIN qals
+          ON qals~prueflos = qamv~prueflos
+      INNER JOIN plmk
+          ON qamv~merknr = plmk~merknr
+      AND plmk~zaehl = qamv~zaehl
+      AND plmk~kzeinstell = qamv~kzeinstell
+      AND plmk~plnnr = qals~plnnr
+      AND plmk~plnty = qals~plnty
+        INTO TABLE @DATA(lt_insp_char_text_keys)
+        FOR ALL ENTRIES IN @lt_insp_char
+          WHERE qamv~prueflos = @lt_insp_char-prueflos
+          AND qamv~vorglfnr = @lt_insp_char-vorglfnr
+          AND qamv~merknr = @lt_insp_char-merknr
+          AND plmk~ltextkz = @abap_true
+          AND plmk~loekz = @abap_false.
+    ENDIF.
+
+    IF lt_insp_point IS NOT INITIAL.
+      SELECT * FROM qamv
+      INTO TABLE @DATA(lt_qamv)
+       FOR ALL ENTRIES IN @lt_insp_point
+       WHERE prueflos = @lt_insp_point-prueflos
+       AND vorglfnr = @lt_insp_point-vorglfnr.
+    ENDIF.
+
+    IF lt_qamv IS NOT INITIAL.
+      SELECT qpct~katalogart,  qpct~codegruppe,qpct~code, qpct~kurztext, qpac~auswahlmge,qpac~werks
+        FROM qpct
+      INNER JOIN qpac ON qpac~katalogart = qpct~katalogart
+                      AND qpac~codegruppe = qpct~codegruppe
+                      AND qpac~code = qpct~code
+                      AND qpct~sprache = @sy-langu
+      INTO TABLE @DATA(lt_qpct)
+      FOR ALL ENTRIES IN @lt_qamv
+        WHERE qpct~katalogart = @lt_qamv-katalgart1
+          AND qpac~auswahlmge  = @lt_qamv-auswmenge1
+          AND qpac~werks = @lt_qamv-auswmgwrk1.        "#EC CI_BUFFJOIN
+    ENDIF.
+
+    SORT lt_qpct BY katalogart werks codegruppe auswahlmge code.
+    DELETE ADJACENT DUPLICATES FROM lt_qpct COMPARING katalogart werks codegruppe auswahlmge code.
+
+    DATA(lt_temp) = lt_qpct.
+    SORT lt_temp BY werks katalogart codegruppe auswahlmge.
+    DELETE ADJACENT DUPLICATES FROM lt_temp COMPARING werks katalogart codegruppe auswahlmge.
+
+    LOOP AT  lt_temp ASSIGNING FIELD-SYMBOL(<ls_temp>).
+      APPEND INITIAL LINE TO lt_code ASSIGNING FIELD-SYMBOL(<ls_code>).
+      <ls_code> = CORRESPONDING #( BASE ( <ls_code> ) <ls_temp> ).
+      LOOP AT lt_qpct ASSIGNING FIELD-SYMBOL(<ls_qpct>) WHERE katalogart = <ls_temp>-katalogart
+                                                          AND auswahlmge = <ls_temp>-auswahlmge
+                                                          AND codegruppe = <ls_temp>-codegruppe .
+        IF lv_code1 IS INITIAL.
+          lv_code1 = <ls_qpct>-kurztext .
+        ELSE.
+          lv_code1 = |{ <ls_qpct>-kurztext } / { lv_code1 }|.
+        ENDIF.
+      ENDLOOP.
+      <ls_code>-zzspec = lv_code1.
+      CLEAR lv_code1.
+    ENDLOOP.
+
+    LOOP AT lt_workorder_data ASSIGNING FIELD-SYMBOL(<ls_order>).
+      APPEND INITIAL LINE TO lt_arc_key ASSIGNING FIELD-SYMBOL(<ls_arc_key>).
+      IF <ls_order>-aufnr IS NOT INITIAL.
+        <ls_arc_key>-object_id = <ls_order>-aufnr.
+        <ls_arc_key>-sap_object = 'PMAUFK'.
+      ENDIF.
+
+      APPEND INITIAL LINE TO lt_arc_key ASSIGNING <ls_arc_key>.
+      IF <ls_order>-qmnum IS NOT INITIAL.
+        <ls_arc_key>-object_id = <ls_order>-qmnum.
+        <ls_arc_key>-sap_object = 'PMQMEL'.
+      ENDIF.
+
+      LOOP AT lt_all_operations ASSIGNING FIELD-SYMBOL(<ls_operation>).
+        APPEND INITIAL LINE TO lt_arc_key ASSIGNING <ls_arc_key>.
+        <ls_arc_key>-object_id = |OV{ <ls_operation>-aufpl }{ <ls_operation>-aplzl }|.
+        <ls_arc_key>-sap_object = 'PMAFVC'.
+        <ls_arc_key>-aufnr = <ls_order>-aufnr.
+        <ls_arc_key>-vornr = <ls_operation>-vornr.
+      ENDLOOP.
+    ENDLOOP.
+
+    CLEAR gt_drad[].
+    IF lt_arc_key IS NOT INITIAL.
+      SELECT * FROM drad INTO TABLE @DATA(lt_arc_obj)
+        FOR ALL ENTRIES IN @lt_arc_key
+        WHERE dokar = 'ZPM'
+          AND objky = @lt_arc_key-object_id.
+      IF sy-subrc = 0.
+        gt_drad = lt_arc_obj.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+
+  SORT lt_workorder_data BY aufnr.
+
+  IF gv_prnt = 'U'. "mass printing from frontend
+    me->open_form( ).
+    me->pdf_merger( ).
+  ENDIF.
+
+
+  LOOP AT lt_workorder_data ASSIGNING FIELD-SYMBOL(<ls_workorder>).
+
+    CLEAR : lv_zzno, lv_zzno1.
+
+    LOOP AT   lt_arc_obj ASSIGNING FIELD-SYMBOL(<ls_arc_obj>)
+      WHERE objky  = <ls_workorder>-aufnr OR objky  = <ls_workorder>-qmnum
+            OR dokob = 'PMAFVC'.
+
+      gs_drad = <ls_arc_obj>.
+      CLEAR: gs_docfiles, gs_media.
+
+      me->dms_file_get( iv_drad = <ls_arc_obj> ).
+
+      CASE <ls_arc_obj>-dokob.
+        WHEN 'PMAUFK'. "Order
+          SPLIT gs_docfiles-description AT '-' INTO TABLE DATA(lt_val).
+          DESCRIBE TABLE lt_val LINES DATA(lv_lines).
+
+          CLEAR lv_attach_flag.
+          LOOP AT lt_val ASSIGNING FIELD-SYMBOL(<ls_val>) WHERE table_line CS 'Char'.
+            lv_attach_flag = abap_true.
+          ENDLOOP.
+
+          IF lv_lines GT 1 AND lv_attach_flag EQ abap_true.
+            CLEAR: lv_aufnr."
+            APPEND INITIAL LINE TO gt_insp_char_image ASSIGNING FIELD-SYMBOL(<ls_char_image>).
+            <ls_char_image>-filename = gs_docfiles-docfile.
+            lv_aufnr  = |{  VALUE #( lt_val[ 1 ] OPTIONAL ) ALPHA = IN }|.
+            <ls_char_image>-aufnr = |{ lv_aufnr ALPHA = IN }|.
+            <ls_char_image>-vornr = VALUE #( lt_val[ 2 ] OPTIONAL ).
+            lv_temp = VALUE #( lt_val[ 3 ] OPTIONAL ).
+            SPLIT lv_temp AT space   INTO TABLE  lt_val.
+            <ls_char_image>-probenr = VALUE #( lt_val[ 1 ] OPTIONAL ).
+            lv_temp = VALUE #( lt_val[ 2 ] OPTIONAL ).
+            SPLIT lv_temp AT ':'   INTO TABLE   lt_val.
+            <ls_char_image>-merknr = VALUE #( lt_val[ 2 ] OPTIONAL ).
+            SPLIT  gs_docfiles-docfile AT '\'   INTO TABLE  lt_val.
+            IF lt_val IS NOT INITIAL.
+              DATA(ls_line) = lt_val[ lines( lt_val ) ].
+              <ls_char_image>-filename = ls_line.
+            ENDIF.
+            IF gs_docfiles-docfile CS 'jpg'.
+              me->dms_file_get_bin_table( iv_docfiles = gs_docfiles ).
+              <ls_char_image>-zzraw = gs_media-value.
+              <ls_char_image>-zzfile_size = xstrlen( <ls_char_image>-zzraw ).
+              lv_size = <ls_char_image>-zzfile_size + lv_size.
+              IF lv_size >= lv_maxmb.
+                CLEAR: <ls_char_image>-zzraw.
+              ENDIF.
+              CLEAR lv_temp.
+            ENDIF.
+
+          ELSE.
+            APPEND INITIAL LINE TO gs_woheader-zzwoimglst ASSIGNING FIELD-SYMBOL(<ls_wohead_lst>).
+            lv_zzno1 = lv_zzno1 + 1.
+            <ls_wohead_lst>-zzno = |{ lv_zzno1 }.|.
+            CONDENSE <ls_wohead_lst>-zzno NO-GAPS.
+*            <ls_wohead_lst>-filename = gs_docfiles-docfile.
+            SPLIT gs_docfiles-docfile  AT '\'   INTO TABLE  lt_val.
+            IF lt_val IS NOT INITIAL.
+              ls_line = lt_val[ lines( lt_val ) ].
+              <ls_wohead_lst>-filename  = ls_line.
+            ENDIF.
+            <ls_wohead_lst>-descr = gs_docfiles-description.
+*
+            SPLIT gs_docfiles-docfile AT '.' INTO TABLE DATA(lt_name).
+            DATA(lv_ext) =  VALUE #( lt_name[ 2 ] OPTIONAL ).
+            TRANSLATE lv_ext TO UPPER CASE.
+            CHECK lv_ext EQ 'JPG'.
+*
+            APPEND INITIAL LINE TO gs_woheader-zzwoimg ASSIGNING FIELD-SYMBOL(<ls_wo_image>).
+            <ls_wo_image>-aufnr = |{ gs_woheader-aufnr ALPHA = IN }|.
+            <ls_wo_image>-filename = <ls_wohead_lst>-filename.
+            me->dms_file_get_bin_table( iv_docfiles = gs_docfiles ).
+            <ls_wo_image>-zzraw = gs_media-value.
+            <ls_wo_image>-zzfile_size = xstrlen( <ls_wo_image>-zzraw ).
+            lv_size = <ls_wo_image>-zzfile_size + lv_size.
+            IF lv_size >= lv_maxmb.
+              CLEAR: <ls_wo_image>-zzraw.
+            ENDIF.
+            CLEAR lv_temp.
+          ENDIF.
+
+        WHEN 'PMQMEL'. "Notification
+          APPEND INITIAL LINE TO gs_woheader-zznotifimglst ASSIGNING FIELD-SYMBOL(<ls_no_lst>).
+          lv_zzno = lv_zzno + 1.
+          <ls_no_lst>-zzno = |{ lv_zzno }.|.
+          CONDENSE <ls_no_lst>-zzno NO-GAPS.
+          DATA(lv_docfile) = gs_docfiles-docfile.
+          SPLIT lv_docfile AT '\'   INTO TABLE  lt_val.
+          IF lt_val IS NOT INITIAL.
+            ls_line = lt_val[ lines( lt_val ) ].
+            gs_docfiles-docfile = ls_line.
+          ENDIF.
+
+          <ls_no_lst>-filename = gs_docfiles-docfile.
+          <ls_no_lst>-descr = gs_docfiles-description.
+
+          SPLIT gs_docfiles-docfile AT '.' INTO TABLE lt_name.
+          lv_ext =  VALUE #( lt_name[ 2 ] OPTIONAL ).
+          TRANSLATE lv_ext TO UPPER CASE.
+          CHECK lv_ext EQ 'JPG'.
+
+          APPEND INITIAL LINE TO gs_woheader-zznotifimg ASSIGNING FIELD-SYMBOL(<ls_notif_att>).
+          <ls_notif_att>-filename = gs_docfiles-docfile.
+          me->dms_file_get_bin_table( iv_docfiles = gs_docfiles ).
+          <ls_notif_att>-zzraw = gs_media-value.
+          <ls_notif_att>-zzfile_size = xstrlen( <ls_notif_att>-zzraw ).
+          lv_size = <ls_notif_att>-zzfile_size + lv_size.
+          IF lv_size >= lv_maxmb.
+            CLEAR: <ls_notif_att>-zzraw.
+          ENDIF.
+          CLEAR lv_temp.
+
+        WHEN 'PMAFVC'. "operation attachment
+          READ TABLE lt_arc_key ASSIGNING <ls_arc_key>  WITH KEY
+*                          dokob = 'PMAFVC'
+                          object_id  = <ls_arc_obj>-objky.
+          IF <ls_arc_key> IS ASSIGNED AND sy-subrc = 0.
+            gs_drad = <ls_arc_obj>.
+            CLEAR: gs_docfiles, gs_media.
+
+            me->dms_file_get( iv_drad = <ls_arc_obj> ).
+
+            APPEND INITIAL LINE TO gt_insp_char_image ASSIGNING <ls_char_image>.
+            SPLIT gs_docfiles-docfile AT '\'   INTO TABLE  lt_val.
+            IF lt_val IS NOT INITIAL.
+              ls_line = lt_val[ lines( lt_val ) ].
+              <ls_char_image>-filename = ls_line.
+            ENDIF.
+            <ls_char_image>-aufnr = <ls_arc_key>-aufnr.
+            <ls_char_image>-vornr = <ls_arc_key>-vornr.
+            <ls_char_image>-mimetyp = 'AFVC'. "Operation image
+
+            IF gs_docfiles-docfile CS 'jpg'.
+              me->dms_file_get_bin_table( iv_docfiles = gs_docfiles ).
+              <ls_char_image>-zzraw = gs_media-value.
+              <ls_char_image>-zzfile_size = xstrlen( <ls_char_image>-zzraw ).
+              lv_size = <ls_char_image>-zzfile_size + lv_size.
+              IF lv_size >= lv_maxmb.
+                CLEAR: <ls_char_image>-zzraw.
+              ENDIF.
+              CLEAR lv_temp.
+            ENDIF.
+          ENDIF.
+      ENDCASE.
+      CLEAR: lv_ext, lt_name.
+    ENDLOOP.
+
+    "Display all system and user status of Order
+    LOOP AT lt_status INTO DATA(ls_status) WHERE objnr = <ls_workorder>-objnr.
+      IF ls_status-istat IS NOT INITIAL.
+        gs_woheader-zzistat = gs_woheader-zzistat && ` `  && ls_status-txt04.
+      ENDIF.
+      IF ls_status-estat IS NOT INITIAL.
+        gs_woheader-zzestat = gs_woheader-zzestat && ` ` && ls_status-etxt04 .
+      ENDIF.
+    ENDLOOP.
+    "Check if print is run by job or by foreground
+    IF sy-batch = abap_true.
+      gs_woheader-zzsrccrt = 'BATCH'.
+    ELSE.
+      gs_woheader-zzsrccrt = ls_usr21-name_text.
+    ENDIF.
+
+    gs_woheader-qmnum = COND #( WHEN <ls_workorder>-qmnum IS INITIAL THEN 'NA' ELSE <ls_workorder>-qmnum ).
+    gs_woheader-warpl =  COND #( WHEN <ls_workorder>-warpl IS INITIAL THEN 'NA' ELSE <ls_workorder>-warpl ).
+    gs_woheader-aufnr =  COND #( WHEN <ls_workorder>-aufnr IS INITIAL THEN 'NA' ELSE <ls_workorder>-aufnr ).
+    gs_woheader-gltrp = <ls_workorder>-gltrp.
+    gs_woheader-zzbasiceddt = me->get_date_des( iv_date = gs_woheader-gltrp ).
+    gs_woheader-zzbasiceddt = COND #( WHEN gs_woheader-zzbasiceddt IS INITIAL THEN 'NA' ELSE gs_woheader-zzbasiceddt ).
+    gs_woheader-gstrp = <ls_workorder>-gstrp.
+    gs_woheader-zzbasicstdt = me->get_date_des( iv_date = gs_woheader-gstrp ).
+    gs_woheader-zzbasicstdt = COND #( WHEN gs_woheader-zzbasicstdt IS INITIAL THEN 'NA' ELSE gs_woheader-zzbasicstdt ).
+    gs_woheader-gluzp = <ls_workorder>-gluzp.
+    gs_woheader-gsuzp = <ls_workorder>-gsuzp.
+    gs_woheader-auart = COND #( WHEN  <ls_workorder>-auart IS INITIAL THEN 'NA' ELSE <ls_workorder>-auart ).
+    gs_woheader-zzpriority = |{ <ls_workorder>-priok } { VALUE #( lt_t356[ priok = <ls_workorder>-priok ]-priokx OPTIONAL ) }|.
+    gs_woheader-zzpriority = COND #( WHEN  gs_woheader-zzpriority IS INITIAL THEN 'NA' ELSE gs_woheader-zzpriority ).
+    gs_woheader-equnr = COND #( WHEN  <ls_workorder>-equnr IS INITIAL THEN 'NA' ELSE <ls_workorder>-equnr ).
+    gs_woheader-iloan = <ls_workorder>-iloan.
+    gs_woheader-ingpr = <ls_workorder>-ingpr.
+    gs_woheader-gewrk = <ls_workorder>-gewrk.
+    gs_woheader-tplnr = get_floc( iv_tplnr = VALUE #( lt_floc_data[ iloan = <ls_workorder>-iloan ]-tplnr OPTIONAL ) ).
+    gs_woheader-zztplnr = gs_woheader-tplnr.
+    gs_woheader-eqktx = VALUE #( lt_equipment_data[ equnr = <ls_workorder>-equnr ]-eqktx OPTIONAL ).
+    gs_woheader-eqktx = COND #( WHEN  gs_woheader-eqktx IS INITIAL THEN 'NA' ELSE gs_woheader-eqktx ).
+    gs_woheader-zzeqloc = VALUE #( lt_equipment_data[ equnr = <ls_workorder>-equnr ]-stort OPTIONAL ).
+    gs_woheader-zzeqloc = COND #( WHEN  gs_woheader-zzeqloc IS INITIAL THEN 'NA' ELSE gs_woheader-zzeqloc ).
+    gs_woheader-zzflocloc = VALUE #( lt_floc_data[ iloan = <ls_workorder>-iloan ]-stort OPTIONAL ).
+    gs_woheader-zzflocloc = COND #( WHEN  gs_woheader-zzflocloc IS INITIAL THEN 'NA' ELSE gs_woheader-zzflocloc ).
+    gs_woheader-zzeqmsgrp = VALUE #( lt_equipment_data[ equnr = <ls_workorder>-equnr ]-msgrp OPTIONAL ).
+    gs_woheader-zzeqmsgrp = COND #( WHEN  gs_woheader-zzeqmsgrp IS INITIAL THEN 'NA' ELSE gs_woheader-zzeqmsgrp ).
+    gs_woheader-zzflocmsgrp = VALUE #( lt_floc_data[ iloan = <ls_workorder>-iloan ]-msgrp OPTIONAL ).
+    gs_woheader-zzflocmsgrp = COND #( WHEN  gs_woheader-zzflocmsgrp IS INITIAL THEN 'NA' ELSE gs_woheader-zzflocmsgrp ).
+    gs_woheader-ktext = <ls_workorder>-ktext.
+    gs_woheader-zzwork = |{ <ls_workorder>-aufnr ALPHA = OUT } { <ls_workorder>-ktext }|.
+    gs_woheader-zznotif = |{ <ls_workorder>-qmnum ALPHA = OUT } { VALUE #( lt_qmel[ qmnum = <ls_workorder>-qmnum ]-qmtxt OPTIONAL ) }|.
+    gs_woheader-pltxt =  VALUE #( lt_floc_data[ iloan = <ls_workorder>-iloan ]-pltxt OPTIONAL ).
+    gs_woheader-werks = <ls_workorder>-werks.
+    gs_woheader-zztoday = me->get_date_des( iv_date = sy-datum ).
+    gs_woheader-zztime = sy-uzeit.
+    gs_woheader-zztime = |{ sy-uzeit(2) }:{ sy-uzeit+2(2) }:{ sy-uzeit+4(2) }|.
+    gs_woheader-zzplant = VALUE #( lt_t00w[ werks = <ls_workorder>-werks ]-name1 OPTIONAL ).
+    gs_woheader-zzlate_date = me->get_date_des( iv_date = <ls_workorder>-erdat ).
+
+    "Order Long Text
+    CLEAR lv_orderltxt_str.
+    lt_tlines = get_long_text(
+      iv_id   = 'KOPF'
+      iv_name = |{ sy-mandt }{ <ls_workorder>-aufnr }|
+      iv_obj  = 'AUFK' ).
+
+    IF lt_tlines IS NOT INITIAL.
+      LOOP AT lt_tlines ASSIGNING FIELD-SYMBOL(<ls_tline>).
+        IF <ls_tline>-tdformat = '*' OR <ls_tline>-tdformat = '/'.
+          CONCATENATE lv_orderltxt_str <ls_tline>-tdline INTO lv_orderltxt_str SEPARATED BY cl_abap_char_utilities=>newline.
+        ELSE.
+          CONCATENATE lv_orderltxt_str <ls_tline>-tdline INTO lv_orderltxt_str SEPARATED BY space.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    CONDENSE lv_orderltxt_str.
+
+
+   "Notification Long Text
+    CLEAR lv_notifltxt_str.
+    lt_lines = get_long_text(
+      iv_id   = 'LTXT'
+      iv_name = CONV #( <ls_workorder>-qmnum )
+      iv_obj  = 'QMEL' ).
+
+    IF lt_lines IS NOT INITIAL.
+    LOOP AT lt_lines ASSIGNING FIELD-SYMBOL(<ls_line>).
+      REPLACE ALL OCCURRENCES OF SUBSTRING '*' IN <ls_line> WITH ' '.
+      CONDENSE <ls_line>-tdline.
+
+      IF <ls_line>-tdline IS NOT INITIAL.
+        IF <ls_line>-tdformat = '*' OR <ls_line>-tdformat = '/'.
+          CONCATENATE lv_notifltxt_str <ls_line>-tdline INTO lv_notifltxt_str SEPARATED BY cl_abap_char_utilities=>newline.
+        ELSE.
+          CONCATENATE lv_notifltxt_str <ls_line>-tdline INTO lv_notifltxt_str SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+     ENDLOOP.
+    ENDIF.
+
+    CONDENSE lv_notifltxt_str.
+
+
+
+    CALL FUNCTION 'CONVERSION_EXIT_TPLNR_INPUT'
+      EXPORTING
+        input  = gs_woheader-tplnr
+      IMPORTING
+        output = gs_woheader-tplnr.
+
+    gs_woheader-zsafety  =
+    VALUE #( lt_cawn[ atinn = VALUE #( lt_obj_key[ objek =
+                                       VALUE #( lt_class_key[ tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'SIRE' ]-atinn OPTIONAL ) atwrt =
+             VALUE #( lt_obj_key[                  objek =
+                      VALUE #( lt_class_key[                  tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'SIRE' ]-atwrt OPTIONAL ) ]-atwtb OPTIONAL ).
+
+    gs_woheader-zqauality =
+    VALUE #( lt_cawn[ atinn = VALUE #( lt_obj_key[ objek =
+                                       VALUE #( lt_class_key[ tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'QSRE' ]-atinn OPTIONAL ) atwrt =
+             VALUE #( lt_obj_key[                  objek =
+                      VALUE #( lt_class_key[                  tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'QSRE' ]-atwrt OPTIONAL ) ]-atwtb OPTIONAL ).
+
+    gs_woheader-zgmprel =
+    VALUE #( lt_cawn[ atinn = VALUE #( lt_obj_key[ objek =
+                                       VALUE #( lt_class_key[ tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'GMPRE' ]-atinn OPTIONAL ) atwrt =
+             VALUE #( lt_obj_key[                  objek =
+                      VALUE #( lt_class_key[                  tplnr = gs_woheader-tplnr ]-objkey OPTIONAL )
+                                                   atnam = 'GMPRE' ]-atwrt OPTIONAL ) ]-atwtb OPTIONAL ).
+
+    gs_woheader-innam = VALUE #( lt_t024[ ingrp = <ls_workorder>-ingpr iwerk = <ls_workorder>-werks ]-innam OPTIONAL ).
+
+    gs_woheader-zztecodt = me->get_date_des( iv_date = CONV #( VALUE #( lt_teco[ objnr = <ls_workorder>-objnr ]-udate OPTIONAL ) ) ).
+    gs_woheader-zztecodt = COND #( WHEN  gs_woheader-zztecodt IS INITIAL THEN 'NA' ELSE gs_woheader-zztecodt ).
+    gs_woheader-zztecouser = VALUE #( lt_teco[ objnr = <ls_workorder>-objnr ]-usnam OPTIONAL ).
+
+    IF gs_woheader-zztecouser IS NOT INITIAL.
+      gs_woheader-zztecouser =
+      |{ VALUE #( lt_adrp[       bname = VALUE #(
+        lt_teco[ objnr = <ls_workorder>-objnr ]-usnam OPTIONAL ) ]-name_text OPTIONAL )
+         } ( { VALUE #( lt_teco[ objnr = <ls_workorder>-objnr ]-usnam OPTIONAL ) } )|.
+    ENDIF.
+
+    gs_woheader-zzpnrgp = |{ <ls_workorder>-ingpr ALPHA = OUT } / { <ls_workorder>-werks } { gs_woheader-innam }|.
+    gs_woheader-zzworkcnt =
+    |{ VALUE #( lt_crtx[ objid = <ls_workorder>-gewrk ]-arbpl OPTIONAL ) } / { <ls_workorder>-werks } { VALUE #( lt_crtx[ objid = <ls_workorder>-gewrk ]-ktext OPTIONAL ) } |.
+
+    IF NOT line_exists( lt_operation_data[ aufnr = gs_woheader-aufnr ] ).
+      CLEAR: gt_operation,gs_woheader,gt_notif,gs_woheader-zznotifimglst, gs_woheader-zzwoimglst, gs_woheader.
+      CONTINUE.
+    ENDIF.
+
+    LOOP AT lt_qmma ASSIGNING FIELD-SYMBOL(<ls_qmma>) WHERE qmnum = gs_woheader-qmnum.
+      APPEND INITIAL LINE TO gt_notif ASSIGNING FIELD-SYMBOL(<ls_notif>).
+
+      <ls_notif>-aufnr = gs_woheader-aufnr.
+      <ls_notif>-fenum =  <ls_qmma>-fenum.
+      DATA(lt_text) = get_long_text( iv_id = 'LTXT' iv_name = CONV #( |{ gs_woheader-qmnum }{ <ls_qmma>-manum }| ) iv_obj = 'QMMA' ).
+      MOVE-CORRESPONDING lt_text TO lt_final_text.
+      lt_final_text[ 1 ]-zztext = 'Activity LT:'.
+      <ls_notif>-zzltext = lt_final_text.
+      <ls_notif>-zzearlystdt = get_date_des( iv_date = <ls_qmma>-peter ).
+      <ls_notif>-zzuser = |{ VALUE #( lt_adrp[ bname = <ls_qmma>-ernam ]-name_text OPTIONAL ) } ( { <ls_qmma>-ernam } )|.
+      <ls_notif>-mngrp = <ls_qmma>-mngrp.
+      <ls_notif>-mncod = <ls_qmma>-mncod.
+      <ls_notif>-matxt = <ls_qmma>-matxt.
+      <ls_notif>-manum = <ls_qmma>-manum.
+      <ls_notif>-zzgpkurztext = VALUE #( lt_qpgt_notif[ katalogart = <ls_qmma>-mnkat codegruppe = <ls_qmma>-mngrp ]-kurztext OPTIONAL ).
+      <ls_notif>-zzcdkurztext = VALUE #( lt_qpct_notif[ katalogart = <ls_qmma>-mnkat codegruppe = <ls_qmma>-mngrp code = <ls_qmma>-mncod ]-kurztext OPTIONAL ).
+    ENDLOOP.
+
+    LOOP AT lt_operation_data ASSIGNING FIELD-SYMBOL(<ls_oper>) WHERE aufnr = gs_woheader-aufnr.
+
+      CLEAR: lv_acthr, lv_wrkhr.
+      APPEND INITIAL LINE TO gt_operation ASSIGNING FIELD-SYMBOL(<ls_oper1>).
+      <ls_oper1>-vornr = <ls_oper>-vornr.
+      <ls_oper1>-aufnr = <ls_oper>-aufnr.
+      <ls_oper1>-ltxa1 = COND #( WHEN <ls_oper>-ltxa1 IS INITIAL THEN 'NA' ELSE <ls_oper>-ltxa1 ).
+      <ls_oper1>-ismnw = <ls_oper>-ismnw.
+      <ls_oper1>-arbei = <ls_oper>-arbei.
+      <ls_oper1>-zzltext = get_long_text(
+        iv_id   = 'AVOT'
+        iv_name = |{ sy-mandt }{ <ls_oper>-aufpl }{ <ls_oper>-aplzl }|
+        iv_obj  = 'AUFK' ).
+      <ls_oper1>-arbpl = <ls_oper>-arbpl.
+      <ls_oper1>-fsavd = <ls_oper>-fsavd.
+      lv_wrkhr = <ls_oper>-arbei.
+      lv_acthr = <ls_oper>-ismnw.
+      <ls_oper1>-zzworkhr = |{ lv_wrkhr } { VALUE #( lt_t006a[ msehi = <ls_oper>-arbeh ]-msehl OPTIONAL ) }|.
+      <ls_oper1>-zzacthr = |{ lv_acthr } { VALUE #( lt_t006a[ msehi = <ls_oper>-arbeh ]-msehl OPTIONAL ) }|.
+      <ls_oper1>-zzearlystdt =  me->get_date_des( iv_date = <ls_oper1>-fsavd ).
+      <ls_oper1>-zzearlystdt = COND #( WHEN <ls_oper1>-zzearlystdt  IS INITIAL THEN 'NA' ELSE <ls_oper1>-zzearlystdt ).
+      <ls_oper1>-fsavz = <ls_oper>-fsavz.
+      <ls_oper1>-fsedd = <ls_oper>-fsedd.
+      <ls_oper1>-fsedz = <ls_oper>-fsedz.
+      <ls_oper1>-ssavd = <ls_oper>-ssavd.
+      <ls_oper1>-ssavz = <ls_oper>-ssavz.
+      <ls_oper1>-ssedd = <ls_oper>-ssedd.
+      <ls_oper1>-zzlatestfin =  me->get_date_des( iv_date = <ls_oper1>-ssedd ).
+      <ls_oper1>-zzlatestfin = COND #( WHEN <ls_oper1>-zzlatestfin  IS INITIAL THEN 'NA' ELSE <ls_oper1>-zzlatestfin ).
+      <ls_oper1>-ssedz = <ls_oper>-ssedz.
+      <ls_oper1>-zzfincnfdt = me->get_date_des( iv_date = CONV #( VALUE #( lt_final_afru[ aufnr = <ls_oper>-aufnr vornr = <ls_oper>-vornr ]-ersda OPTIONAL ) ) ).
+      <ls_oper1>-zzfincnfdt = COND #( WHEN <ls_oper1>-zzfincnfdt IS INITIAL THEN 'NA' ELSE <ls_oper1>-zzfincnfdt ).
+
+      <ls_oper1>-zzendtime = CONV uzeit( VALUE #( lt_final_afru[ aufnr = <ls_oper>-aufnr vornr = <ls_oper>-vornr ]-iedz OPTIONAL ) ).
+      <ls_oper1>-zzendtime = COND #( WHEN <ls_oper1>-zzendtime IS NOT INITIAL THEN |{ <ls_oper1>-zzendtime+0(2) }:{ <ls_oper1>-zzendtime+2(2) }:{ <ls_oper1>-zzendtime+4(2) }| ELSE 'NA' ).
+
+      <ls_oper1>-zzfincnuser = VALUE #( lt_adrp[ bname = VALUE #( lt_final_afru[ aufnr = <ls_oper>-aufnr vornr = <ls_oper>-vornr ]-ernam OPTIONAL ) ]-name_text OPTIONAL ).
+      IF <ls_oper1>-zzfincnuser IS NOT INITIAL.
+        <ls_oper1>-zzfincnuser = |{ <ls_oper1>-zzfincnuser } ( { VALUE #( lt_final_afru[ aufnr = <ls_oper>-aufnr vornr = <ls_oper>-vornr ]-ernam OPTIONAL ) } )|.
+      ENDIF.
+      <ls_oper1>-zzworkctr =
+    |{ VALUE #( lt_crtx[ objid = <ls_oper>-arbid ]-arbpl OPTIONAL ) } { VALUE #( lt_crtx[ objid = <ls_oper>-arbid ]-ktext OPTIONAL ) } |.
+
+      LOOP AT lt_component_data ASSIGNING FIELD-SYMBOL(<ls_comp>) WHERE vornr = <ls_oper>-vornr AND aufnr = <ls_oper>-aufnr.
+
+        APPEND INITIAL LINE TO <ls_oper1>-zzcomp ASSIGNING FIELD-SYMBOL(<ls_zzcomp>).
+        <ls_zzcomp>-matnr = COND #( WHEN <ls_comp>-matnr  IS INITIAL THEN 'NA' ELSE <ls_comp>-matnr ).
+        <ls_zzcomp>-posnr = COND #( WHEN <ls_comp>-rspos IS INITIAL THEN 'NA' ELSE <ls_comp>-rspos ).
+        <ls_zzcomp>-matxt = VALUE #( lt_makt[ matnr = <ls_zzcomp>-matnr ]-maktx OPTIONAL ).
+        <ls_zzcomp>-menge =  COND #( WHEN <ls_comp>-bdmng  IS INITIAL THEN 'NA' ELSE <ls_comp>-bdmng ).
+        <ls_zzcomp>-meins =  COND #( WHEN <ls_comp>-meins IS INITIAL THEN 'NA' ELSE <ls_comp>-meins ).
+      ENDLOOP.
+      IF lt_component_data IS INITIAL.
+        APPEND INITIAL LINE TO <ls_oper1>-zzcomp ASSIGNING <ls_zzcomp>.
+        <ls_zzcomp>-posnr =  'NA'.
+      ENDIF.
+
+      LOOP AT lt_insp_point ASSIGNING FIELD-SYMBOL(<ls_insp_po>)
+          WHERE aufpl = <ls_oper>-aufpl AND vorglfnr = <ls_oper>-aplzl.
+
+        APPEND INITIAL LINE TO <ls_oper1>-zzinspoint  ASSIGNING FIELD-SYMBOL(<ls_zzinsp>).
+        <ls_zzinsp>-prueflos = <ls_insp_po>-prueflos.
+        <ls_zzinsp>-vorglfnr = <ls_insp_po>-vorglfnr.
+        <ls_zzinsp>-probenr = <ls_insp_po>-prueflos.
+        IF <ls_insp_po>-tplnr IS NOT INITIAL.
+*            <ls_zzinsp>-tplnr = get_floc( iv_tplnr = CONV #( <ls_insp_po>-tplnr ) ).
+          <ls_zzinsp>-tplnr = get_floc( iv_tplnr = <ls_insp_po>-tplnr ).
+        ELSE.
+          <ls_zzinsp>-tplnr = COND #( WHEN <ls_insp_po>-tplnr IS INITIAL THEN 'NA' ELSE <ls_insp_po>-tplnr ).
+        ENDIF.
+        <ls_zzinsp>-zztplnr = <ls_zzinsp>-tplnr.
+        <ls_zzinsp>-equnr = COND #( WHEN <ls_insp_po>-equnr IS INITIAL THEN 'NA' ELSE <ls_insp_po>-equnr ).
+        <ls_zzinsp>-aufpl = <ls_oper>-aufpl.
+        <ls_zzinsp>-aplzl = <ls_oper>-aplzl.
+        <ls_zzinsp>-vornr = <ls_oper>-vornr.
+        LOOP AT lt_insp_char ASSIGNING FIELD-SYMBOL(<ls_insp_char>) WHERE prueflos = <ls_zzinsp>-prueflos
+        AND vorglfnr = <ls_zzinsp>-vorglfnr.
+
+          APPEND INITIAL LINE TO <ls_zzinsp>-zzinspchar ASSIGNING FIELD-SYMBOL(<ls_zzinspchar>).
+          <ls_zzinspchar>-prueflos = <ls_insp_char>-prueflos.
+          <ls_zzinspchar>-vorglfnr = <ls_insp_char>-vorglfnr.
+          <ls_zzinspchar>-merknr = <ls_insp_char>-merknr.
+          <ls_zzinspchar>-kurztext = <ls_insp_char>-kurztext.
+          <ls_zzinspchar>-pruefer =
+          VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                            vorglfnr = <ls_insp_char>-vorglfnr
+                            merknr   = <ls_insp_char>-merknr
+                            probenr  = <ls_insp_po>-probenr ]-pruefer OPTIONAL ).
+          IF <ls_zzinspchar>-pruefer IS NOT INITIAL.
+            <ls_zzinspchar>-zzperform = |{ VALUE #( lt_adrp[ bname = <ls_zzinspchar>-pruefer ]-name_text OPTIONAL ) } ({ <ls_zzinspchar>-pruefer })|.
+          ELSE.
+            <ls_zzinspchar>-zzperform = 'NA'.
+          ENDIF.
+
+          "defect notification
+          <ls_zzinspchar>-zzdefnotif = VALUE #( lt_new_notif[ oldnotif = gs_woheader-qmnum     vorglfnr = <ls_insp_char>-vorglfnr
+                                                              merknr   = <ls_insp_char>-merknr probenr  = <ls_insp_po>-probenr ]-qmnum OPTIONAL ).
+          <ls_zzinspchar>-zzdefnotifrep = COND #( WHEN <ls_zzinspchar>-zzdefnotif IS NOT INITIAL THEN TEXT-001 ELSE TEXT-002 ).
+          <ls_zzinspchar>-zzdefnotif = COND #( WHEN <ls_zzinspchar>-zzdefnotif IS INITIAL THEN 'NA' ELSE <ls_zzinspchar>-zzdefnotif ).
+
+          <ls_zzinspchar>-pruefdatuv =
+          VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                            vorglfnr = <ls_insp_char>-vorglfnr
+                            merknr   = <ls_insp_char>-merknr
+                            probenr  = <ls_insp_po>-probenr ]-pruefdatuv OPTIONAL ).
+          <ls_zzinspchar>-pruefdatub = VALUE #( lt_qasr[
+                                                prueflos = <ls_insp_char>-prueflos
+                                                vorglfnr = <ls_insp_char>-vorglfnr
+                                                merknr   = <ls_insp_char>-merknr
+                                                probenr  = <ls_insp_po>-probenr ]-pruefdatub OPTIONAL ).
+          <ls_zzinspchar>-pruefzeitv = VALUE #( lt_qasr[
+                                                prueflos = <ls_insp_char>-prueflos
+                                                vorglfnr = <ls_insp_char>-vorglfnr
+                                                merknr   = <ls_insp_char>-merknr
+                                                probenr  = <ls_insp_po>-probenr ]-pruefzeitv OPTIONAL ).
+          <ls_zzinspchar>-pruefzeitb = VALUE #( lt_qasr[
+                                                prueflos = <ls_insp_char>-prueflos
+                                                vorglfnr = <ls_insp_char>-vorglfnr
+                                                merknr   = <ls_insp_char>-merknr
+                                                probenr  = <ls_insp_po>-probenr ]-pruefzeitb OPTIONAL ).
+          <ls_zzinspchar>-pruefbemkt = VALUE #( lt_qasr[
+                                                prueflos = <ls_insp_char>-prueflos
+                                                vorglfnr = <ls_insp_char>-vorglfnr
+                                                merknr   = <ls_insp_char>-merknr
+                                                probenr  = <ls_insp_po>-probenr ]-pruefbemkt OPTIONAL ).
+          <ls_zzinspchar>-mbewertg = VALUE #( lt_qasr[
+                                              prueflos = <ls_insp_char>-prueflos
+                                              vorglfnr = <ls_insp_char>-vorglfnr
+                                              merknr   = <ls_insp_char>-merknr
+                                              probenr  = <ls_insp_po>-probenr ]-mbewertg OPTIONAL ).
+          <ls_zzinspchar>-gruppe1 = VALUE #( lt_qasr[
+                                             prueflos = <ls_insp_char>-prueflos
+                                             vorglfnr = <ls_insp_char>-vorglfnr
+                                             merknr   = <ls_insp_char>-merknr
+                                             probenr  = <ls_insp_po>-probenr ]-gruppe1 OPTIONAL ).
+          <ls_zzinspchar>-code1 = VALUE #( lt_qasr[
+                                           prueflos = <ls_insp_char>-prueflos
+                                           vorglfnr = <ls_insp_char>-vorglfnr
+                                           merknr   = <ls_insp_char>-merknr
+                                           probenr  = <ls_insp_po>-probenr ]-code1 OPTIONAL ).
+          <ls_zzinspchar>-probenr = VALUE #( lt_qasr[
+                                             prueflos = <ls_insp_char>-prueflos
+                                             vorglfnr = <ls_insp_char>-vorglfnr
+                                             merknr   = <ls_insp_char>-merknr
+                                             probenr  = <ls_insp_po>-probenr ]-probenr OPTIONAL ).
+
+          IF <ls_zzinspchar>-pruefdatuv IS NOT INITIAL AND <ls_zzinspchar>-pruefzeitv IS NOT INITIAL.
+            <ls_zzinspchar>-zzdatets = |{ get_date_des( iv_date = <ls_zzinspchar>-pruefdatuv ) }   { <ls_zzinspchar>-pruefzeitv+0(2) }:{
+             <ls_zzinspchar>-pruefzeitv+2(2) }:{ <ls_zzinspchar>-pruefzeitv+4(2) }|.
+          ELSE.
+            <ls_zzinspchar>-zzdatets = 'NA'.
+          ENDIF.
+
+          DATA(ls_charltxt) = VALUE #( lt_insp_char_text_keys[
+                                       prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr merknr = <ls_insp_char>-merknr
+                                       probenr  = <ls_zzinspchar>-probenr ] OPTIONAL ).
+          CONCATENATE sy-mandt ls_charltxt-plnty ls_charltxt-plnnr ls_charltxt-plnkn
+                      ls_charltxt-kzeinstell ls_charltxt-merknr ls_charltxt-zaehl
+                      INTO DATA(lv_tdname) RESPECTING BLANKS.
+
+          <ls_zzinspchar>-zzltxt = get_long_text( iv_id = 'QM' iv_name = CONV #( lv_tdname ) iv_obj = 'QSS' iv_ltxa1 = <ls_zzinspchar>-kurztext ).
+          DATA: lv_qn TYPE p DECIMALS 2,lv_ql TYPE qasr-code1.
+          CLEAR: lv_qn,lv_ql.
+          lv_qn  = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                     vorglfnr = <ls_insp_char>-vorglfnr
+                                     merknr   = <ls_insp_char>-merknr probenr = <ls_insp_po>-probenr ]-mittelwert OPTIONAL ).
+          lv_ql = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                    vorglfnr = <ls_insp_char>-vorglfnr
+                                    merknr   = <ls_insp_char>-merknr probenr = <ls_insp_po>-probenr ]-code1 OPTIONAL ).
+          IF lv_ql IS NOT INITIAL.
+            <ls_zzinspchar>-zzresult  = VALUE #( lt_qpct[ katalogart = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                                                                         vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                         merknr   = <ls_insp_char>-merknr
+                                                                                         probenr  = <ls_insp_po>-probenr ]-katalgart1 OPTIONAL )
+                                                          codegruppe = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                                                                         vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                         merknr   = <ls_insp_char>-merknr
+                                                                                         probenr  = <ls_insp_po>-probenr ]-gruppe1 OPTIONAL )
+
+                                                          code       = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                                                                         vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                         merknr   = <ls_insp_char>-merknr
+                                                                                         probenr  = <ls_insp_po>-probenr ]-code1 OPTIONAL )
+
+                                                          werks      = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos
+                                                                                         vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                         merknr   = <ls_insp_char>-merknr ]-auswmgwrk1 OPTIONAL ) ]-kurztext OPTIONAL ).
+
+            <ls_zzinspchar>-zzspec = VALUE #( lt_code[ katalogart = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos
+                                                                                      vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                      merknr   = <ls_insp_char>-merknr ]-katalgart1 OPTIONAL )
+                                                       auswahlmge = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos
+                                                                                      vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                      merknr   = <ls_insp_char>-merknr ]-auswmenge1 OPTIONAL )
+
+                                                       codegruppe = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos
+                                                                                      vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                      merknr   = <ls_insp_char>-merknr
+                                                                                      probenr  = <ls_insp_po>-probenr ]-gruppe1 OPTIONAL )
+
+                                                       werks      = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos
+                                                                                      vorglfnr = <ls_insp_char>-vorglfnr
+                                                                                      merknr   = <ls_insp_char>-merknr ]-auswmgwrk1 OPTIONAL ) ]-zzspec OPTIONAL ).
+
+          ELSEIF <ls_zzinspchar>-zzperform NE 'NA'.
+            DATA: lv_tar TYPE p DECIMALS 2, lv_up TYPE p DECIMALS 2, lv_lu TYPE p DECIMALS 2,  lv_res TYPE p DECIMALS 2.
+            CLEAR:lv_tar, lv_up, lv_lu,  lv_res.
+            lv_tar = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr merknr = <ls_insp_char>-merknr ]-sollwert OPTIONAL ).
+            lv_up = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr merknr = <ls_insp_char>-merknr ]-toleranzob OPTIONAL ).
+            lv_lu = VALUE #( lt_qamv[ prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr merknr = <ls_insp_char>-merknr ]-toleranzun OPTIONAL ).
+            <ls_zzinspchar>-zzspec = |Target lim = { lv_tar } / Upper lim = { lv_up } / lower lim = { lv_lu }|.
+            lv_res  = VALUE #( lt_qasr[ prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr merknr = <ls_insp_char>-merknr probenr = <ls_insp_po>-probenr ]-mittelwert OPTIONAL )..
+            <ls_zzinspchar>-zzresult = lv_res.
+
+            IF <ls_zzinspchar>-zzresult LE -1.
+              <ls_zzinspchar>-zzresult = <ls_zzinspchar>-zzresult * -1.
+              CONDENSE <ls_zzinspchar>-zzresult NO-GAPS.
+              <ls_zzinspchar>-zzresult = |-{ <ls_zzinspchar>-zzresult } { <ls_insp_char>-masseinhsw }|.
+            ELSE.
+              CONDENSE <ls_zzinspchar>-zzresult NO-GAPS.
+              <ls_zzinspchar>-zzresult = |{ <ls_zzinspchar>-zzresult } { <ls_insp_char>-masseinhsw }|.
+            ENDIF.
+          ENDIF.
+          <ls_zzinspchar>-zzresult  = COND #( WHEN <ls_zzinspchar>-zzresult  IS INITIAL THEN 'NA' ELSE <ls_zzinspchar>-zzresult ).
+          <ls_zzinspchar>-zzspec = COND #( WHEN <ls_zzinspchar>-zzspec IS INITIAL THEN 'NA' ELSE <ls_zzinspchar>-zzspec ).
+          <ls_zzinspchar>-pruefbemkt = COND #( WHEN <ls_zzinspchar>-pruefbemkt IS INITIAL THEN 'NA' ELSE <ls_zzinspchar>-pruefbemkt ).
+
+          "valuation
+          CALL FUNCTION 'DD_DOMVALUES_GET'
+            EXPORTING
+              domname   = 'QEEBEWERTG'
+              text      = abap_true
+              langu     = sy-langu
+            TABLES
+              dd07v_tab = lt_dd07v.
+          IF sy-subrc <> 0.
+* Implement suitable error handling here
+          ENDIF.
+          DELETE lt_dd07v WHERE domvalue_l IS INITIAL.
+          <ls_zzinspchar>-zzval = VALUE #( lt_dd07v[ domvalue_l = VALUE #( lt_qasr[
+                                                                           prueflos = <ls_insp_char>-prueflos vorglfnr = <ls_insp_char>-vorglfnr
+                                                                           merknr   = <ls_insp_char>-merknr   probenr  = <ls_insp_po>-probenr ]-mbewertg OPTIONAL ) ]-ddtext OPTIONAL ).
+
+          <ls_zzinspchar>-zzval = COND #( WHEN <ls_zzinspchar>-zzval  IS INITIAL THEN 'NA' ELSE <ls_zzinspchar>-zzval ).
+          CONDENSE <ls_zzinspchar>-zzval NO-GAPS.
+
+          LOOP AT gt_insp_char_image ASSIGNING FIELD-SYMBOL(<ls_insp_imag>)
+          WHERE aufnr = gs_woheader-aufnr AND vornr = <ls_oper1>-vornr AND merknr = <ls_zzinspchar>-merknr AND probenr = <ls_insp_po>-probenr.
+
+            APPEND INITIAL LINE TO <ls_zzinspchar>-zzinschimg  ASSIGNING FIELD-SYMBOL(<ls_zzinsimg>).
+            <ls_zzinsimg>-zzraw = COND #( WHEN <ls_insp_imag>-zzraw  IS INITIAL THEN 'NA' ELSE <ls_insp_imag>-zzraw ).
+            <ls_zzinsimg>-filename = COND #( WHEN <ls_insp_imag>-filename  IS INITIAL THEN 'NA' ELSE <ls_insp_imag>-filename ).
+
+          ENDLOOP.
+
+        ENDLOOP.
+      ENDLOOP.
+
+      LOOP AT gt_insp_char_image ASSIGNING <ls_insp_imag>
+      WHERE aufnr = gs_woheader-aufnr AND vornr = <ls_oper1>-vornr AND mimetyp = 'AFVC'.
+
+        APPEND INITIAL LINE TO <ls_oper1>-zzoperationimg  ASSIGNING <ls_zzinsimg>.
+        <ls_zzinsimg>-zzraw = COND #( WHEN <ls_insp_imag>-zzraw  IS INITIAL THEN 'NA' ELSE <ls_insp_imag>-zzraw ).
+        <ls_zzinsimg>-filename = COND #( WHEN <ls_insp_imag>-filename  IS INITIAL THEN 'NA' ELSE <ls_insp_imag>-filename ).
+
+      ENDLOOP.
+    ENDLOOP.
+
+    DATA(lv_processed) = abap_true.
+    IF gv_prnt = 'U'. "mass printing from front end -> merge pdf files
+      me->generate_mergepdf( iv_orderltxt_str = lv_orderltxt_str
+                             iv_notifltxt_str = lv_notifltxt_str ).
+    ELSE.
+      me->generate_pdf( iv_orderltxt_str = lv_orderltxt_str
+                        iv_notifltxt_str = lv_notifltxt_str ).
+*        me->generate_pdfdata( ).
+    ENDIF.
+
+    CLEAR: gt_operation,gs_woheader,gt_notif,gs_woheader-zznotifimglst,
+           gs_woheader-zzwoimglst, gs_woheader, gs_drad, gs_woheader-zzoperimglst.
   ENDLOOP.
 
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
+  IF gv_prnt = 'U'. "mass printing from frontend
+    me->close_form( ).
+  ENDIF.
 
-  " Initialize builder object
-  CREATE OBJECT go_builder.
+  IF lv_processed IS INITIAL.
+    MESSAGE 'No Record Found for the selection criteria' TYPE 'I'. ##NO_TEXT
+  ENDIF.
 
-  " Call Screen 100 (when created)
-  " For now, just display parameters
-  WRITE: / 'IM Number:', p_posnr,
-         / 'Profile:', p_profl,
-         / 'Template:', p_pspid,
-         / 'Description:', p_post1.
-
-  " When screens are created, replace above with:
-  " CALL SCREEN 100.
+  iv_prnt = gv_print_ok.
+ENDMETHOD.
