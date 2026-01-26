@@ -1,904 +1,255 @@
-*&---------------------------------------------------------------------*
-*& Class ZCL_A2R_WBS_BUILDER Definition
-*&---------------------------------------------------------------------*
-CLASS zcl_a2r_wbs_builder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
+METHOD assign_plan_values.
 
-  PUBLIC SECTION.
+  DATA: ls_wbs    TYPE ztb_a2r_wbsitem,
+        lv_objnr  TYPE j_objnr,
+        lt_return TYPE TABLE OF bapiret2.
 
-    METHODS:
-      " Copy template structure to WBS items
-      copy_template_structure
-        IMPORTING
-          iv_pspid     TYPE ps_spdid
-        CHANGING
-          ct_wbs_items TYPE STANDARD TABLE,
+  rv_success = abap_false.
 
-      " Total up budget from children to parents
-      total_up_budget
-        CHANGING
-          ct_wbs_items TYPE STANDARD TABLE,
+  LOOP AT it_wbs_items INTO ls_wbs.
 
-      " Save request (DRAFT status)
-      save_request
-        IMPORTING
-          is_header        TYPE ztb_a2r_wbshdr
-          it_wbs_items     TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_reqnum) TYPE char10,
+    " Skip if no budget
+    IF ls_wbs-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
-      " Submit request and trigger workflow
-      submit_request
-        IMPORTING
-          is_header         TYPE ztb_a2r_wbshdr
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
+    " Get WBS object number
+    SELECT SINGLE objnr FROM prps
+      INTO lv_objnr
+      WHERE posid = ls_wbs-posid.
 
-      " Create project after approval (orchestrator)
-      create_project
-        IMPORTING
-          is_header         TYPE ztb_a2r_wbshdr
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool.
-
-  PRIVATE SECTION.
-
-    METHODS:
-      " Get next request number from number range
-      get_next_request_number
-        RETURNING
-          VALUE(rv_reqnum) TYPE char10,
-
-      " Check approver matrix
-      check_approver_matrix
-        IMPORTING
-          iv_bukrs         TYPE bukrs
-          iv_profl         TYPE profidproj
-          iv_reqtype       TYPE ztb_a2r_reqtype-z_reqtype
+    IF sy-subrc = 0.
+      
+      " Use BAPI to assign plan values (CJ40 logic)
+      CALL FUNCTION 'BAPI_BUS2054_SET_BUDGET'
         EXPORTING
-          ev_appr1         TYPE ztb_a2r_conftab2-zapproval_1
-          ev_appr2         TYPE ztb_a2r_conftab2-zapproval_2
-          ev_auto          TYPE ztb_a2r_conftab2-zauto_approval
-        RETURNING
-          VALUE(rv_found)  TYPE abap_bool,
+          i_object_id    = lv_objnr
+          i_fiscal_year  = sy-datum(4)
+          i_version      = '0'
+          i_budget_value = ls_wbs-wert2
+        TABLES
+          return         = lt_return.
 
-      " Trigger workflow
-      trigger_workflow
-        IMPORTING
-          is_header         TYPE ztb_a2r_wbshdr
-          iv_appr1          TYPE ztb_a2r_conftab2-zapproval_1
-          iv_appr2          TYPE ztb_a2r_conftab2-zapproval_2
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Create WBS elements
-      create_wbs_elements
-        IMPORTING
-          is_header         TYPE ztb_a2r_wbshdr
-          it_wbs_items      TYPE STANDARD TABLE
-        EXPORTING
-          et_wbs_created    TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Assign plan values (CJ40 logic)
-      assign_plan_values
-        IMPORTING
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Distribute IM budget (IM52 logic)
-      distribute_im_budget
-        IMPORTING
-          is_header         TYPE ztb_a2r_wbshdr
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Create settlement rules
-      create_settlement_rules
-        IMPORTING
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Activate system statuses
-      activate_statuses
-        IMPORTING
-          it_wbs_items      TYPE STANDARD TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Get project definition number
-      get_next_project_number
-        IMPORTING
-          iv_profl          TYPE profidproj
-        RETURNING
-          VALUE(rv_pspid)   TYPE ps_pspid.
-
-ENDCLASS.
-
-
-
-
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Class ZCL_A2R_WBS_BUILDER Implementation
-*&---------------------------------------------------------------------*
-CLASS zcl_a2r_wbs_builder IMPLEMENTATION.
-
-  METHOD copy_template_structure.
-
-    DATA: lt_prpss TYPE TABLE OF prpss,
-          ls_prpss TYPE prpss,
-          ls_wbs   TYPE ztb_a2r_wbsitem.
-
-    " Get WBS hierarchy from template
-    SELECT * FROM prpss
-      INTO TABLE lt_prpss
-      WHERE pspid = iv_pspid
-      ORDER BY stufe posid.
-
-    IF sy-subrc = 0.
-      LOOP AT lt_prpss INTO ls_prpss.
-        CLEAR ls_wbs.
-
-        " Map template fields to WBS item structure
-        ls_wbs-stufe = ls_prpss-stufe.
-        ls_wbs-posid = ls_prpss-posid.
-        ls_wbs-post1 = ls_prpss-post1.
-        ls_wbs-imprf = ls_prpss-imprf.
-        ls_wbs-prart = ls_prpss-prart.
-
-        " Append to output table
-        APPEND ls_wbs TO ct_wbs_items.
-      ENDLOOP.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD total_up_budget.
-
-    DATA: lt_wbs        TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          ls_wbs        TYPE ztb_a2r_wbsitem,
-          ls_wbs_parent TYPE ztb_a2r_wbsitem,
-          lv_total      TYPE bpge-wlges,
-          lv_max_level  TYPE ps_stufe,
-          lv_tabix      TYPE sy-tabix.
-
-    " Copy to work table
-    lt_wbs = ct_wbs_items.
-
-    " Get maximum level
-    LOOP AT lt_wbs INTO ls_wbs.
-      IF ls_wbs-stufe > lv_max_level.
-        lv_max_level = ls_wbs-stufe.
-      ENDIF.
-    ENDLOOP.
-
-    " Process from bottom up (highest level to lowest)
-    DO lv_max_level TIMES.
-      DATA(lv_current_level) = lv_max_level - sy-index + 1.
-
-      IF lv_current_level <= 1.
-        EXIT. " Don't process level 1 (it's the top)
-      ENDIF.
-
-      " For each WBS at current level, add its budget to parent
-      LOOP AT lt_wbs INTO ls_wbs WHERE stufe = lv_current_level.
-
-        " Find parent (one level up with matching hierarchy)
-        " Simplified: parent is the first WBS at level-1
-        READ TABLE lt_wbs INTO ls_wbs_parent
-          WITH KEY stufe = lv_current_level - 1.
-
-        IF sy-subrc = 0.
-          " Add child budget to parent
-          lv_tabix = sy-tabix.
-          ls_wbs_parent-wert2 = ls_wbs_parent-wert2 + ls_wbs-wert2.
-          MODIFY lt_wbs FROM ls_wbs_parent INDEX lv_tabix.
-        ENDIF.
-      ENDLOOP.
-    ENDDO.
-
-    " Update output table
-    ct_wbs_items = lt_wbs.
-
-  ENDMETHOD.
-
-  METHOD save_request.
-
-    DATA: ls_header TYPE ztb_a2r_wbshdr,
-          lt_items  TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          ls_item   TYPE ztb_a2r_wbsitem.
-
-    " Get request number
-    rv_reqnum = get_next_request_number( ).
-
-    IF rv_reqnum IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    " Prepare header
-    ls_header = is_header.
-    ls_header-zreq_num = rv_reqnum.
-    ls_header-request_status = 'DRAFT'.
-    ls_header-erdat = sy-datum.
-    ls_header-erzet = sy-uzeit.
-    ls_header-ernam = sy-uname.
-
-    " Save header
-    INSERT ztb_a2r_wbshdr FROM ls_header.
-
-    IF sy-subrc = 0.
-      " Save items
-      LOOP AT it_wbs_items ASSIGNING FIELD-SYMBOL(<fs_item>).
-        MOVE-CORRESPONDING <fs_item> TO ls_item.
-        ls_item-zreq_num = rv_reqnum.
-        ls_item-bukrs = ls_header-bukrs.
-        INSERT ztb_a2r_wbsitem FROM ls_item.
+      " Check for errors
+      LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type = 'E' OR type = 'A'.
+        EXIT.
       ENDLOOP.
 
-      COMMIT WORK.
-    ELSE.
-      CLEAR rv_reqnum.
-      ROLLBACK WORK.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD submit_request.
-
-    DATA: lv_reqnum TYPE char10,
-          lv_appr1  TYPE ztb_a2r_conftab2-zapproval_1,
-          lv_appr2  TYPE ztb_a2r_conftab2-zapproval_2,
-          lv_auto   TYPE ztb_a2r_conftab2-zauto_approval,
-          lv_found  TYPE abap_bool,
-          ls_header TYPE ztb_a2r_wbshdr.
-
-    " First save the request
-    lv_reqnum = save_request(
-      is_header    = is_header
-      it_wbs_items = it_wbs_items
-    ).
-
-    IF lv_reqnum IS INITIAL.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Check approver matrix
-    lv_found = check_approver_matrix(
-      EXPORTING
-        iv_bukrs   = is_header-bukrs
-        iv_profl   = is_header-profl
-        iv_reqtype = is_header-z_reqtype
-      IMPORTING
-        ev_appr1   = lv_appr1
-        ev_appr2   = lv_appr2
-        ev_auto    = lv_auto
-    ).
-
-    IF lv_found = abap_false.
-      MESSAGE e008(zcj00).
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Update status to PENDING
-    ls_header = is_header.
-    ls_header-zreq_num = lv_reqnum.
-    ls_header-request_status = 'PENDING'.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'PENDING'
-      WHERE zreq_num = lv_reqnum.
-
-    " Check for auto-approval
-    IF lv_auto = 'X' OR ( lv_appr1 IS INITIAL AND lv_appr2 IS INITIAL ).
-      " Auto-approve and create project immediately
-      rv_success = create_project(
-        is_header    = ls_header
-        it_wbs_items = it_wbs_items
-      ).
-
-      IF rv_success = abap_true.
-        UPDATE ztb_a2r_wbshdr
-          SET request_status = 'APPROVED'
-          WHERE zreq_num = lv_reqnum.
-        COMMIT WORK.
-      ENDIF.
-    ELSE.
-      " Trigger workflow
-      rv_success = trigger_workflow(
-        is_header = ls_header
-        iv_appr1  = lv_appr1
-        iv_appr2  = lv_appr2
-      ).
-
-      IF rv_success = abap_true.
-        COMMIT WORK.
-      ELSE.
-        ROLLBACK WORK.
-      ENDIF.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD create_project.
-
-    DATA: lt_wbs_created TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
-
-    rv_success = abap_false.
-
-    " Step 1: Create WBS elements
-    IF create_wbs_elements(
-      EXPORTING
-        is_header      = is_header
-        it_wbs_items   = it_wbs_items
-      IMPORTING
-        et_wbs_created = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e025(zcj00). " Error creating WBS elements
-      RETURN.
-    ENDIF.
-
-    " Step 2: Create settlement rules
-    IF create_settlement_rules(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e024(zcj00). " Error creating settlement rules
-      RETURN.
-    ENDIF.
-
-    " Step 3: Assign plan values
-    IF assign_plan_values(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e026(zcj00). " Error assigning plan values
-      RETURN.
-    ENDIF.
-
-    " Step 4: Distribute IM budget
-    IF distribute_im_budget(
-      is_header    = is_header
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e027(zcj00). " Error distributing IM budget
-      RETURN.
-    ENDIF.
-
-    " Step 5: Activate statuses
-    IF activate_statuses(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e028(zcj00). " Error activating statuses
-      RETURN.
-    ENDIF.
-
-    rv_success = abap_true.
-    COMMIT WORK.
-
-  ENDMETHOD.
-
-  METHOD get_next_request_number.
-
-    CALL FUNCTION 'NUMBER_GET_NEXT'
-      EXPORTING
-        nr_range_nr             = '01'
-        object                  = 'ZCJ00_REQN'
-      IMPORTING
-        number                  = rv_reqnum
-      EXCEPTIONS
-        interval_not_found      = 1
-        number_range_not_intern = 2
-        object_not_found        = 3
-        OTHERS                  = 4.
-
-    IF sy-subrc <> 0.
-      CLEAR rv_reqnum.
-      MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
-        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD check_approver_matrix.
-
-    DATA: ls_config TYPE ztb_a2r_conftab2.
-
-    SELECT SINGLE * FROM ztb_a2r_conftab2
-      INTO ls_config
-      WHERE bukrs = iv_bukrs
-        AND profl = iv_profl
-        AND z_reqtype = iv_reqtype.
-
-    IF sy-subrc = 0.
-      ev_appr1 = ls_config-zapproval_1.
-      ev_appr2 = ls_config-zapproval_2.
-      ev_auto  = ls_config-zauto_approval.
-      rv_found = abap_true.
-    ELSE.
-      rv_found = abap_false.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD trigger_workflow.
-
-    " Placeholder for workflow triggering
-    " Use SAP Business Workflow
-    DATA: lv_wfid TYPE sww_wiid.
-
-    TRY.
-        " Call SAP_WAPI_START_WORKFLOW
-        CALL FUNCTION 'SAP_WAPI_START_WORKFLOW'
+      IF sy-subrc <> 0.
+        " Success - commit
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
           EXPORTING
-            task                  = 'WS99900026' " Your workflow template
-            language              = sy-langu
-          IMPORTING
-            workitem_id           = lv_wfid
-          EXCEPTIONS
-            invalid_task          = 1
-            invalid_language      = 2
-            start_failed          = 3
-            OTHERS                = 4.
-
-        IF sy-subrc = 0 AND lv_wfid IS NOT INITIAL.
-          rv_success = abap_true.
-        ELSE.
-          rv_success = abap_false.
-        ENDIF.
-
-      CATCH cx_root.
-        rv_success = abap_false.
-    ENDTRY.
-
-  ENDMETHOD.
-
-  METHOD create_wbs_elements.
-
-    DATA: lv_pspid       TYPE ps_pspid,
-          lt_wbs_bapi    TYPE TABLE OF bapi_prpss_create,
-          ls_wbs_bapi    TYPE bapi_prpss_create,
-          ls_wbs         TYPE ztb_a2r_wbsitem,
-          lt_return      TYPE TABLE OF bapiret2,
-          ls_proj_bapi   TYPE bapi_ps_project_create,
-          lv_level1_posid TYPE ps_posid.
-
-    rv_success = abap_false.
-
-    " Get next available project number
-    lv_pspid = get_next_project_number( is_header-profl ).
-
-    IF lv_pspid IS INITIAL.
-      MESSAGE e029(zcj00). " Cannot generate project number
-      RETURN.
-    ENDIF.
-
-    " Prepare Level 1 Project Definition
-    CLEAR ls_proj_bapi.
-    ls_proj_bapi-project_definition = lv_pspid.
-    ls_proj_bapi-description = is_header-pspnr. " Project description
-    ls_proj_bapi-company_code = is_header-bukrs.
-    ls_proj_bapi-plant = is_header-werks.
-    ls_proj_bapi-profit_center = is_header-prctr.
-    ls_proj_bapi-functional_area = ''. " Optional
-    ls_proj_bapi-currency = 'USD'. " Get from company code if needed
-    ls_proj_bapi-project_profile = is_header-profl.
-    ls_proj_bapi-responsible = is_header-vernr.
-    ls_proj_bapi-start_date = sy-datum.
-    ls_proj_bapi-end_date = is_header-plsez.
-
-    " Prepare WBS Elements
-    LOOP AT it_wbs_items INTO ls_wbs.
-
-      " Skip if no budget (as per FDS)
-      IF ls_wbs-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_wbs_bapi.
-
-      " Generate WBS element ID (project number + running sequence)
-      IF ls_wbs-stufe = 1.
-        ls_wbs_bapi-wbs_element = lv_pspid. " Level 1 = Project ID
-        lv_level1_posid = lv_pspid.
+            wait = 'X'.
       ELSE.
-        " For lower levels, append counter
-        ls_wbs_bapi-wbs_element = |{ lv_pspid }-{ ls_wbs-stufe }{ sy-tabix }|.
+        " Error found
+        rv_success = abap_false.
+        RETURN.
       ENDIF.
-
-      ls_wbs_bapi-description = ls_wbs-post1.
-      ls_wbs_bapi-wbs_level = ls_wbs-stufe.
-      ls_wbs_bapi-cost_center = ls_wbs-kostl.
-      ls_wbs_bapi-project_type = ls_wbs-prart.
-
-      " Store created WBS element
-      ls_wbs-pspnr = ls_wbs_bapi-wbs_element. " Store object number
-      ls_wbs-posid = ls_wbs_bapi-wbs_element.
-      APPEND ls_wbs TO et_wbs_created.
-
-      APPEND ls_wbs_bapi TO lt_wbs_bapi.
-    ENDLOOP.
-
-    " Call BAPI to create project
-    CALL FUNCTION 'BAPI_PROJECT_MAINTAIN'
-      EXPORTING
-        i_project_definition = ls_proj_bapi
-      TABLES
-        it_wbs_element       = lt_wbs_bapi
-        et_return            = lt_return.
-
-    " Check for errors
-    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type = 'E' OR type = 'A'.
-      EXIT.
-    ENDLOOP.
-
-    IF sy-subrc = 0.
-      " Errors found
-      rv_success = abap_false.
-      LOOP AT lt_return INTO DATA(ls_return) WHERE type = 'E' OR type = 'A'.
-        MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-          WITH ls_return-message_v1 ls_return-message_v2
-               ls_return-message_v3 ls_return-message_v4.
-      ENDLOOP.
-    ELSE.
-      " Success
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING
-          wait = 'X'.
-
-      " Link WBS to IM Position
-      CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
-        EXPORTING
-          i_posnr = is_header-posnr
-          i_posid = lv_level1_posid
-        EXCEPTIONS
-          OTHERS  = 1.
-
-      rv_success = abap_true.
     ENDIF.
+  ENDLOOP.
 
-  ENDMETHOD.
+  rv_success = abap_true.
 
-  METHOD assign_plan_values.
+ENDMETHOD.
 
-    DATA: lt_plan_values TYPE TABLE OF bpja,
-          ls_plan_value  TYPE bpja,
-          ls_wbs         TYPE ztb_a2r_wbsitem,
-          lv_objnr       TYPE j_objnr.
+METHOD create_settlement_rules.
 
-    rv_success = abap_false.
+  DATA: lt_cobrb_ins   TYPE TABLE OF cobrb_ins,
+        ls_cobrb_ins   TYPE cobrb_ins,
+        ls_wbs         TYPE ztb_a2r_wbsitem,
+        lv_parent_objnr TYPE j_objnr,
+        lv_wbs_objnr   TYPE j_objnr.
 
-    LOOP AT it_wbs_items INTO ls_wbs.
+  rv_success = abap_false.
 
-      " Skip if no budget
-      IF ls_wbs-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
+  " Loop through WBS items to create settlement rules
+  LOOP AT it_wbs_items INTO ls_wbs.
 
-      " Get WBS object number
-      SELECT SINGLE objnr FROM prps
-        INTO lv_objnr
-        WHERE posid = ls_wbs-posid.
-
-      IF sy-subrc = 0.
-        " Prepare plan value entry
-        CLEAR ls_plan_value.
-        ls_plan_value-lednr = '00'. " Leading ledger
-        ls_plan_value-objnr = lv_objnr.
-        ls_plan_value-gjahr = sy-datum(4). " Current fiscal year
-        ls_plan_value-versn = '0'. " Plan version
-        ls_plan_value-kstar = ''. " Cost element (optional)
-        ls_plan_value-wtp01 = ls_wbs-wert2. " Period 1 value
-        ls_plan_value-wtg01 = ls_wbs-wert2. " Total value
-
-        " Insert plan value
-        INSERT bpja FROM ls_plan_value.
-
-        IF sy-subrc = 0.
-          COMMIT WORK.
-        ENDIF.
-      ENDIF.
-    ENDLOOP.
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
-  METHOD distribute_im_budget.
-
-    DATA: lv_im_objnr     TYPE j_objnr,
-          lv_wbs_objnr    TYPE j_objnr,
-          ls_wbs_level1   TYPE ztb_a2r_wbsitem,
-          lv_budget_amount TYPE bpge-wlges.
-
-    rv_success = abap_false.
-
-    " Get Level 1 WBS
-    READ TABLE it_wbs_items INTO ls_wbs_level1
-      WITH KEY stufe = 1.
-
-    IF sy-subrc <> 0.
-      RETURN.
-    ENDIF.
-
-    " Get IM object number
-    SELECT SINGLE objnr FROM impr
-      INTO lv_im_objnr
-      WHERE posnr = is_header-posnr.
-
-    IF sy-subrc <> 0.
-      RETURN.
+    " Skip Level 1 (no parent to settle to)
+    IF ls_wbs-stufe = 1.
+      CONTINUE.
     ENDIF.
 
     " Get WBS object number
     SELECT SINGLE objnr FROM prps
       INTO lv_wbs_objnr
-      WHERE posid = ls_wbs_level1-posid.
+      WHERE posid = ls_wbs-posid.
 
     IF sy-subrc <> 0.
-      RETURN.
+      CONTINUE.
     ENDIF.
 
-    lv_budget_amount = ls_wbs_level1-wert2.
+    " Get parent WBS from hierarchy (PRHI table)
+    SELECT SINGLE up FROM prhi
+      INTO lv_parent_objnr
+      WHERE down = lv_wbs_objnr.
 
-    " Check WBS assignment
-    CALL FUNCTION 'IM_CHECK_WBS_ASSIGNMENT'
-      EXPORTING
-        i_posnr         = is_header-posnr
-        i_posid         = ls_wbs_level1-posid
-      EXCEPTIONS
-        not_assigned    = 1
-        OTHERS          = 2.
+    IF sy-subrc = 0 AND lv_parent_objnr IS NOT INITIAL.
 
-    IF sy-subrc <> 0.
-      MESSAGE e030(zcj00). " WBS not assigned to IM
-      RETURN.
+      " Prepare settlement rule entry
+      CLEAR ls_cobrb_ins.
+      ls_cobrb_ins-objnr = lv_wbs_objnr.      " Sender WBS (source)
+      ls_cobrb_ins-konty = 'PRJ'.             " Account assignment category
+      ls_cobrb_ins-empge = lv_parent_objnr.   " Receiver (parent WBS)
+      ls_cobrb_ins-prozs = '100'.             " Settlement percentage
+      ls_cobrb_ins-abgsl = 'FUL'.             " Full settlement
+
+      APPEND ls_cobrb_ins TO lt_cobrb_ins.
     ENDIF.
+  ENDLOOP.
 
-    " Check budget availability
-    CALL FUNCTION 'IM_AVAILABILITY_CHECK'
-      EXPORTING
-        i_objnr         = lv_im_objnr
-        i_amount        = lv_budget_amount
-      EXCEPTIONS
-        budget_exceeded = 1
-        OTHERS          = 2.
+  " Check if any rules to create
+  IF lt_cobrb_ins IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
-    IF sy-subrc <> 0.
-      MESSAGE e022(zcj00). " Budget exceeds available
-      RETURN.
-    ENDIF.
+  " Save settlement rules using K_SRULE_SAVE_UTASK
+  CALL FUNCTION 'K_SRULE_SAVE_UTASK'
+    TABLES
+      t_cobrb_insert = lt_cobrb_ins
+    EXCEPTIONS
+      OTHERS         = 1.
 
-    " Distribute budget from IM to WBS
-    UPDATE bpge
-      SET wtgev = wtgev + lv_budget_amount
-      WHERE objnr = lv_im_objnr.
-
-    IF sy-subrc = 0.
-      COMMIT WORK.
-      rv_success = abap_true.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD create_settlement_rules.
-
-    DATA: lt_cobrb       TYPE TABLE OF cobrb,
-          ls_cobrb       TYPE cobrb,
-          ls_wbs         TYPE ztb_a2r_wbsitem,
-          lv_parent_posid TYPE ps_posid,
-          lv_parent_objnr TYPE j_objnr,
-          lv_wbs_objnr   TYPE j_objnr.
-
-    rv_success = abap_false.
-
-    " Loop through WBS items to create settlement rules
-    LOOP AT it_wbs_items INTO ls_wbs.
-
-      " Skip Level 1 (no parent to settle to)
-      IF ls_wbs-stufe = 1.
-        CONTINUE.
-      ENDIF.
-
-      " Get WBS object number
+  IF sy-subrc = 0.
+    " Activate SETC status for all WBS with settlement rules
+    LOOP AT it_wbs_items INTO ls_wbs WHERE stufe > 1.
       SELECT SINGLE objnr FROM prps
         INTO lv_wbs_objnr
         WHERE posid = ls_wbs-posid.
 
-      IF sy-subrc <> 0.
-        CONTINUE.
-      ENDIF.
-
-      " Get parent WBS from hierarchy (PRHI table)
-      SELECT SINGLE up FROM prhi
-        INTO lv_parent_objnr
-        WHERE down = lv_wbs_objnr.
-
-      IF sy-subrc = 0 AND lv_parent_objnr IS NOT INITIAL.
-
-        " Prepare settlement rule entry
-        CLEAR ls_cobrb.
-        ls_cobrb-objnr = lv_wbs_objnr.        " Sender WBS
-        ls_cobrb-perio = 'A'.                 " Annual settlement
-        ls_cobrb-konty = 'PRJ'.               " Account assignment: Project
-        ls_cobrb-empge = lv_parent_objnr.     " Receiver: Parent WBS
-        ls_cobrb-prozs = '100.00'.            " Settlement %
-        ls_cobrb-abgsl = 'FUL'.               " Settlement type: Full
-
-        APPEND ls_cobrb TO lt_cobrb.
-      ENDIF.
-    ENDLOOP.
-
-    " Check if any rules to create
-    IF lt_cobrb IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
-
-    " Save settlement rules
-    CALL FUNCTION 'K_SETTLEMENT_RULE_MAINTAIN'
-      TABLES
-        t_cobrb       = lt_cobrb
-      EXCEPTIONS
-        error_message = 1
-        OTHERS        = 2.
-
-    IF sy-subrc = 0.
-      " Activate SETC status for all WBS with settlement rules
-      LOOP AT it_wbs_items INTO ls_wbs WHERE stufe > 1.
-        SELECT SINGLE objnr FROM prps
-          INTO lv_wbs_objnr
-          WHERE posid = ls_wbs-posid.
-
-        IF sy-subrc = 0.
-          CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
-            EXPORTING
-              objnr              = lv_wbs_objnr
-              user_stat          = 'SETC'
-              set_inact          = ''
-            EXCEPTIONS
-              object_not_found   = 1
-              status_inconsistent = 2
-              OTHERS             = 3.
-        ENDIF.
-      ENDLOOP.
-
-      COMMIT WORK.
-      rv_success = abap_true.
-    ELSE.
-      MESSAGE e024(zcj00). " Error creating settlement rules
-      rv_success = abap_false.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD activate_statuses.
-
-    DATA: ls_wbs       TYPE ztb_a2r_wbsitem,
-          lv_wbs_objnr TYPE j_objnr.
-
-    rv_success = abap_false.
-
-    LOOP AT it_wbs_items INTO ls_wbs.
-
-      " Get WBS object number
-      SELECT SINGLE objnr FROM prps
-        INTO lv_wbs_objnr
-        WHERE posid = ls_wbs-posid.
-
-      IF sy-subrc <> 0.
-        CONTINUE.
-      ENDIF.
-
-      " 1. Activate BUDG status if budget check flagged
-      IF ls_wbs-zbudget_check = 'X'.
+      IF sy-subrc = 0.
         CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
           EXPORTING
             objnr              = lv_wbs_objnr
-            user_stat          = 'BUDG'
+            user_stat          = 'SETC'
             set_inact          = ''
           EXCEPTIONS
             object_not_found   = 1
             status_inconsistent = 2
             OTHERS             = 3.
       ENDIF.
-
-      " 2. Activate AVAC status (for all WBS)
-      CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
-        EXPORTING
-          objnr              = lv_wbs_objnr
-          user_stat          = 'AVAC'
-          set_inact          = ''
-        EXCEPTIONS
-          object_not_found   = 1
-          status_inconsistent = 2
-          OTHERS             = 3.
-
-      " 3. Activate AUC status (only for Level 1 with Investment Profile)
-      IF ls_wbs-stufe = 1 AND ls_wbs-imprf IS NOT INITIAL.
-        CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
-          EXPORTING
-            objnr              = lv_wbs_objnr
-            user_stat          = 'AUC'
-            set_inact          = ''
-          EXCEPTIONS
-            object_not_found   = 1
-            status_inconsistent = 2
-            OTHERS             = 3.
-      ENDIF.
-
-      " 4. Release WBS (I0002 status)
-      CALL FUNCTION 'STATUS_CHANGE_EXTERN'
-        EXPORTING
-          objnr              = lv_wbs_objnr
-          stsma              = 'PS000001'
-          stone              = 'I0002'
-          set_inact          = ''
-        EXCEPTIONS
-          object_not_found   = 1
-          status_inconsistent = 2
-          OTHERS             = 3.
-
     ENDLOOP.
 
     COMMIT WORK.
     rv_success = abap_true.
+  ELSE.
+    MESSAGE e024(zcj00). " Error creating settlement rules
+    rv_success = abap_false.
+  ENDIF.
 
-  ENDMETHOD.
+ENDMETHOD.
 
-  METHOD get_next_project_number.
 
-    DATA: ls_nriv TYPE inri,
-          lv_year TYPE gjahr.
+METHOD create_wbs_elements.
 
-    lv_year = sy-datum(4).
+  DATA: lv_pspid         TYPE ps_pspid,
+        ls_wbs           TYPE ztb_a2r_wbsitem,
+        lt_return        TYPE TABLE OF bapiret2,
+        ls_return        TYPE bapiret2,
+        lv_project_def   TYPE bapi_bus2054_new-project_definition,
+        lt_wbs_element   TYPE TABLE OF bapi_bus2054_new,
+        ls_wbs_element   TYPE bapi_bus2054_new,
+        lv_level1_posid  TYPE ps_posid.
 
-    " Get number range interval for project profile
-    CALL FUNCTION 'NUMBER_RANGE_ENQUEUE'
-      EXPORTING
-        object           = 'PS_PRO'
-      EXCEPTIONS
-        foreign_lock     = 1
-        object_not_found = 2
-        system_failure   = 3
-        OTHERS           = 4.
+  rv_success = abap_false.
 
-    IF sy-subrc = 0.
-      CALL FUNCTION 'NUMBER_GET_NEXT'
-        EXPORTING
-          nr_range_nr             = '01'
-          object                  = 'PS_PRO'
-          quantity                = 1
-          toyear                  = lv_year
-        IMPORTING
-          number                  = rv_pspid
-        EXCEPTIONS
-          interval_not_found      = 1
-          number_range_not_intern = 2
-          object_not_found        = 3
-          OTHERS                  = 4.
+  " Get next available project number
+  lv_pspid = get_next_project_number( is_header-profl ).
 
-      CALL FUNCTION 'NUMBER_RANGE_DEQUEUE'
-        EXPORTING
-          object = 'PS_PRO'.
+  IF lv_pspid IS INITIAL.
+    MESSAGE e029(zcj00). " Cannot generate project number
+    RETURN.
+  ENDIF.
+
+  " Set project definition
+  lv_project_def = lv_pspid.
+
+  " Call standard function to create project
+  CALL FUNCTION 'BAPI_PROJECT_MAINTAIN'
+    EXPORTING
+      i_project_definition = lv_project_def
+      i_description        = is_header-pspnr
+      i_company_code       = is_header-bukrs
+      i_plant              = is_header-werks
+      i_profit_center      = is_header-prctr
+      i_start_date         = sy-datum
+      i_end_date           = is_header-plsez
+      i_responsible        = is_header-vernr
+      i_currency           = 'USD'
+      i_project_profile    = is_header-profl
+    TABLES
+      return               = lt_return.
+
+  " Check for errors
+  LOOP AT lt_return INTO ls_return WHERE type = 'E' OR type = 'A'.
+    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2
+           ls_return-message_v3 ls_return-message_v4.
+    rv_success = abap_false.
+    RETURN.
+  ENDLOOP.
+
+  " Create WBS elements using CJ20N logic
+  LOOP AT it_wbs_items INTO ls_wbs.
+
+    " Skip if no budget
+    IF ls_wbs-wert2 IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    IF rv_pspid IS INITIAL.
-      " Fallback: generate based on pattern
-      rv_pspid = |P{ lv_year }{ sy-uzeit }|.
+    CLEAR ls_wbs_element.
+
+    " Generate WBS element code
+    IF ls_wbs-stufe = 1.
+      ls_wbs_element-wbs_element = lv_pspid.
+      lv_level1_posid = lv_pspid.
+    ELSE.
+      ls_wbs_element-wbs_element = |{ lv_pspid }-{ sy-tabix }|.
     ENDIF.
 
-  ENDMETHOD.
+    ls_wbs_element-description = ls_wbs-post1.
+    ls_wbs_element-wbs_level   = ls_wbs-stufe.
+    ls_wbs_element-cost_center = ls_wbs-kostl.
 
-ENDCLASS.
+    " Store created WBS
+    ls_wbs-pspnr = ls_wbs_element-wbs_element.
+    ls_wbs-posid = ls_wbs_element-wbs_element.
+    APPEND ls_wbs TO et_wbs_created.
+
+    APPEND ls_wbs_element TO lt_wbs_element.
+  ENDLOOP.
+
+  " Create WBS elements
+  CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
+    EXPORTING
+      i_project_definition = lv_project_def
+    TABLES
+      it_wbs_element       = lt_wbs_element
+      return               = lt_return.
+
+  " Check for errors
+  LOOP AT lt_return INTO ls_return WHERE type = 'E' OR type = 'A'.
+    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
+    rv_success = abap_false.
+    RETURN.
+  ENDLOOP.
+
+  " Commit
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  " Link to IM Position
+  CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
+    EXPORTING
+      i_posnr = is_header-posnr
+      i_posid = lv_level1_posid
+    EXCEPTIONS
+      OTHERS  = 1.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
+
