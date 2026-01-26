@@ -1,79 +1,348 @@
-METHOD distribute_im_budget.
+*&---------------------------------------------------------------------*
+*& Include          ZTR_A2R_WBSZCJ01_TOP
+*&---------------------------------------------------------------------*
+TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
-  DATA: lv_im_objnr     TYPE j_objnr,
-        lv_wbs_objnr    TYPE j_objnr,
-        ls_wbs_level1   TYPE ztb_a2r_wbsitem,
-        lv_budget_amount TYPE bpge-wlges.
+*----------------------------------------------------------------------*
+* Type Definitions
+*----------------------------------------------------------------------*
+TYPES: BEGIN OF ty_wbs_display,
+         stufe         TYPE ps_stufe,
+         posid         TYPE ps_posid,
+         post1         TYPE ps_post1,
+         kostl         TYPE kostl,
+         zapproved_budg TYPE bpge-wlges,
+         zbudget_check TYPE char1,
+         imprf         TYPE im_profil,
+         prart         TYPE ps_prart,
+         mark          TYPE char1,
+       END OF ty_wbs_display.
 
-  rv_success = abap_false.
+*----------------------------------------------------------------------*
+* Screen Parameters - ADDED
+*----------------------------------------------------------------------*
+DATA: p_posnr TYPE im_posnr,
+      p_profl TYPE profidproj,
+      p_pspid TYPE ps_spdid,
+      p_prnam TYPE im_prnam,
+      p_gjahr TYPE im_gnjhr,
+      p_post1 TYPE ps_post1,
+      p_verna TYPE ps_verna,
+      p_plsez TYPE ps_plsez_chg,
+      p_prctr TYPE prctr,
+      p_kostl TYPE kostl,
+      p_usr10 TYPE char1.
 
-  " Get Level 1 WBS - CORRECTED: Loop and check instead of WITH KEY
-  LOOP AT it_wbs_items INTO ls_wbs_level1.
-    IF ls_wbs_level1-stufe = 1.
-      EXIT.
+*----------------------------------------------------------------------*
+* Tracking Variables
+*----------------------------------------------------------------------*
+DATA: gv_posnr_old TYPE im_posnr.
+
+*----------------------------------------------------------------------*
+* Global Variables - Screen 2
+*----------------------------------------------------------------------*
+DATA: gs_header     TYPE ztb_a2r_wbshdr,
+      gt_wbs_items  TYPE TABLE OF ztb_a2r_wbsitem,
+      gs_wbs_item   TYPE ztb_a2r_wbsitem.
+
+DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
+      gs_wbs_display TYPE ty_wbs_display.
+
+*----------------------------------------------------------------------*
+* Global Variables - Additional IM Data
+*----------------------------------------------------------------------*
+DATA: gv_bukrs            TYPE bukrs,
+      gv_werks            TYPE werks_d,
+      gv_izwek            TYPE izwek,
+      gv_usr008           TYPE dats,
+      gv_available_budget TYPE bpge-wlges,
+      gv_request_type     TYPE ztb_a2r_reqtype-z_reqtype,
+      gv_request_number   TYPE char10.
+
+*----------------------------------------------------------------------*
+* Global Objects
+*----------------------------------------------------------------------*
+DATA: go_builder TYPE REF TO zcl_a2r_wbs_builder.
+
+*----------------------------------------------------------------------*
+* Constants
+*----------------------------------------------------------------------*
+CONSTANTS: gc_x TYPE char1 VALUE 'X'.
+
+*----------------------------------------------------------------------*
+* Table Control
+*----------------------------------------------------------------------*
+CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 200.
+
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Include          ZTR_A2R_WBSZCJ01_SEL
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& SELECTION SCREEN DEFINITION
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK blk_proj WITH FRAME TITLE TEXT-100.
+
+* IM Number with F4 help
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-101 FOR FIELD p_posnr.
+SELECTION-SCREEN POSITION 25.
+* p_posnr already declared in TOP
+SELECTION-SCREEN END OF LINE.
+
+* Project Profile - auto-populated
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-102 FOR FIELD p_profl.
+SELECTION-SCREEN POSITION 25.
+* p_profl already declared in TOP with MODIF ID dis
+SELECTION-SCREEN END OF LINE.
+
+* Project Template - auto-populated
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-103 FOR FIELD p_pspid.
+SELECTION-SCREEN POSITION 25.
+* p_pspid already declared in TOP with MODIF ID dis
+SELECTION-SCREEN PUSHBUTTON 60(15) TEXT-104 USER-COMMAND preview.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN SKIP 1.
+
+* Read-only fields from IM
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-105 FOR FIELD p_prnam.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-106 FOR FIELD p_gjahr.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN SKIP 1.
+
+* Editable fields
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-107 FOR FIELD p_post1.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-108 FOR FIELD p_verna.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-109 FOR FIELD p_plsez.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-110 FOR FIELD p_prctr.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-111 FOR FIELD p_kostl.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) TEXT-112 FOR FIELD p_usr10.
+SELECTION-SCREEN POSITION 25.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN END OF BLOCK blk_proj.
+
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Form POPULATE_HEADER_STRUCTURE
+*&---------------------------------------------------------------------*
+FORM populate_header_structure.
+
+  gs_header-posnr = p_posnr.
+  gs_header-prnam = p_prnam.
+  gs_header-post1 = p_post1.              " CORRECTED: was pspnr
+  gs_header-vernr = p_verna.
+  gs_header-plsez = p_plsez.
+  gs_header-bukrs = gv_bukrs.
+  gs_header-werks = gv_werks.
+  gs_header-prctr = p_prctr.
+  gs_header-kostl = p_kostl.
+  gs_header-izwek = gv_izwek.
+  gs_header-zunifier_proj = p_usr10.
+  gs_header-usr008 = gv_usr008.
+  gs_header-ernam = sy-uname.
+  gs_header-z_reqtype = gv_request_type.
+  gs_header-erdat = sy-datum.
+  gs_header-profl = p_profl.              " ADDED: missing field
+
+ENDFORM.
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Form SHOW_TEMPLATE_PREVIEW
+*&---------------------------------------------------------------------*
+FORM show_template_preview USING iv_pspid TYPE ps_spdid.
+
+  DATA: lt_prps TYPE TABLE OF prps,
+        lv_pspnr TYPE ps_pspnr.
+
+  " Get project internal number
+  SELECT SINGLE pspnr FROM proj
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
+
+  IF sy-subrc = 0.
+    " Get WBS elements
+    SELECT * FROM prps
+      INTO TABLE lt_prps
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
+
+    IF sy-subrc = 0.
+      CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+        EXPORTING
+          i_title       = 'Project Template Preview'
+          i_tabname     = 'PRPS'
+        TABLES
+          t_outtab      = lt_prps
+        EXCEPTIONS
+          program_error = 1
+          OTHERS        = 2.
+    ENDIF.
+  ELSE.
+    MESSAGE i011 WITH iv_pspid. " Template not found
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Form GET_PROFILE_TEMPLATE
+*&---------------------------------------------------------------------*
+FORM get_profile_template USING iv_izwek TYPE izwek
+                          CHANGING cv_profl TYPE profidproj
+                                   cv_pspid TYPE ps_spdid.
+
+  DATA: ls_config TYPE ztb_a2r_conftab1.
+
+  SELECT SINGLE * FROM ztb_a2r_conftab1
+    INTO ls_config
+    WHERE izwek = iv_izwek.
+
+  IF sy-subrc = 0.
+    cv_profl = ls_config-profl.
+    cv_pspid = ls_config-pspid.           " CORRECTED: was pspnr
+  ELSE.
+    MESSAGE w003. " No entry found
+    CLEAR: cv_profl, cv_pspid.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+TEXT-001: Select Request Type
+TEXT-002: Create New Project
+TEXT-003: Create New Project (A1)
+TEXT-004: Modify Existing Project
+TEXT-005: Add CAR (B1)
+TEXT-006: Non-Critical Change (B2)
+TEXT-007: Critical Change (B3)
+TEXT-008: Partial Capitalization (C1)
+TEXT-009: Close/Unclose WBS
+TEXT-010: Close WBS (D1)
+TEXT-011: Unclose WBS (E1)
+TEXT-012: Edit Saved Request (F1)
+TEXT-013: Reporting
+TEXT-014: WBS Request Reporting (G1)
+TEXT-015: Other Functions
+
+TEXT-100: Project Creation - Basic Information
+TEXT-101: IM Number
+TEXT-102: Project Profile
+TEXT-103: Project Template
+TEXT-104: Preview
+TEXT-105: IM Program
+TEXT-106: Approval Year
+TEXT-107: Project Description
+TEXT-108: Person Responsible
+TEXT-109: Finish Date
+TEXT-110: Profit Center
+TEXT-111: Cost Center
+TEXT-112: GE Ariba WF Flag
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Report ZTR_A2R_WBSCJ01
+*& Create/Modify Project - Screens 100 & 200
+*&---------------------------------------------------------------------*
+REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
+
+*----------------------------------------------------------------------*
+* Include files
+*----------------------------------------------------------------------*
+INCLUDE ztr_a2r_wbszcj01_top.  " Global data declarations
+INCLUDE ztr_a2r_wbszcj01_sel.  " Selection screens
+INCLUDE ztr_a2r_wbszcj01_f01.  " Form routines
+INCLUDE ztr_a2r_wbszcj01_pbo.  " PBO modules
+INCLUDE ztr_a2r_wbszcj01_pai.  " PAI modules
+
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  " Import request type from memory
+  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
+
+  IF gv_request_type IS INITIAL.
+    gv_request_type = 'A1'. " Default
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& AT SELECTION-SCREEN EVENTS
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_posnr.
+  PERFORM f4_im_number CHANGING p_posnr.
+
+AT SELECTION-SCREEN.
+  IF p_posnr IS NOT INITIAL AND p_posnr <> gv_posnr_old.
+    PERFORM get_im_data USING p_posnr.
+    gv_posnr_old = p_posnr.
+  ENDIF.
+
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-group1 = 'DIS'.
+      screen-input = 0.
+      MODIFY SCREEN.
     ENDIF.
   ENDLOOP.
 
-  IF ls_wbs_level1 IS INITIAL.
-    RETURN.
-  ENDIF.
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
 
-  " Get IM object number
-  SELECT SINGLE objnr FROM impr
-    INTO lv_im_objnr
-    WHERE posnr = is_header-posnr.
+  " Initialize builder object
+  CREATE OBJECT go_builder.
 
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
-
-  " Get WBS object number
-  SELECT SINGLE objnr FROM prps
-    INTO lv_wbs_objnr
-    WHERE posid = ls_wbs_level1-posid.
-
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
-
-  lv_budget_amount = ls_wbs_level1-wert2.
-
-  " Check WBS assignment
-  CALL FUNCTION 'IM_CHECK_WBS_ASSIGNMENT'
-    EXPORTING
-      i_posnr         = is_header-posnr
-      i_posid         = ls_wbs_level1-posid
-    EXCEPTIONS
-      not_assigned    = 1
-      OTHERS          = 2.
-
-  IF sy-subrc <> 0.
-    MESSAGE e030(zcj00). " WBS not assigned to IM
-    RETURN.
-  ENDIF.
-
-  " Check budget availability
-  CALL FUNCTION 'IM_AVAILABILITY_CHECK'
-    EXPORTING
-      i_objnr         = lv_im_objnr
-      i_amount        = lv_budget_amount
-    EXCEPTIONS
-      budget_exceeded = 1
-      OTHERS          = 2.
-
-  IF sy-subrc <> 0.
-    MESSAGE e022(zcj00). " Budget exceeds available
-    RETURN.
-  ENDIF.
-
-  " Distribute budget from IM to WBS
-  UPDATE bpge
-    SET wtgev = wtgev + lv_budget_amount
-    WHERE objnr = lv_im_objnr.
-
-  IF sy-subrc = 0.
-    COMMIT WORK.
-    rv_success = abap_true.
-  ENDIF.
-
-ENDMETHOD.
+  " Call Screen 100
+  CALL SCREEN 100.
