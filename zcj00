@@ -1,19 +1,32 @@
-*&---------------------------------------------------------------------*
-*& Report ZCJ00
-*& Internal Projects Cockpit - Main Entry Point
-*&---------------------------------------------------------------------*
-REPORT zcj00 MESSAGE-ID zcj00.
+* ====================================================================
+* RICEFW ID.........: 6577
+* TR Number.........: D30K912694
+* Version...........: 1.0
+* Program...........: ZTR_A2R_WBSCJ00
+* Transaction Code..:
+* Author............: RQ28830
+* Date..............: 08.12.2025 -
+* --------------------------------------------------------------------
+* Description.......: Internal Project Cockpit
+* --------------------------------------------------------------------
+* Modification list.:
+* Date      Author    TR Number          Description
+* 12/8/25  RQ28830   D30K912694    Initialized program.
+* ====================================================================
+REPORT ZTR_A2R_WBSCJ00 MESSAGE-ID zcj00.
 
-INCLUDE ztr_a2r_wbszcj00_top.
-INCLUDE ztr_a2r_wbszcj00_sel.
-INCLUDE ztr_a2r_wbszcj00_f01.
+*----------------------------------------------------------------------*
+*                           Includes                                   *
+*----------------------------------------------------------------------*
+INCLUDE ztr_a2r_wbscj00_top.
+INCLUDE ztr_a2r_wbscj00_sel.
+INCLUDE ztr_a2r_wbscj00_f01.
+
 
 *&---------------------------------------------------------------------*
 *& INITIALIZATION
 *&---------------------------------------------------------------------*
 INITIALIZATION.
-  " Set default text elements
-  %_grp1_%_app_%-text = 'Internal Projects Cockpit'.
 
 *&---------------------------------------------------------------------*
 *& START-OF-SELECTION
@@ -31,16 +44,16 @@ START-OF-SELECTION.
   " Route to appropriate program/screen
   CASE lv_reqtype.
     WHEN 'A1'.  " Create New Project
-      SUBMIT zcj01 AND RETURN.
+      SUBMIT ztr_a2r_wbscj01 AND RETURN.
 
     WHEN 'B1'.  " Add CAR
-      SUBMIT zcj01 AND RETURN.
+      SUBMIT ztr_a2r_wbscj01 AND RETURN.
 
     WHEN 'B2'.  " Non-critical change
-      SUBMIT zcj01 AND RETURN.
+      SUBMIT ztr_a2r_wbscj01 AND RETURN.
 
     WHEN 'B3'.  " Critical change
-      SUBMIT zcj01 AND RETURN.
+      SUBMIT ztr_a2r_wbscj01 AND RETURN.
 
     WHEN 'C1'.  " Partial Capitalization
       MESSAGE i001 WITH 'Request Type C1 not yet implemented'.
@@ -55,7 +68,7 @@ START-OF-SELECTION.
       MESSAGE i001 WITH 'Request Type F1 not yet implemented'.
 
     WHEN 'G1'.  " WBS Request Reporting
-      SUBMIT zcj00_report AND RETURN.
+      SUBMIT ztr_a2r_wbscj01 AND RETURN.
 
     WHEN OTHERS.
       MESSAGE e001 WITH lv_reqtype.
