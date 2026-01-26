@@ -1,126 +1,120 @@
 *&---------------------------------------------------------------------*
-*& Report ZTR_A2R_WBSCJ01
+*& Form POPULATE_HEADER_STRUCTURE
 *&---------------------------------------------------------------------*
-REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
+FORM populate_header_structure.
 
-*----------------------------------------------------------------------*
-* Include files
-*----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbszcj01_top.
-INCLUDE ztr_a2r_wbszcj01_sel.
-INCLUDE ztr_a2r_wbszcj01_f01.
-INCLUDE ztr_a2r_wbszcj01_pbo.
-INCLUDE ztr_a2r_wbszcj01_pai.
+  gs_header-posnr = p_posnr.
+  gs_header-prnam = p_prnam.
+  gs_header-post1 = p_post1.              " CORRECTED: was pspnr
+  gs_header-vernr = p_verna.
+  gs_header-plsez = p_plsez.
+  gs_header-bukrs = gv_bukrs.
+  gs_header-werks = gv_werks.
+  gs_header-prctr = p_prctr.
+  gs_header-kostl = p_kostl.
+  gs_header-izwek = gv_izwek.
+  gs_header-zunifier_proj = p_usr10.
+  gs_header-usr008 = gv_usr008.
+  gs_header-ernam = sy-uname.
+  gs_header-z_reqtype = gv_request_type.
+  gs_header-erdat = sy-datum.
+  gs_header-profl = p_profl.              " ADDED: missing field
+
+ENDFORM.
+
+
+
 
 *&---------------------------------------------------------------------*
-*& INITIALIZATION
+*& Form SHOW_TEMPLATE_PREVIEW
 *&---------------------------------------------------------------------*
-INITIALIZATION.
-  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-  IF gv_request_type IS INITIAL.
-    gv_request_type = 'A1'.
-  ENDIF.
+FORM show_template_preview USING iv_pspid TYPE ps_spdid.
 
-*&---------------------------------------------------------------------*
-*& AT SELECTION-SCREEN EVENTS
-*&---------------------------------------------------------------------*
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_posnr.    " Remove period here
-  PERFORM f4_im_number CHANGING p_posnr.              " Add this line
+  DATA: lt_prps TYPE TABLE OF prps,
+        lv_pspnr TYPE ps_pspnr.
 
-AT SELECTION-SCREEN.
-  IF p_posnr IS NOT INITIAL AND p_posnr <> gv_posnr_old.
-    PERFORM get_im_data USING p_posnr.
-    gv_posnr_old = p_posnr.
-  ENDIF.
+  " Get project internal number
+  SELECT SINGLE pspnr FROM proj
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
 
-AT SELECTION-SCREEN OUTPUT.
-  LOOP AT SCREEN.
-    IF screen-group1 = 'DIS'.
-      screen-input = 0.
-      MODIFY SCREEN.
+  IF sy-subrc = 0.
+    " Get WBS elements
+    SELECT * FROM prps
+      INTO TABLE lt_prps
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
+
+    IF sy-subrc = 0.
+      CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+        EXPORTING
+          i_title       = 'Project Template Preview'
+          i_tabname     = 'PRPS'
+        TABLES
+          t_outtab      = lt_prps
+        EXCEPTIONS
+          program_error = 1
+          OTHERS        = 2.
     ENDIF.
-  ENDLOOP.
+  ELSE.
+    MESSAGE i011 WITH iv_pspid. " Template not found
+  ENDIF.
 
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
-  CREATE OBJECT go_builder.
-  CALL SCREEN 100.
-
+ENDFORM.
 
 
 
 *&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_SEL
+*& Form GET_PROFILE_TEMPLATE
 *&---------------------------------------------------------------------*
+FORM get_profile_template USING iv_izwek TYPE izwek
+                          CHANGING cv_profl TYPE profidproj
+                                   cv_pspid TYPE ps_spdid.
 
-SELECTION-SCREEN BEGIN OF BLOCK blk_proj WITH FRAME TITLE TEXT-100.
+  DATA: ls_config TYPE ztb_a2r_conftab1.
 
-* IM Number with F4 help
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-101 FOR FIELD p_posnr.
-PARAMETERS: p_posnr TYPE im_posnr OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
+  SELECT SINGLE * FROM ztb_a2r_conftab1
+    INTO ls_config
+    WHERE izwek = iv_izwek.
 
-* Project Profile - auto-populated
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-102 FOR FIELD p_profl.
-PARAMETERS: p_profl TYPE profidproj MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
+  IF sy-subrc = 0.
+    cv_profl = ls_config-profl.
+    cv_pspid = ls_config-pspid.           " CORRECTED: was pspnr
+  ELSE.
+    MESSAGE w003. " No entry found
+    CLEAR: cv_profl, cv_pspid.
+  ENDIF.
 
-* Project Template - auto-populated
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-103 FOR FIELD p_pspid.
-PARAMETERS: p_pspid TYPE ps_spdid MODIF ID dis.
-SELECTION-SCREEN PUSHBUTTON 60(15) TEXT-104 USER-COMMAND preview.
-SELECTION-SCREEN END OF LINE.
+ENDFORM.
 
-SELECTION-SCREEN SKIP 1.
 
-* Read-only fields from IM
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-105 FOR FIELD p_prnam.
-PARAMETERS: p_prnam TYPE im_prnam MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-106 FOR FIELD p_gjahr.
-PARAMETERS: p_gjahr TYPE im_gnjhr MODIF ID dis.
-SELECTION-SCREEN END OF LINE.
+TEXT-001: Select Request Type
+TEXT-002: Create New Project
+TEXT-003: Create New Project (A1)
+TEXT-004: Modify Existing Project
+TEXT-005: Add CAR (B1)
+TEXT-006: Non-Critical Change (B2)
+TEXT-007: Critical Change (B3)
+TEXT-008: Partial Capitalization (C1)
+TEXT-009: Close/Unclose WBS
+TEXT-010: Close WBS (D1)
+TEXT-011: Unclose WBS (E1)
+TEXT-012: Edit Saved Request (F1)
+TEXT-013: Reporting
+TEXT-014: WBS Request Reporting (G1)
+TEXT-015: Other Functions
 
-SELECTION-SCREEN SKIP 1.
-
-* Editable fields
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-107 FOR FIELD p_post1.
-PARAMETERS: p_post1 TYPE ps_post1 OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-108 FOR FIELD p_verna.
-PARAMETERS: p_verna TYPE ps_verna OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-109 FOR FIELD p_plsez.
-PARAMETERS: p_plsez TYPE ps_plsez_chg OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-110 FOR FIELD p_prctr.
-PARAMETERS: p_prctr TYPE prctr OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-SELECTION-SCREEN COMMENT 1(20) TEXT-111 FOR FIELD p_kostl.
-PARAMETERS: p_kostl TYPE kostl OBLIGATORY.
-SELECTION-SCREEN END OF LINE.
-
-* GE Ariba WF Flag - CORRECTED (checkbox format)
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS: p_usr10 AS CHECKBOX.
-SELECTION-SCREEN COMMENT 5(30) TEXT-112.     " Remove "FOR FIELD p_usr10"
-SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN END OF BLOCK blk_proj.
+TEXT-100: Project Creation - Basic Information
+TEXT-101: IM Number
+TEXT-102: Project Profile
+TEXT-103: Project Template
+TEXT-104: Preview
+TEXT-105: IM Program
+TEXT-106: Approval Year
+TEXT-107: Project Description
+TEXT-108: Person Responsible
+TEXT-109: Finish Date
+TEXT-110: Profit Center
+TEXT-111: Cost Center
+TEXT-112: GE Ariba WF Flag
