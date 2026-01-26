@@ -2,122 +2,253 @@ METHOD create_settlement_rules.
 
   DATA: ls_wbs         TYPE ztb_a2r_wbsitem,
         lv_parent_objnr TYPE j_objnr,
-        lv_parent_posid TYPE ps_posid,
         lv_wbs_objnr   TYPE j_objnr,
-        lt_cobrb       TYPE TABLE OF cobrb,
-        ls_cobrb       TYPE cobrb,
-        lt_return      TYPE TABLE OF bapiret2.
+        lv_werks       TYPE werks_d,
+        lv_bukrs       TYPE bukrs.
 
   rv_success = abap_false.
 
-  " Build settlement rules table
   LOOP AT it_wbs_items INTO ls_wbs.
 
-    " Skip Level 1 (top level has no parent to settle to)
+    " Skip Level 1 (no parent to settle to)
     IF ls_wbs-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    " Skip if no budget (according to FDS)
+    " Skip if no budget
     IF ls_wbs-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Get WBS object number
-    SELECT SINGLE objnr FROM prps
-      INTO lv_wbs_objnr
-      WHERE posid = ls_wbs-posid.
+    " Get WBS object number and company code
+    SELECT SINGLE p~objnr, p~pbukr, p~werks
+      FROM prps AS p
+      INTO (lv_wbs_objnr, lv_bukrs, lv_werks)
+      WHERE p~posid = ls_wbs-posid.
 
     IF sy-subrc <> 0.
       CONTINUE.
     ENDIF.
 
-    " Get parent WBS from hierarchy (PRHI table)
-    SELECT SINGLE p~objnr, p~posid
-      FROM prhi AS h
-      INNER JOIN prps AS p ON h~up = p~objnr
-      INTO (lv_parent_objnr, lv_parent_posid)
-      WHERE h~down = lv_wbs_objnr.
+    " Get parent WBS object number
+    SELECT SINGLE up FROM prhi
+      INTO lv_parent_objnr
+      WHERE down = lv_wbs_objnr.
 
     IF sy-subrc = 0 AND lv_parent_objnr IS NOT INITIAL.
 
-      " Prepare settlement rule entry (CJB2 structure)
-      CLEAR ls_cobrb.
-      ls_cobrb-mandt = sy-mandt.
-      ls_cobrb-objnr = lv_wbs_objnr.        " Sender (WBS element)
-      ls_cobrb-lfdnr = '001'.               " Settlement rule number
-      ls_cobrb-abgsl = 'FUL'.               " Settlement type: FUL (Full)
-      ls_cobrb-konty = 'PR'.                " Receiver type: PR (Project/WBS)
-      ls_cobrb-empge = lv_parent_objnr.     " Receiver object number (parent WBS)
-      ls_cobrb-prozs = '100.00'.            " Settlement percentage: 100%
-      ls_cobrb-auskz = 'X'.                 " Active settlement rule
-      ls_cobrb-vrgng = 'KOAO'.              " Transaction type
-      
-      APPEND ls_cobrb TO lt_cobrb.
+      " Use standard function to create settlement rule (CJB2 logic)
+      CALL FUNCTION 'K_SRULE_SAVE_UTASK'
+        EXPORTING
+          i_sender           = lv_wbs_objnr
+          i_receiver         = lv_parent_objnr
+          i_settl_type       = 'FUL'
+          i_percentage       = '100.00'
+          i_company_code     = lv_bukrs
+        EXCEPTIONS
+          error_in_data      = 1
+          OTHERS             = 2.
+
+      IF sy-subrc = 0.
+        " Activate SETC status
+        CALL FUNCTION 'STATUS_CHANGE_INTERN'
+          EXPORTING
+            client               = sy-mandt
+            objnr                = lv_wbs_objnr
+            user_stat            = 'SETC'
+            set_inact            = ''
+          EXCEPTIONS
+            object_not_found     = 1
+            status_inconsistent  = 2
+            OTHERS               = 3.
+      ELSE.
+        MESSAGE e024(zcj00). " Error creating settlement rules
+        rv_success = abap_false.
+        RETURN.
+      ENDIF.
     ENDIF.
   ENDLOOP.
 
-  " Check if any rules to create
-  IF lt_cobrb IS INITIAL.
-    rv_success = abap_true.
+  COMMIT WORK AND WAIT.
+  rv_success = abap_true.
+
+ENDMETHOD.
+
+
+
+
+METHOD copy_template_structure.
+
+  DATA: lt_prps TYPE TABLE OF prps,
+        ls_prps TYPE prps,
+        ls_wbs  TYPE ztb_a2r_wbsitem,
+        lv_pspnr TYPE ps_pspnr.
+
+  " Get project definition internal number from template ID
+  SELECT SINGLE pspnr FROM proj
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
+
+  IF sy-subrc = 0.
+    " Get all WBS elements that belong to this project
+    SELECT * FROM prps
+      INTO TABLE lt_prps
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_prps INTO ls_prps.
+        CLEAR ls_wbs.
+
+        " Map template fields to WBS item structure
+        ls_wbs-stufe = ls_prps-stufe.
+        ls_wbs-posid = ls_prps-posid.
+        ls_wbs-post1 = ls_prps-post1.
+        ls_wbs-pspnr = ls_prps-pspnr.
+        ls_wbs-imprf = ls_prps-imprf.
+        ls_wbs-prart = ls_prps-prart.
+        ls_wbs-bukrs = ls_prps-pbukr.
+
+        APPEND ls_wbs TO ct_wbs_items.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+ENDMETHOD.
+
+
+
+
+METHOD create_wbs_elements.
+
+  DATA: lv_pspid         TYPE ps_pspid,
+        ls_wbs           TYPE ztb_a2r_wbsitem,
+        ls_wbs_created   TYPE ztb_a2r_wbsitem,
+        lt_return        TYPE TABLE OF bapiret2,
+        ls_return        TYPE bapiret2,
+        lv_level1_posid  TYPE ps_posid,
+        lv_level1_pspnr  TYPE ps_pspnr,
+        lv_counter       TYPE i.
+
+  rv_success = abap_false.
+
+  " Get next available project number
+  lv_pspid = get_next_project_number( is_header-profl ).
+
+  IF lv_pspid IS INITIAL.
+    MESSAGE e029(zcj00). " Cannot generate project number
     RETURN.
   ENDIF.
 
-  " Use standard function to create settlement rules (CJB2 logic)
-  CALL FUNCTION 'K_SETTLEMENT_RULE_MAINTAIN'
+  " Step 1: Create Project Definition using CJ20N BAPI
+  CALL FUNCTION 'BAPI_BUS2001_CREATE'
+    EXPORTING
+      i_project_definition = lv_pspid
+      i_description        = is_header-pspnr
+      i_start_date         = sy-datum
+      i_end_date           = is_header-plsez
+      i_company_code       = is_header-bukrs
+      i_plant              = is_header-werks
+      i_profit_center      = is_header-prctr
+      i_responsible        = is_header-vernr
+      i_currency           = 'USD'
+      i_profile            = is_header-profl
     TABLES
-      t_cobrb      = lt_cobrb
-      t_bapiret2   = lt_return
-    EXCEPTIONS
-      error_passed = 1
-      OTHERS       = 2.
+      return               = lt_return.
 
+  " Check for errors
+  READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
   IF sy-subrc = 0.
-    " Check return messages for errors
-    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type = 'E' OR type = 'A'.
-      EXIT.
-    ENDLOOP.
-
-    IF sy-subrc = 0.
-      " Errors found
-      MESSAGE e024(zcj00). " Error creating settlement rules
-      rv_success = abap_false.
-      RETURN.
-    ELSE.
-      " Success - Activate SETC status for all WBS with settlement rules
-      LOOP AT it_wbs_items INTO ls_wbs WHERE stufe > 1.
-        
-        " Skip if no budget
-        IF ls_wbs-wert2 IS INITIAL.
-          CONTINUE.
-        ENDIF.
-
-        SELECT SINGLE objnr FROM prps
-          INTO lv_wbs_objnr
-          WHERE posid = ls_wbs-posid.
-
-        IF sy-subrc = 0.
-          " Activate SETC (Settlement rule exists) status
-          CALL FUNCTION 'STATUS_CHANGE_INTERN'
-            EXPORTING
-              client               = sy-mandt
-              objnr                = lv_wbs_objnr
-              user_stat            = 'SETC'
-              set_inact            = ''
-            EXCEPTIONS
-              object_not_found     = 1
-              status_inconsistent  = 2
-              status_not_allowed   = 3
-              OTHERS               = 4.
-        ENDIF.
-      ENDLOOP.
-
-      COMMIT WORK AND WAIT.
-      rv_success = abap_true.
-    ENDIF.
-  ELSE.
-    MESSAGE e024(zcj00). " Error creating settlement rules
+    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
     rv_success = abap_false.
+    RETURN.
   ENDIF.
+
+  " Commit project creation
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  " Get project internal number
+  SELECT SINGLE pspnr FROM proj
+    INTO lv_level1_pspnr
+    WHERE pspid = lv_pspid.
+
+  " Step 2: Create WBS Elements
+  lv_counter = 1.
+  LOOP AT it_wbs_items INTO ls_wbs.
+
+    " Skip if no budget
+    IF ls_wbs-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR: lt_return, ls_wbs_created.
+
+    " Generate WBS element ID
+    IF ls_wbs-stufe = 1.
+      " Level 1 WBS = Project ID
+      lv_level1_posid = lv_pspid.
+      ls_wbs_created-posid = lv_pspid.
+      ls_wbs_created-pspnr = lv_level1_pspnr.
+    ELSE.
+      " Child WBS elements
+      ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
+      lv_counter = lv_counter + 1.
+
+      " Create WBS element using BAPI
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = lv_pspid
+          i_wbs_element        = ls_wbs_created-posid
+          i_description        = ls_wbs-post1
+          i_wbs_level          = ls_wbs-stufe
+          i_cost_center        = ls_wbs-kostl
+        TABLES
+          return               = lt_return.
+
+      " Check for errors
+      READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
+      IF sy-subrc = 0.
+        MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+          WITH ls_return-message_v1 ls_return-message_v2.
+        rv_success = abap_false.
+        RETURN.
+      ENDIF.
+
+      " Get internal number
+      SELECT SINGLE pspnr FROM prps
+        INTO ls_wbs_created-pspnr
+        WHERE posid = ls_wbs_created-posid.
+    ENDIF.
+
+    " Copy other fields
+    ls_wbs_created-stufe = ls_wbs-stufe.
+    ls_wbs_created-post1 = ls_wbs-post1.
+    ls_wbs_created-kostl = ls_wbs-kostl.
+    ls_wbs_created-wert2 = ls_wbs-wert2.
+    ls_wbs_created-zbudget_check = ls_wbs-zbudget_check.
+    ls_wbs_created-imprf = ls_wbs-imprf.
+    ls_wbs_created-prart = ls_wbs-prart.
+    ls_wbs_created-bukrs = is_header-bukrs.
+
+    APPEND ls_wbs_created TO et_wbs_created.
+  ENDLOOP.
+
+  " Commit all WBS elements
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  " Link Level 1 WBS to IM Position
+  CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
+    EXPORTING
+      i_posnr = is_header-posnr
+      i_posid = lv_level1_posid
+    EXCEPTIONS
+      OTHERS  = 1.
+
+  rv_success = abap_true.
 
 ENDMETHOD.
