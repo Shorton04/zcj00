@@ -1,14 +1,41 @@
+* ====================================================================
+* RICEFW ID.........: 6577
+* TR Number.........: D30K912694
+* Version...........: 1.0
+* Program...........: ZTR_A2R_WBSCJ01
+* Transaction Code..:
+* Author............: RQ28830
+* Date..............: 08.12.2025 -
+* --------------------------------------------------------------------
+* Description.......: Internal Project Cockpit
+* --------------------------------------------------------------------
+* Modification list.:
+* Date      Author    TR Number          Description
+* 12/8/25  RQ28830   D30K912694    Initialized program.
+* ====================================================================
+REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
+
 *----------------------------------------------------------------------*
-* Data Declarations - Screen 200 Fields (moved from SEL)
+* Include files
 *----------------------------------------------------------------------*
-DATA: p_posnr TYPE im_posnr,
-      p_profl TYPE profidproj,
-      p_pspid TYPE ps_spdid,
-      p_prnam TYPE im_prnam,
-      p_gjahr TYPE im_gnjhr,
-      p_post1 TYPE ps_post1,
-      p_verna TYPE ps_verna,
-      p_plsez TYPE ps_plsez_chg,
-      p_prctr TYPE prctr,
-      p_kostl TYPE kostl,
-      p_usr10 TYPE char1.
+INCLUDE ztr_a2r_wbszcj01_top.
+" Selection screen removed - using dynpro screens only
+INCLUDE ztr_a2r_wbszcj01_f01.
+INCLUDE ztr_a2r_wbszcj01_pbo.
+INCLUDE ztr_a2r_wbszcj01_pai.
+
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
+  IF gv_request_type IS INITIAL.
+    gv_request_type = 'A1'.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  CREATE OBJECT go_builder.
+  CALL SCREEN 200.
