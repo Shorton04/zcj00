@@ -1,41 +1,270 @@
-* ====================================================================
-* RICEFW ID.........: 6577
-* TR Number.........: D30K912694
-* Version...........: 1.0
-* Program...........: ZTR_A2R_WBSCJ01
-* Transaction Code..:
-* Author............: RQ28830
-* Date..............: 08.12.2025 -
-* --------------------------------------------------------------------
-* Description.......: Internal Project Cockpit
-* --------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 12/8/25  RQ28830   D30K912694    Initialized program.
-* ====================================================================
-REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
+FORM get_profile_template USING iv_izwek TYPE izwek
+                          CHANGING cv_profl TYPE profidproj
+                                   cv_pspid TYPE ps_spdid.
 
-*----------------------------------------------------------------------*
-* Include files
-*----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbszcj01_top.
-" Selection screen removed - using dynpro screens only
-INCLUDE ztr_a2r_wbszcj01_f01.
-INCLUDE ztr_a2r_wbszcj01_pbo.
-INCLUDE ztr_a2r_wbszcj01_pai.
+  DATA: ls_config TYPE ztb_a2r_conftab1.
 
-*&---------------------------------------------------------------------*
-*& INITIALIZATION
-*&---------------------------------------------------------------------*
-INITIALIZATION.
-  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-  IF gv_request_type IS INITIAL.
-    gv_request_type = 'A1'.
+  SELECT SINGLE * FROM ztb_a2r_conftab1
+    INTO ls_config
+    WHERE izwek = iv_izwek.
+
+  IF sy-subrc = 0.
+    cv_profl = ls_config-profl.
+    cv_pspid = ls_config-pspid.    " CORRECTED: use PSPID not PSPNR
+  ELSE
+    MESSAGE w003.
+    CLEAR: cv_profl, cv_pspid.
+  ENDIF.
+ENDFORM.
+
+
+
+
+
+FORM validate_cost_center USING iv_kostl TYPE kostl
+                                iv_plsez TYPE ps_plsez_chg
+                          CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_csks TYPE csks.
+
+  " Check cost center validity against Finish Date (not sy-datum)
+  SELECT SINGLE * FROM csks
+    INTO ls_csks
+    WHERE kostl = iv_kostl
+      AND datab <= iv_plsez          " Valid from <= Finish date
+      AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
+
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE
+    MESSAGE e005 WITH iv_kostl iv_plsez.  " Cost center not valid for finish date
+    cv_error = gc_x.
+  ENDIF.
+ENDFORM.
+
+
+
+
+FORM validate_profit_center USING iv_prctr TYPE prctr
+                                  iv_plsez TYPE ps_plsez_chg
+                            CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_cepc TYPE cepc.
+
+  " Check profit center validity against Finish Date (not sy-datum)
+  SELECT SINGLE * FROM cepc
+    INTO ls_cepc
+    WHERE prctr = iv_prctr
+      AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
+
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE
+    MESSAGE e007 WITH iv_prctr iv_plsez.  " Profit center not valid for finish date
+    cv_error = gc_x.
+  ENDIF.
+ENDFORM.
+
+
+
+
+FORM populate_header_structure.
+
+  gs_header-posnr = p_posnr.
+  gs_header-prnam = p_prnam.
+  gs_header-post1 = p_post1.              " CORRECT: use POST1 for description
+  gs_header-vernr = p_verna.
+  gs_header-plsez = p_plsez.
+  gs_header-bukrs = gv_bukrs.
+  gs_header-werks = gv_werks.
+  gs_header-prctr = p_prctr.
+  gs_header-kostl = p_kostl.
+  gs_header-izwek = gv_izwek.
+  gs_header-zunifier_proj = p_usr10.
+  gs_header-usr008 = gv_usr008.
+  gs_header-ernam = sy-uname.
+  gs_header-z_reqtype = gv_request_type.
+  gs_header-erdat = sy-datum.
+  gs_header-profl = p_profl.
+  gs_header-z_remarks = gv_z_remarks.      " ADD THIS LINE
+
+ENDFORM.
+
+
+
+
+MODULE status_0200 OUTPUT.
+  SET PF-STATUS 'STATUS_200'.
+  SET TITLEBAR 'TITLE_200'.
+
+  " Make display-only fields non-editable
+  LOOP AT SCREEN.
+    IF screen-group1 = 'DIS'.
+      screen-input = 0.
+      screen-invisible = 0.
+      MODIFY SCREEN.
+    ENDIF.
+
+    " Conditional editability per FDS Table 4.1.4
+    " Finish Date (PLSEZ): Editable for Projects/ESR, NOT editable for Lumpsum
+    IF screen-name = 'P_PLSEZ'.
+      IF gv_izwek = 'LS'.           " Lumpsum
+        screen-input = 0.            " Not editable
+      ELSE.                          " Projects/ESR
+        screen-input = 1.            " Editable
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
+
+    " Profit Center (PRCTR): Editable for Lumpsum ONLY, NOT editable for Projects/ESR
+    IF screen-name = 'P_PRCTR'.
+      IF gv_izwek = 'LS'.           " Lumpsum
+        screen-input = 1.            " Editable
+      ELSE.                          " Projects/ESR
+        screen-input = 0.            " Not editable
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
+
+    " GE Ariba Flag (USR10): NOT editable (FDS Table 4.1.4)
+    IF screen-name = 'P_USR10'.
+      screen-input = 0.              " Not editable
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDMODULE.
+
+
+
+
+METHOD check_approver_matrix.
+
+  DATA: ls_config TYPE ztb_a2r_conftab2.
+
+  SELECT SINGLE * FROM ztb_a2r_conftab2
+    INTO ls_config
+    WHERE bukrs = iv_bukrs
+      AND profl = iv_profl
+      AND z_reqtype = iv_reqtype.
+
+  IF sy-subrc = 0.
+    ev_appr1 = ls_config-zapproval_1.    " Correct field name
+    ev_appr2 = ls_config-zapproval_2.    " Correct field name
+    ev_error_handler = ls_config-zerror_handling.
+
+    " Auto-approval if BOTH approvers blank (FDS Section 4.1.2.1)
+    IF ls_config-zapproval_1 IS INITIAL AND
+       ls_config-zapproval_2 IS INITIAL.
+      ev_auto = 'X'.
+    ELSE.
+      CLEAR ev_auto.
+    ENDIF.
+
+    rv_found = abap_true.
+  ELSE.
+    rv_found = abap_false.
   ENDIF.
 
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
-  CREATE OBJECT go_builder.
-  CALL SCREEN 200.
+ENDMETHOD.
+
+
+
+
+METHOD copy_template_structure.
+
+  DATA: lt_prps  TYPE TABLE OF prps,
+        ls_prps  TYPE prps,
+        ls_wbs   TYPE ztb_a2r_wbsitem,
+        lv_pspnr TYPE ps_pspnr.
+
+  " Get project internal number from template ID
+  SELECT SINGLE pspnr FROM proj
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
+
+  IF sy-subrc = 0.
+    " Get all WBS elements belonging to this project
+    SELECT * FROM prps
+      INTO TABLE lt_prps
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_prps INTO ls_prps.
+        CLEAR ls_wbs.
+
+        ls_wbs-stufe = ls_prps-stufe.
+        ls_wbs-posid = ls_prps-posid.
+        ls_wbs-post1 = ls_prps-post1.
+        ls_wbs-posnr = ls_prps-pspnr.    " CORRECT: POSNR field
+        ls_wbs-kostl = p_kostl.           " ADD: Inherit from header (FDS Table 4.1.6)
+        ls_wbs-imprf = ls_prps-imprf.
+        ls_wbs-prart = ls_prps-prart.
+        ls_wbs-bukrs = ls_prps-pbukr.
+
+        APPEND ls_wbs TO ct_wbs_items.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+ENDMETHOD.
+
+
+
+
+MODULE user_command_0200 INPUT.
+  DATA: lv_ok_code TYPE sy-ucomm.
+
+  lv_ok_code = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE lv_ok_code.
+    " Navigation buttons - bypass validation
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+      
+    WHEN 'EXIT'.
+      LEAVE PROGRAM.
+      
+    WHEN 'CANCEL'.
+      LEAVE TO TRANSACTION 'ZCJ00'.
+
+    " Preview button - no validation
+    WHEN 'PREVIEW'.
+      IF p_pspid IS NOT INITIAL.
+        PERFORM show_template_preview USING p_pspid.
+      ELSE.
+        MESSAGE i011.
+      ENDIF.
+
+    " Action buttons - perform validation
+    WHEN 'NEXT' OR 'ENTER'.
+      " Check mandatory fields
+      IF p_posnr IS INITIAL.
+        MESSAGE e001 WITH 'IM Number'.
+        RETURN.
+      ENDIF.
+      
+      IF p_post1 IS INITIAL.
+        MESSAGE e001 WITH 'Project Description'.
+        RETURN.
+      ENDIF.
+      
+      IF p_verna IS INITIAL.
+        MESSAGE e001 WITH 'Person Responsible'.
+        RETURN.
+      ENDIF.
+      
+      " Perform full validation
+      PERFORM validate_screen1.
+      IF sy-subrc = 0.
+        PERFORM prepare_screen2.
+        CALL SCREEN 100.
+      ENDIF.
+  ENDCASE.
+ENDMODULE.
+
+
+
+
+a
