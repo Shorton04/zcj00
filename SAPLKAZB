@@ -1,0 +1,11 @@
+Step 1: Call standard tcode CJB2, enter the Project Definition, Period = Current Period, Year = Current Year 
+Step 2: If not yet included in CJB2, upon successful creation of Settlement rule, activate SETC status using standard STATUS_CHANGE_INTERN_VB. 
+•	Assign plan values ZAPPROVED_BUDG. Reference standard transaction code CJ40. 
+•	Distribute budget from IM to Level 1 WBS. Reference standard transaction code:IM52 
+o	Assign budget to WBS with flagged budget check field ZBUDGET_CHECK 
+If budget check is not ticked for the WBS, skip this part. Reference standard transaction code: CJ30 
+	Activate BUDG and AVAC status using standard approach STATUS_CHANGE_INTERN_VB 
+•	Release WBS.  
+o	Activates AUC status for WBS with Investment Profile as well in (Level 1 WBS) using standard approach 
+11. Send an email to the requestor that the Project has been approved and created. 
+12. Update custom table ZWBS_HEADER, ZWBS_ITEM using new Workflow item. Process ends. 
