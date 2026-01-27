@@ -1,80 +1,14 @@
-* ====================================================================
-* RICEFW ID.........: 6577
-* TR Number.........: D30K912694
-* Version...........: 1.0
-* Program...........: ZTR_A2R_WBSCJ00
-* Transaction Code..:
-* Author............: RQ28830
-* Date..............: 08.12.2025 -
-* --------------------------------------------------------------------
-* Description.......: Internal Project Cockpit
-* --------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 12/8/25  RQ28830   D30K912694    Initialized program.
-* ====================================================================
-REPORT ZTR_A2R_WBSCJ00 MESSAGE-ID zcj00.
-
 *----------------------------------------------------------------------*
-*                           Includes                                   *
+* Data Declarations - Screen 200 Fields (moved from SEL)
 *----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbscj00_top.
-INCLUDE ztr_a2r_wbscj00_sel.
-INCLUDE ztr_a2r_wbscj00_f01.
-
-
-*&---------------------------------------------------------------------*
-*& INITIALIZATION
-*&---------------------------------------------------------------------*
-INITIALIZATION.
-
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
-
-  DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
-
-  " Get selected request type
-  PERFORM get_request_type CHANGING lv_reqtype.
-
-  " Store request type in memory for next program
-  EXPORT lv_reqtype FROM lv_reqtype TO MEMORY ID 'ZCJ00_REQTYPE'.
-
-  " Route to appropriate program/screen
-  CASE lv_reqtype.
-    WHEN 'A1'.  " Create New Project
-      SUBMIT ztr_a2r_wbscj01 AND RETURN.
-
-    WHEN 'B1'.  " Add CAR
-      MESSAGE i001 WITH 'Request Type B1 not yet implemented'.
-
-    WHEN 'B2'.  " Non-critical change
-      MESSAGE i001 WITH 'Request Type B2 not yet implemented'.
-
-    WHEN 'B3'.  " Critical change
-      MESSAGE i001 WITH 'Request Type B3 not yet implemented'.
-
-    WHEN 'C1'.  " Partial Capitalization
-      MESSAGE i001 WITH 'Request Type C1 not yet implemented'.
-
-    WHEN 'D1'.  " Close WBS
-      MESSAGE i001 WITH 'Request Type D1 not yet implemented'.
-
-    WHEN 'E1'.  " Unclose WBS
-      MESSAGE i001 WITH 'Request Type E1 not yet implemented'.
-
-    WHEN 'F1'.  " Edit Request
-      MESSAGE i001 WITH 'Request Type F1 not yet implemented'.
-
-    WHEN 'G1'.  " WBS Request Reporting
-      "SUBMIT ztr_a2r_wbscj01 AND RETURN.
-      MESSAGE i001 WITH 'Request Type G1 not yet implemented'.
-
-    WHEN OTHERS.
-      MESSAGE e001 WITH lv_reqtype.
-  ENDCASE.
-
-INCLUDE ztr_a2r_wbscj00_user_commani01.
-
-INCLUDE ztr_a2r_wbscj00_status_0100o01.
+DATA: p_posnr TYPE im_posnr,
+      p_profl TYPE profidproj,
+      p_pspid TYPE ps_spdid,
+      p_prnam TYPE im_prnam,
+      p_gjahr TYPE im_gnjhr,
+      p_post1 TYPE ps_post1,
+      p_verna TYPE ps_verna,
+      p_plsez TYPE ps_plsez_chg,
+      p_prctr TYPE prctr,
+      p_kostl TYPE kostl,
+      p_usr10 TYPE char1.
