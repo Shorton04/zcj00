@@ -1,44 +1,368 @@
-PROCESS BEFORE OUTPUT.
-*&SPWIZARD: PBO FLOW LOGIC FOR TABLECONTROL 'TC_WBS'
-  MODULE TC_WBS_CHANGE_TC_ATTR.
-*&SPWIZARD: MODULE TC_WBS_CHANGE_COL_ATTR.
-  LOOP AT   GS_WBS_DISPLAY
-       INTO GS_WBS_DISPLAY
-       WITH CONTROL TC_WBS
-       CURSOR TC_WBS-CURRENT_LINE.
-    MODULE TC_WBS_GET_LINES.
-*&SPWIZARD:   MODULE TC_WBS_CHANGE_FIELD_ATTR
-  ENDLOOP.
+FORM get_bunit_list.
 
-  MODULE status_0100.
-  LOOP AT gt_wbs_display INTO gs_wbs_display
-    WITH CONTROL tc_wbs CURSOR tc_wbs-current_line.
-    MODULE fill_table_control.
-  ENDLOOP.
+  CHECK ok_code IS INITIAL OR ok_code = 'PRJTY' OR ok_code = 'IZWEK'.
+  CHECK NOT lv_proj_type IS INITIAL.
+  CLEAR:ls_list,lt_list_bunit,lv_id,lt_bunit,lv_template,
+        zwbs_proj_tem_tc-profidproj,zwbs_proj_templ-b_unit.
+*  IF lv_proj3 IS NOT INITIAL.
+  IF lv_proj_type = 'TC'.
 
-PROCESS AFTER INPUT.
-*&SPWIZARD: PAI FLOW LOGIC FOR TABLECONTROL 'TC_WBS'
-  LOOP AT GS_WBS_DISPLAY.
-    CHAIN.
-      FIELD GS_WBS_DISPLAY-STUFE.
-      FIELD GS_WBS_DISPLAY-POSID.
-      FIELD GS_WBS_DISPLAY-POST1.
-      FIELD GS_WBS_DISPLAY-KOSTL.
-      FIELD GS_WBS_DISPLAY-ZAPPROVED_BUDG.
-      FIELD GS_WBS_DISPLAY-ZBUDGET_CHECK.
-      FIELD GS_WBS_DISPLAY-IMPRF.
-      FIELD GS_WBS_DISPLAY-PRART.
-      FIELD GS_WBS_DISPLAY-MARK.
-      MODULE TC_WBS_MODIFY ON CHAIN-REQUEST.
-    endchain.
-    FIELD GS_WBS_DISPLAY-POSNR
-      MODULE TC_WBS_MARK ON REQUEST.
-  ENDLOOP.
-  MODULE TC_WBS_USER_COMMAND.
-*&SPWIZARD: MODULE TC_WBS_CHANGE_TC_ATTR.
-*&SPWIZARD: MODULE TC_WBS_CHANGE_COL_ATTR.
+    SELECT b~profidproj b~profi_txt
+                        INTO TABLE lt_list_bunit
+                        FROM zwbs_proj_tem_tc AS a INNER JOIN tcj4t AS b
+                        ON a~profidproj = b~profidproj
+                        WHERE
+                              a~proj_type = lv_proj_type AND
+                              b~spras = sy-langu.
 
-  MODULE user_command_0100.
-  LOOP AT gt_wbs_display.
-    MODULE modify_table_control.
-  ENDLOOP.
+    SORT lt_list_bunit BY key.
+    lv_id = 'ZWBS_PROJ_TEM_TC-PROFIDPROJ'.
+    DELETE ADJACENT DUPLICATES FROM lt_list_bunit COMPARING key.
+
+    IF ok_code = 'IZWEK'.
+*      CALL FUNCTION 'CONVERSION_EXIT_POSNR_OUTPUT'
+*        EXPORTING
+*          input  = zwbs_proj_tem_tc-izwek
+*        IMPORTING
+*          output = gv_posnr.
+
+      SELECT SINGLE izwek, bukrs INTO @DATA(ls_impr) FROM impr
+         WHERE posid = @zwbs_proj_tem_tc-izwek.
+
+      SELECT SINGLE b~profidproj b~profi_txt
+                          INTO  ls_list_bunit1
+                          FROM zwbs_proj_tem_tc AS a INNER JOIN tcj4t AS b
+                          ON a~profidproj = b~profidproj
+                          WHERE a~izwek =  ls_impr-izwek AND
+                                a~vbukr =  ls_impr-bukrs AND
+                                a~proj_type = lv_proj_type AND
+                                b~spras = sy-langu.
+      IF sy-subrc = 0.
+        lv_profid = zwbs_proj_tem_tc-profidproj = ls_list_bunit1-key.
+      ELSE.
+        SELECT SINGLE b~profidproj b~profi_txt
+                         INTO  ls_list_bunit1
+                         FROM zwbs_proj_tem_tc AS a INNER JOIN tcj4t AS b
+                         ON a~profidproj = b~profidproj
+                         WHERE a~izwek = '*' AND
+                               a~vbukr =  ls_impr-bukrs AND
+                               a~proj_type = lv_proj_type AND
+                               b~spras = sy-langu.
+        IF sy-subrc = 0.
+          lv_profid = zwbs_proj_tem_tc-profidproj = ls_list_bunit1-key.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ELSE.
+    SELECT DISTINCT b~b_unit b~bustxt b~bultxt
+                    b~div " Changes for EiCR - 729491
+                    INTO TABLE lt_bunit
+                    FROM zwbs_proj_templ AS a INNER JOIN t9f15 AS b
+                    ON a~b_unit = b~b_unit
+                    WHERE a~proj_type = lv_proj_type AND
+                          b~gjahr     = sy-datum+0(4).
+
+    LOOP AT lt_bunit INTO DATA(ls_bunit).
+      ls_list-key = ls_bunit-b_unit.
+      " Begin of Changes for EiCR - 729491
+*    CONCATENATE ls_bunit-bustxt ls_bunit-bultxt INTO ls_list-text
+*                                                SEPARATED BY '/'.
+      CONCATENATE ls_bunit-bultxt ls_bunit-b_unit INTO ls_list-text
+                                                  SEPARATED BY ' - '.
+      " End of Changes for EiCR - 729491
+      APPEND ls_list TO lt_list_bunit.
+      CLEAR ls_list.
+    ENDLOOP.
+
+    SORT lt_list_bunit BY text. " Changes for EiCR - 729491
+    lv_id = 'ZWBS_PROJ_TEMPL-B_UNIT'.
+  ENDIF.
+*Set Default Values
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id              = lv_id
+      values          = lt_list_bunit[]
+    EXCEPTIONS
+      id_illegal_name = 1
+      OTHERS          = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+ENDFORM.                    " GET_BUNIT_LIST
+*&---------------------------------------------------------------------*
+FORM get_tree_list.
+
+  CHECK ok_code = 'BUNIT' OR ok_code = 'PRJTY' OR ok_code = 'IZWEK'.
+
+  CLEAR:ls_list,lt_list,lv_template,lv_id,lt_project.
+
+  IF ok_code = 'BUNIT' OR ok_code = 'IZWEK'.
+*  IF lv_proj3 IS NOT INITIAL.
+    IF lv_proj_type = 'TC'.
+      CHECK NOT lv_profid IS INITIAL.
+      SELECT b~pspid b~post1 INTO TABLE lt_project
+                             FROM zwbs_proj_tem_tc AS a INNER JOIN proj AS
+                             b
+                             ON a~project = b~pspid
+                             WHERE a~proj_type  = lv_proj_type AND
+                                   a~profidproj = lv_profid.
+    ELSE.
+      CHECK NOT lv_bunit IS INITIAL.
+*    CLEAR:ls_list,lt_list,lv_template,lv_id,lt_project.
+      SELECT b~pspid b~post1 INTO TABLE lt_project
+                             FROM zwbs_proj_templ AS a INNER JOIN proj AS b
+                             ON a~project = b~pspid
+                             WHERE a~proj_type = lv_proj_type AND
+                                   a~b_unit    = lv_bunit.
+    ENDIF.
+
+    LOOP AT lt_project INTO ls_project.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = ls_project-pspid
+        IMPORTING
+          output = ls_list-key.
+      ls_list-text = ls_project-post1.
+      APPEND ls_list TO lt_list.
+    ENDLOOP.
+  ENDIF.
+*  IF lv_proj_type = 'TC'.
+*    READ TABLE lt_list[] INTO ls_list INDEX 1.
+*    IF sy-subrc = 0.
+*      lv_template = ls_list-key.
+*    ENDIF.
+*  ENDIF.
+  IF ok_code = 'IZWEK'.
+    SELECT SINGLE izwek INTO @DATA(lv_izwek) FROM impr
+       WHERE posid = @zwbs_proj_tem_tc-izwek.
+
+    SELECT SINGLE izwek, profidproj, project
+                        INTO  @DATA(ls_proj_tem_tc)
+                        FROM zwbs_proj_tem_tc
+                        WHERE izwek =  @lv_izwek
+                          AND proj_type = @lv_proj_type
+                          AND profidproj = @lv_profid.
+    IF sy-subrc = 0.
+      lv_template = zwbs_proj_tem_tc-project = ls_proj_tem_tc-project.
+    ELSE.
+      SELECT SINGLE izwek, profidproj, project
+                        INTO @ls_proj_tem_tc
+                        FROM zwbs_proj_tem_tc
+                        WHERE izwek =  '*'
+                          AND proj_type = @lv_proj_type
+                          AND profidproj = @lv_profid.
+      IF sy-subrc = 0.
+        lv_template = zwbs_proj_tem_tc-project = ls_proj_tem_tc-project.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  lv_id = 'LV_TEMPLATE'.
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id              = lv_id
+      values          = lt_list[]
+    EXCEPTIONS
+      id_illegal_name = 1
+      OTHERS          = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+ENDFORM.                    " GET_TREE_LIST
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_TREE_STRUCTURE
+*&---------------------------------------------------------------------*
+FORM show_tree_structure.
+
+  IF lo_proj_tree IS INITIAL.
+    CREATE OBJECT lo_cont_proj
+      EXPORTING
+        container_name = 'PROJ_CONTROL'.
+
+    ls_hierarchy_header-heading = 'Project Structure: Description'.
+    ls_hierarchy_header-tooltip = 'Project Structure: Description'.
+    ls_hierarchy_header-width   = 40.
+
+    CREATE OBJECT lo_proj_tree
+      EXPORTING
+        parent                      = lo_cont_proj
+        node_selection_mode         = 0
+        item_selection              = space
+        hierarchy_column_name       = lc_hierarchy_short_text
+        hierarchy_header            = ls_hierarchy_header
+      EXCEPTIONS
+        lifetime_error              = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        illegal_node_selection_mode = 4
+        failed                      = 5
+        illegal_column_name         = 6.
+    IF NOT sy-subrc IS INITIAL.
+      MESSAGE a000(tree_control_msg).
+*   Fehler beim Aufruf einer Methode des Tree Controls
+    ENDIF.
+
+    CALL METHOD lo_proj_tree->add_column
+      EXPORTING
+        name           = lc_hierarchy_technical_key
+        width          = 30
+        alignment      = cl_gui_column_tree=>align_left
+        header_text    = 'Identification'
+        header_tooltip = 'Identification'.
+
+***********************************************************************
+* The following lines are a workaround for a bug in the CFW
+* In future they will be obsolete !!!!!
+***********************************************************************
+    CALL METHOD lo_proj_tree->set_alignment
+      EXPORTING
+        alignment = 15.
+  ENDIF.
+
+  IF NOT lo_proj_tree IS INITIAL.
+    CALL FUNCTION 'CNPB_H_COLUMNS_TOGGLE'
+      IMPORTING
+        et_treeitm_u = lt_treeitm_u.
+
+    CALL METHOD lo_proj_tree->update_nodes_and_items
+      EXPORTING
+        node_table                     = lt_treev_node_u
+        item_table                     = lt_treeitm_u
+        item_table_structure_name      = 'CNPB_H_TREEITM_UPD'
+      EXCEPTIONS
+        failed                         = 1
+        cntl_system_error              = 2
+        error_in_tables                = 3
+        dp_error                       = 4
+        table_structure_name_not_found = 5.
+
+    CALL METHOD lo_proj_tree->hierarchy_header_set_text
+      EXPORTING
+        text              = 'Project Structure:Description'
+      EXCEPTIONS
+        failed            = 1
+        cntl_system_error = 2.
+
+    CALL METHOD lo_proj_tree->column_set_heading_text
+      EXPORTING
+        column_name       = lc_hierarchy_technical_key
+        text              = 'Identification'
+      EXCEPTIONS
+        failed            = 1
+        column_not_found  = 2
+        hierarchy_column  = 3
+        cntl_system_error = 4.
+  ENDIF.                             "tree_control not initial
+
+  IF ok_code = 'TREE' OR ok_code = 'ACTION' OR ok_code = 'IZWEK'.
+    CLEAR:ls_proj,ls_objects_in_hierarchy,gt_treeitm,gt_treev_node,
+          gs_objects_in_tree.
+
+    CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
+
+    SELECT SINGLE * FROM proj INTO ls_proj WHERE pspid = lv_template.
+
+    CHECK sy-subrc = 0.
+
+*  IF lv_proj3 IS NOT INITIAL.
+    IF lv_proj_type = 'TC'.
+      CALL FUNCTION 'CONVERSION_EXIT_POSNR_OUTPUT'
+        EXPORTING
+          input  = zwbs_proj_tem_tc-izwek
+        IMPORTING
+          output = gv_posnr.
+
+      SELECT SINGLE bukrs werks INTO (lv_vbukr, lv_werks)
+        FROM impr WHERE posid = gv_posnr.
+
+      IF sy-subrc NE 0.
+
+        SELECT SINGLE bukrs werks INTO (lv_vbukr, lv_werks)
+          FROM impr WHERE posid = zwbs_proj_tem_tc-izwek.
+      ENDIF.
+*      lv_vbukr = ls_proj-vbukr.
+*      lv_werks = ls_proj-werks.
+    ENDIF.
+
+    ls_objects_in_hierarchy-proj = abap_true.
+    ls_objects_in_hierarchy-prps = abap_true.
+    ls_objects_in_hierarchy-pstx = abap_true.
+
+    IF ok_code = 'TREE' OR ok_code = 'IZWEK'..
+      CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
+        EXPORTING
+          i_objects_in_hierarchy = ls_objects_in_hierarchy
+          i_vsnmr                = ''
+          i_pspid                = lv_template
+          i_aufnr                = ''
+          i_flg_enqueue          = lv_enqueue
+          i_expand_levels        = 06
+          i_drag_drop_handle     = lv_drag_drop_handle
+          i_hier_col_is_key      = lv_hier_col_is_key
+        IMPORTING
+          et_treeitm             = gt_treeitm
+          et_treev_node          = gt_treev_node
+          e_flg_enqueue          = lv_enqueue
+          e_objects_in_hierarchy = gs_objects_in_tree
+        EXCEPTIONS
+          OTHERS                 = 1.
+      IF NOT sy-subrc IS INITIAL.
+        EXIT.
+      ENDIF.
+    ENDIF.
+
+    CALL METHOD lo_proj_tree->delete_all_nodes.
+    CALL METHOD lo_proj_tree->hierarchy_header_set_text
+      EXPORTING
+        text              = 'Project Structure:Description'
+      EXCEPTIONS
+        failed            = 1
+        cntl_system_error = 2.
+
+    CALL METHOD lo_proj_tree->add_nodes_and_items
+      EXPORTING
+        node_table                     = gt_treev_node
+        item_table                     = gt_treeitm
+        item_table_structure_name      = 'CNPB_H_TREEITM'
+      EXCEPTIONS
+        failed                         = 1
+        cntl_system_error              = 3
+        error_in_tables                = 4
+        dp_error                       = 5
+        table_structure_name_not_found = 6.
+    CALL METHOD lo_proj_tree->expand_root_nodes
+      EXPORTING
+        level_count         = 0
+        expand_subtree      = space
+      EXCEPTIONS
+        failed              = 1
+        illegal_level_count = 2
+        cntl_system_error   = 3.
+
+    CALL METHOD lo_proj_tree->hierarchy_header_set_width
+      EXPORTING
+        width             = 40
+        width_pix         = space
+      EXCEPTIONS
+        failed            = 1
+        cntl_system_error = 2.
+    CALL METHOD lo_proj_tree->column_set_width
+      EXPORTING
+        column_name       = lc_hierarchy_technical_key
+        width             = 21
+        width_pix         = space
+      EXCEPTIONS
+        failed            = 1
+        column_not_found  = 2
+        hierarchy_column  = 3
+        cntl_system_error = 4.
+  ELSEIF ok_code = 'PRJTY' OR ok_code = 'BUNIT'.
+    CLEAR:ls_proj,ls_objects_in_hierarchy,gt_treeitm,gt_treev_node,
+          gs_objects_in_tree.
+    CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
+    CALL METHOD lo_proj_tree->delete_all_nodes.
+  ENDIF.
+
+ENDFORM.                    " SHOW_TREE_STRUCTURE
