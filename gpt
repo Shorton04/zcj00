@@ -1,28 +1,170 @@
-1. Project Creation
-	•	Initiate New Project: Users initiate the creation of a new project by selecting the request type “Create New Project” (A1). This triggers the process of establishing a WBS (Work Breakdown Structure) hierarchy.
-	•	Default Values: The system auto-populates default values such as the Project Profile and Template based on the selected Investment Number.
-	•	Data Entry: Users enter specific project details (e.g., project description, person responsible, finish date, profit center, cost center).
-	•	System Validation: The system performs validations to ensure data integrity, such as verifying if cost centers and profit centers are valid for the current year.
-	•	Request Creation: Once validated, the request is saved as a draft, awaiting further actions (e.g., submission).
+*&———————————————————————*
+*& Include          ZTR_A2R_WBSZCJ01_TOP
+*&———————————————————————*
+TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
-2. Update Plan Values
-	•	Plan Values Assignment: After the project’s details are entered, the system assigns plan values (budgets) to the project, ensuring they align with the financial parameters set by the organization.
-	•	Automatic Population: If the investment program allows, the system auto-populates plan values from templates or investment reasons.
+*–––––––––––––––––––––––––––––––––––*
 
-3. Update Budget
-	•	Budget Distribution: The system distributes the budget from the Investment Management (IM) level to the 1st level of WBS.
-	•	Budget Check: Users ensure the budget for the first level WBS does not exceed the available IM budget, using SAP function modules like IM_CHECK_WBS_ASSIGNMENT and IM_AVAILABILITY_CHECK.
-	•	Budget Validation: The system performs validation to ensure the assigned budget is within limits and flags any discrepancies for review.
+- Type Definitions
+  *–––––––––––––––––––––––––––––––––––*
+  TYPES: BEGIN OF ty_wbs_display,
+  stufe          TYPE ps_stufe,
+  posid          TYPE ps_posid,
+  post1          TYPE ps_post1,
+  kostl          TYPE kostl,
+  posnr          TYPE ps_pspnr,
+  zapproved_budg TYPE bpge-wlges,
+  zbudget_check  TYPE char1,
+  bukrs          TYPE bukrs,
+  imprf          TYPE im_profil,
+  prart          TYPE ps_prart,
+  mark           TYPE char1,
+  END OF ty_wbs_display.
 
-4. Settlement Rule Creation
-	•	Create Settlement Rule: A settlement rule is generated for the WBS element based on the project’s parameters.
-	•	Activate System Status: After the settlement rule is created, the system activates the appropriate statuses (e.g., SETC for Capitalized).
+*–––––––––––––––––––––––––––––––––––*
 
-5. Workflow
-	•	Approval Workflow: Once the project request is submitted, it triggers a workflow for approval based on the approval matrix defined in the system.
-	•	Status Tracking: The request status is updated through the workflow (e.g., draft, pending approval, approved, rejected).
-	•	Error Handling: If the workflow encounters errors, the request is either rejected or sent back for amendments.
+- Tracking Variables
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: gv_posnr_old TYPE im_posnr.
 
-6. Report
-	•	Generate Report: A report is generated to provide details on the project request, including the WBS elements, budget, and any updates made during the project creation process.
-	•	WBS Request Reporting: The report is based on data from custom tables (e.g., ZTB_A2R_WBSHDR, ZTB_A2R_WBSITEM), which store all project-related information and the status of the WBS elements.
+*–––––––––––––––––––––––––––––––––––*
+
+- Selection Screen
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: p_posnr TYPE im_posnr,
+  p_profl TYPE profidproj,
+  p_pspnr TYPE ps_ispsp,
+  p_prnam TYPE im_prnam,
+  p_gjahr TYPE im_gnjhr,
+  p_post1 TYPE ps_post1,
+  p_verna TYPE ps_verna,
+  p_plsez TYPE ps_plsez_chg,
+  p_prctr TYPE prctr,
+  p_kostl TYPE kostl,
+  p_usr10 TYPE char1.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Tree Control Objects for Preview (Screen 200)
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: lo_cont_preview TYPE REF TO cl_gui_custom_container,
+  lo_tree_preview TYPE REF TO cl_gui_column_tree,
+  lv_tree_loaded  TYPE abap_bool.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Tree Control Data Structures
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: ls_hierarchy_header TYPE treev_hhdr,
+  gt_treev_node       TYPE TABLE OF treev_node,
+  gt_treeitm          TYPE TABLE OF cnpb_h_treeitm,
+  ls_objects_in_hierarchy TYPE cnpb_h_objects_in_hierarchy,
+  gs_objects_in_tree  TYPE cnpb_h_objects_in_hierarchy.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Constants for Tree
+  *–––––––––––––––––––––––––––––––––––*
+  CONSTANTS: lc_hierarchy_short_text  TYPE char12 VALUE ‘SHORT_TEXT’,
+  lc_hierarchy_technical_key TYPE char12 VALUE ‘TECHN_KEY’.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Preview Data (fallback if PS functions not available)
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: gt_preview_data TYPE TABLE OF prps,
+  gs_preview_data TYPE prps.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Custom Container Name
+  *–––––––––––––––––––––––––––––––––––*
+  CONSTANTS: gc_tree_container TYPE scrfname VALUE ‘CC_TREE_PREVIEW’.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Global Variables - Screen 2
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: gs_header    TYPE ztb_a2r_wbshdr,
+  gt_wbs_items TYPE TABLE OF ztb_a2r_wbsitem,
+  gs_wbs_item  TYPE ztb_a2r_wbsitem,
+  gv_z_remarks TYPE char255.
+
+DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
+gs_wbs_display TYPE ty_wbs_display.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Global Variables - Additional IM Data
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: gv_bukrs            TYPE bukrs,
+  gv_werks            TYPE werks_d,
+  gv_izwek            TYPE izwek,
+  gv_usr008           TYPE dats,
+  gv_available_budget TYPE bpge-wlges,
+  gv_request_type     TYPE ztb_a2r_reqtype-z_reqtype,
+  gv_request_number   TYPE char10.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Global Objects
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: go_builder TYPE REF TO zcl_a2r_wbs_builder.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Constants
+  *–––––––––––––––––––––––––––––––––––*
+  CONSTANTS: gc_x TYPE char1 VALUE ‘X’.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Table Control
+  *–––––––––––––––––––––––––––––––––––*
+  *CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 100.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Screen 100 Buttons
+  *–––––––––––––––––––––––––––––––––––*
+
+*–––––––––––––––––––––––––––––––––––*
+
+- CORRECTED: Work structure for internal use (aligned with ZTB table)
+  *–––––––––––––––––––––––––––––––––––*
+- This structure is ONLY used internally for data conversion
+- It should NOT be mixed with GT_WBS_DISPLAY
+  *–––––––––––––––––––––––––––––––––––*
+  TYPES: BEGIN OF ts_items,
+  select        TYPE flag,
+  stufe         TYPE ps_stufe,
+  posid         TYPE ps_posid,
+  post1         TYPE ps_post1,
+  pspid         TYPE ps_pspid,
+  pspnr         TYPE ps_pspnr,
+  kostl         TYPE kostl,
+  wert2         TYPE bpge-wlges,
+  zbudget_check TYPE char1,
+  bukrs         TYPE bukrs,
+  imprf         TYPE im_profil,
+  prart         TYPE ps_prart,
+  waers         TYPE waers,
+  “ Additional fields from original ts_items
+  werks_name    TYPE name1,
+  asset_box     TYPE zasset_box,
+  zrevstr_name  TYPE zde_de_revstr,
+  zscopcha_name TYPE zde_a2r_de_scopcha,
+  zsynergy_type TYPE zde_a2r_synergyid,
+  maktx         TYPE maktx,
+  long_text     TYPE flag,
+  updkz         TYPE updkz_d,
+  status        TYPE flag,
+  stat_curr     TYPE j_txt04,
+  END OF ts_items.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- Work variable - USE THIS ONLY for internal conversions
+- DO NOT mix this with GT_WBS_DISPLAY operations
+  *–––––––––––––––––––––––––––––––––––*
+  DATA: ls_items TYPE ts_items.
