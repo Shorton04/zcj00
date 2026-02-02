@@ -6,37 +6,37 @@
 *&———————————————————————*
 FORM f4_im_number CHANGING cv_posnr TYPE im_posnr.
 
-DATA: lt_impr   TYPE TABLE OF impr,
-lt_return TYPE TABLE OF ddshretval,
-ls_return TYPE ddshretval.
+  DATA: lt_impr   TYPE TABLE OF impr,
+        lt_return TYPE TABLE OF ddshretval,
+        ls_return TYPE ddshretval.
 
-" Get list of IM positions
-SELECT posnr prnam gjahr FROM impr
-INTO CORRESPONDING FIELDS OF TABLE lt_impr
-UP TO 500 ROWS.
+  " Get list of IM positions
+  SELECT posnr prnam gjahr FROM impr
+  INTO CORRESPONDING FIELDS OF TABLE lt_impr
+  UP TO 500 ROWS.
 
-" Display F4 help
-CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
-EXPORTING
-retfield        = 'POSNR'
-dynpprog        = sy-repid
-dynpnr          = sy-dynnr
-dynprofield     = 'P_POSNR'
-value_org       = 'S'
-TABLES
-value_tab       = lt_impr
-return_tab      = lt_return
-EXCEPTIONS
-parameter_error = 1
-no_values_found = 2
-OTHERS          = 3.
+  " Display F4 help
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'POSNR'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_POSNR'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_impr
+      return_tab      = lt_return
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
 
-IF sy-subrc = 0.
-READ TABLE lt_return INTO ls_return INDEX 1.
-IF sy-subrc = 0.
-cv_posnr = ls_return-fieldval.
-ENDIF.
-ENDIF.
+  IF sy-subrc = 0.
+    READ TABLE lt_return INTO ls_return INDEX 1.
+    IF sy-subrc = 0.
+      cv_posnr = ls_return-fieldval.
+    ENDIF.
+  ENDIF.
 
 ENDFORM.
 
@@ -45,43 +45,43 @@ ENDFORM.
 *&———————————————————————*
 FORM get_im_data USING iv_posnr TYPE im_posnr.
 
-DATA: ls_impr TYPE impr.
+  DATA: ls_impr TYPE impr.
 
-SELECT SINGLE * FROM impr
-INTO ls_impr
-WHERE posnr = iv_posnr.
+  SELECT SINGLE * FROM impr
+  INTO ls_impr
+  WHERE posnr = iv_posnr.
 
-IF sy-subrc = 0.
-" Populate fields from IM
-p_prnam = ls_impr-prnam.
-p_gjahr = ls_impr-gjahr.
-p_prctr = ls_impr-prctr.
-p_kostl = ls_impr-kostl.
+  IF sy-subrc = 0.
+    " Populate fields from IM
+    p_prnam = ls_impr-prnam.
+    p_gjahr = ls_impr-gjahr.
+    p_prctr = ls_impr-prctr.
+    p_kostl = ls_impr-kostl.
 
-```
-" Store for Screen 2
-gv_bukrs = ls_impr-bukrs.
-gv_werks = ls_impr-werks.
-gv_izwek = ls_impr-izwek.
-gv_usr008 = ls_impr-usr08.
 
-" Get Project Profile and Template
-PERFORM get_profile_template USING ls_impr-izwek
-                             CHANGING p_profl p_pspnr.
+    " Store for Screen 2
+    gv_bukrs = ls_impr-bukrs.
+    gv_werks = ls_impr-werks.
+    gv_izwek = ls_impr-izwek.
+    gv_usr008 = ls_impr-usr08.
 
-" Check GE Ariba flag
-PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
+    " Get Project Profile and Template
+    PERFORM get_profile_template USING ls_impr-izwek
+                                 CHANGING p_profl p_pspnr.
 
-" Set finish date for lumpsum
-IF ls_impr-izwek = 'LS'.
-  p_plsez = sy-datum.
-  p_plsez+4(4) = '1231'. " Last day of year
-ENDIF.
-```
+    " Check GE Ariba flag
+    PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
 
-ELSE.
-MESSAGE e002 WITH iv_posnr. " IM Number not found
-ENDIF.
+    " Set finish date for lumpsum
+    IF ls_impr-izwek = 'LS'.
+      p_plsez = sy-datum.
+      p_plsez+4(4) = '1231'. " Last day of year
+    ENDIF.
+
+
+  ELSE.
+    MESSAGE e002 WITH iv_posnr. " IM Number not found
+  ENDIF.
 
 ENDFORM.
 
@@ -92,24 +92,24 @@ FORM get_profile_template USING iv_izwek TYPE izwek
 CHANGING cv_profl TYPE profidproj
 cv_pspnr TYPE ps_ispsp.
 
-" CORRECTED: Using exact field names from SE11
-" Table: ZTB_A2R_CONFTAB1
-" Fields: MANDT, IZWEK, Z_STAGE, PROFL, PSPNR
+  " CORRECTED: Using exact field names from SE11
+  " Table: ZTB_A2R_CONFTAB1
+  " Fields: MANDT, IZWEK, Z_STAGE, PROFL, PSPNR
 
-DATA: ls_config TYPE ztb_a2r_conftab1.
+  DATA: ls_config TYPE ztb_a2r_conftab1.
 
-" Query using correct field name IZWEK
-SELECT SINGLE * FROM ztb_a2r_conftab1
-INTO ls_config
-WHERE izwek = iv_izwek.
+  " Query using correct field name IZWEK
+  SELECT SINGLE * FROM ztb_a2r_conftab1
+  INTO ls_config
+  WHERE izwek = iv_izwek.
 
-IF sy-subrc = 0.
-cv_profl = ls_config-profl.
-cv_pspnr = ls_config-pspnr.
-ELSE.
-MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
-CLEAR: cv_profl, cv_pspnr.
-ENDIF.
+  IF sy-subrc = 0.
+    cv_profl = ls_config-profl.
+    cv_pspnr = ls_config-pspnr.
+  ELSE.
+    MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
+    CLEAR: cv_profl, cv_pspnr.
+  ENDIF.
 ENDFORM.
 
 *&———————————————————————*
@@ -118,13 +118,13 @@ ENDFORM.
 FORM check_ge_ariba USING is_impr TYPE impr
 CHANGING cv_flag TYPE char1.
 
-" Check if project management field = GE (Global Engineering)
-" This is a placeholder - adjust based on actual IM field
-IF is_impr-usr10 = 'GE'.
-cv_flag = gc_x.
-ELSE.
-CLEAR cv_flag.
-ENDIF.
+  " Check if project management field = GE (Global Engineering)
+  " This is a placeholder - adjust based on actual IM field
+  IF is_impr-usr10 = 'GE'.
+    cv_flag = gc_x.
+  ELSE.
+    CLEAR cv_flag.
+  ENDIF.
 
 ENDFORM.
 
@@ -133,27 +133,27 @@ ENDFORM.
 *&———————————————————————*
 FORM validate_screen1.
 
-DATA: lv_error TYPE abap_bool.
+  DATA: lv_error TYPE abap_bool.
 
-" Cost Center validation
-PERFORM validate_cost_center USING p_kostl p_plsez
-CHANGING lv_error.
+  " Cost Center validation
+  PERFORM validate_cost_center USING p_kostl p_plsez
+  CHANGING lv_error.
 
-" Profit Center validation
-PERFORM validate_profit_center USING p_prctr p_plsez
-CHANGING lv_error.
+  " Profit Center validation
+  PERFORM validate_profit_center USING p_prctr p_plsez
+  CHANGING lv_error.
 
-" CC to PC assignment
-PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
-CHANGING lv_error.
+  " CC to PC assignment
+  PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
+  CHANGING lv_error.
 
-" FR Unit validation
-PERFORM validate_fr_unit USING p_posnr p_prctr
-CHANGING lv_error.
+  " FR Unit validation
+  PERFORM validate_fr_unit USING p_posnr p_prctr
+  CHANGING lv_error.
 
-IF lv_error = abap_true.
-MESSAGE e004. " Validation errors found
-ENDIF.
+  IF lv_error = abap_true.
+    MESSAGE e004. " Validation errors found
+  ENDIF.
 
 ENDFORM.
 
@@ -164,21 +164,21 @@ FORM validate_cost_center USING iv_kostl TYPE kostl
 iv_plsez TYPE ps_plsez_chg
 CHANGING cv_error TYPE abap_bool.
 
-DATA: ls_csks TYPE csks.
+  DATA: ls_csks TYPE csks.
 
-" Check cost center validity against Finish Date (not sy-datum)
-SELECT SINGLE * FROM csks
-INTO ls_csks
-WHERE kostl = iv_kostl
-AND datab <= iv_plsez          " Valid from <= Finish date
-AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
+  " Check cost center validity against Finish Date (not sy-datum)
+  SELECT SINGLE * FROM csks
+  INTO ls_csks
+  WHERE kostl = iv_kostl
+  AND datab <= iv_plsez          " Valid from <= Finish date
+  AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
 
-IF sy-subrc = 0.
-CLEAR cv_error.
-ELSE.
-MESSAGE e005 WITH iv_kostl iv_plsez.  " Cost center not valid for finish date
-cv_error = gc_x.
-ENDIF.
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e005 WITH iv_kostl iv_plsez.  " Cost center not valid for finish date
+    cv_error = gc_x.
+  ENDIF.
 ENDFORM.
 
 *&———————————————————————*
@@ -188,20 +188,20 @@ FORM validate_profit_center USING iv_prctr TYPE prctr
 iv_plsez TYPE ps_plsez_chg
 CHANGING cv_error TYPE abap_bool.
 
-DATA: ls_cepc TYPE cepc.
+  DATA: ls_cepc TYPE cepc.
 
-" Check profit center validity against Finish Date (not sy-datum)
-SELECT SINGLE * FROM cepc
-INTO ls_cepc
-WHERE prctr = iv_prctr
-AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
+  " Check profit center validity against Finish Date (not sy-datum)
+  SELECT SINGLE * FROM cepc
+  INTO ls_cepc
+  WHERE prctr = iv_prctr
+  AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
 
-IF sy-subrc = 0.
-CLEAR cv_error.
-ELSE.
-MESSAGE e007 WITH iv_prctr iv_plsez.  " Profit center not valid for finish date
-cv_error = gc_x.
-ENDIF.
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e007 WITH iv_prctr iv_plsez.  " Profit center not valid for finish date
+    cv_error = gc_x.
+  ENDIF.
 ENDFORM.
 
 *&———————————————————————*
@@ -211,28 +211,28 @@ FORM validate_cc_pc_assignment USING iv_kostl TYPE kostl
 iv_prctr TYPE prctr
 CHANGING cv_error TYPE abap_bool.
 
-DATA: ls_csks TYPE csks,
-ls_cepc TYPE cepc.
+  DATA: ls_csks TYPE csks,
+        ls_cepc TYPE cepc.
 
-SELECT SINGLE * FROM csks
-INTO ls_csks
-WHERE kostl = iv_kostl.
+  SELECT SINGLE * FROM csks
+  INTO ls_csks
+  WHERE kostl = iv_kostl.
 
-IF ls_csks-prctr IS INITIAL.
-MESSAGE e009 WITH iv_kostl. " CC has no PC assigned
-cv_error = gc_x.
-RETURN.
-ENDIF.
+  IF ls_csks-prctr IS INITIAL.
+    MESSAGE e009 WITH iv_kostl. " CC has no PC assigned
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
 
-SELECT SINGLE * FROM cepc
-INTO ls_cepc
-WHERE prctr = iv_prctr.
+  SELECT SINGLE * FROM cepc
+  INTO ls_cepc
+  WHERE prctr = iv_prctr.
 
-IF ls_cepc-bukrs IS NOT INITIAL AND
-ls_cepc-bukrs NE ls_csks-bukrs.
-MESSAGE e010. " Company codes do not match
-cv_error = gc_x.
-ENDIF.
+  IF ls_cepc-bukrs IS NOT INITIAL AND
+  ls_cepc-bukrs NE ls_csks-bukrs.
+    MESSAGE e010. " Company codes do not match
+    cv_error = gc_x.
+  ENDIF.
 
 ENDFORM.
 
@@ -243,9 +243,9 @@ FORM validate_fr_unit USING iv_posnr TYPE im_posnr
 iv_prctr TYPE prctr
 CHANGING cv_error TYPE abap_bool.
 
-" Placeholder for FR Unit validation
-" Implement based on actual custom tables
-" Reference: Table ZTXCA_ORG01
+  " Placeholder for FR Unit validation
+  " Implement based on actual custom tables
+  " Reference: Table ZTXCA_ORG01
 
 ENDFORM.
 
@@ -254,38 +254,38 @@ ENDFORM.
 *&———————————————————————*
 FORM show_template_preview USING iv_pspnr TYPE ps_ispsp.
 
-DATA: lt_prps TYPE TABLE OF prps,
-lv_pspnr TYPE ps_pspnr.
+  DATA: lt_prps  TYPE TABLE OF prps,
+        lv_pspnr TYPE ps_pspnr.
 
-" Get project internal number
-SELECT SINGLE pspnr FROM proj
-INTO lv_pspnr
-WHERE pspid = iv_pspnr.
+  " Get project internal number
+  SELECT SINGLE pspnr FROM proj
+  INTO lv_pspnr
+  WHERE pspid = iv_pspnr.
 
-IF sy-subrc = 0.
-" Get WBS elements
-SELECT * FROM prps
-INTO TABLE lt_prps
-WHERE psphi = lv_pspnr
-ORDER BY stufe posid.
+  IF sy-subrc = 0.
+    " Get WBS elements
+    SELECT * FROM prps
+    INTO TABLE lt_prps
+    WHERE psphi = lv_pspnr
+    ORDER BY stufe posid.
 
-```
-IF sy-subrc = 0.
-  CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
-    EXPORTING
-      i_title       = 'Project Template Preview'
-      i_tabname     = 'PRPS'
-    TABLES
-      t_outtab      = lt_prps
-    EXCEPTIONS
-      program_error = 1
-      OTHERS        = 2.
-ENDIF.
-```
 
-ELSE.
-MESSAGE i011 WITH iv_pspnr. " Template not found
-ENDIF.
+    IF sy-subrc = 0.
+      CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+        EXPORTING
+          i_title       = 'Project Template Preview'
+          i_tabname     = 'PRPS'
+        TABLES
+          t_outtab      = lt_prps
+        EXCEPTIONS
+          program_error = 1
+          OTHERS        = 2.
+    ENDIF.
+
+
+  ELSE.
+    MESSAGE i011 WITH iv_pspnr. " Template not found
+  ENDIF.
 
 ENDFORM.
 
@@ -295,30 +295,30 @@ ENDFORM.
 FORM get_available_im_budget USING iv_posnr TYPE im_posnr
 CHANGING cv_budget TYPE bpge-wlges.
 
-DATA: lv_objnr TYPE j_objnr,
-ls_bpge  TYPE bpge.
+  DATA: lv_objnr TYPE j_objnr,
+        ls_bpge  TYPE bpge.
 
-SELECT SINGLE objnr FROM impr
-INTO lv_objnr
-WHERE posnr = iv_posnr.
+  SELECT SINGLE objnr FROM impr
+  INTO lv_objnr
+  WHERE posnr = iv_posnr.
 
-IF sy-subrc = 0.
-SELECT SINGLE wlges wtgev
-FROM bpge
-INTO (ls_bpge-wlges, ls_bpge-wtgev)
-WHERE objnr = lv_objnr.
+  IF sy-subrc = 0.
+    SELECT SINGLE wlges wtgev
+    FROM bpge
+    INTO (ls_bpge-wlges, ls_bpge-wtgev)
+    WHERE objnr = lv_objnr.
 
-```
-cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
 
-IF cv_budget > 0.
-  gv_available_budget = cv_budget.
-ELSE.
-  CLEAR gv_available_budget.
-ENDIF.
-```
+    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
 
-ENDIF.
+    IF cv_budget > 0.
+      gv_available_budget = cv_budget.
+    ELSE.
+      CLEAR gv_available_budget.
+    ENDIF.
+
+
+  ENDIF.
 
 ENDFORM.
 
@@ -327,57 +327,57 @@ ENDFORM.
 *&———————————————————————*
 FORM create_tree_control.
 
-" Create custom container
-CREATE OBJECT lo_cont_preview
-EXPORTING
-container_name              = gc_tree_container
-EXCEPTIONS
-cntl_error                  = 1
-cntl_system_error           = 2
-create_error                = 3
-lifetime_error              = 4
-lifetime_dynpro_dynpro_link = 5
-OTHERS                      = 6.
+  " Create custom container
+  CREATE OBJECT lo_cont_preview
+    EXPORTING
+      container_name              = gc_tree_container
+    EXCEPTIONS
+      cntl_error                  = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      lifetime_error              = 4
+      lifetime_dynpro_dynpro_link = 5
+      OTHERS                      = 6.
 
-IF sy-subrc <> 0.
-MESSAGE e001 WITH 'Error creating container'.
-RETURN.
-ENDIF.
+  IF sy-subrc <> 0.
+    MESSAGE e001 WITH 'Error creating container'.
+    RETURN.
+  ENDIF.
 
-" Set hierarchy header
-ls_hierarchy_header-heading = 'Project Structure: Description'.
-ls_hierarchy_header-tooltip = 'Project Structure: Description'.
-ls_hierarchy_header-width   = 40.
+  " Set hierarchy header
+  ls_hierarchy_header-heading = 'Project Structure: Description'.
+  ls_hierarchy_header-tooltip = 'Project Structure: Description'.
+  ls_hierarchy_header-width   = 40.
 
-" Create tree control
-CREATE OBJECT lo_tree_preview
-EXPORTING
-parent                      = lo_cont_preview
-node_selection_mode         = 0
-item_selection              = space
-hierarchy_column_name       = lc_hierarchy_short_text
-hierarchy_header            = ls_hierarchy_header
-EXCEPTIONS
-lifetime_error              = 1
-cntl_system_error           = 2
-create_error                = 3
-illegal_node_selection_mode = 4
-failed                      = 5
-illegal_column_name         = 6.
+  " Create tree control
+  CREATE OBJECT lo_tree_preview
+    EXPORTING
+      parent                      = lo_cont_preview
+      node_selection_mode         = 0
+      item_selection              = space
+      hierarchy_column_name       = lc_hierarchy_short_text
+      hierarchy_header            = ls_hierarchy_header
+    EXCEPTIONS
+      lifetime_error              = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      illegal_node_selection_mode = 4
+      failed                      = 5
+      illegal_column_name         = 6.
 
-IF sy-subrc <> 0.
-MESSAGE e001 WITH 'Error creating tree control'.
-RETURN.
-ENDIF.
+  IF sy-subrc <> 0.
+    MESSAGE e001 WITH 'Error creating tree control'.
+    RETURN.
+  ENDIF.
 
-" Add identification column
-CALL METHOD lo_tree_preview->add_column
-EXPORTING
-name           = lc_hierarchy_technical_key
-width          = 30
-alignment      = cl_gui_column_tree=>align_left
-header_text    = 'Identification'
-header_tooltip = 'WBS Element Code'.
+  " Add identification column
+  CALL METHOD lo_tree_preview->add_column
+    EXPORTING
+      name           = lc_hierarchy_technical_key
+      width          = 30
+      alignment      = cl_gui_column_tree=>align_left
+      header_text    = 'Identification'
+      header_tooltip = 'WBS Element Code'.
 
 ENDFORM.
 
@@ -386,94 +386,94 @@ ENDFORM.
 *&———————————————————————*
 FORM load_tree_hierarchy.
 
-DATA: ls_proj TYPE proj,
-lv_pspid_template TYPE ps_pspid.
+  DATA: ls_proj           TYPE proj,
+        lv_pspid_template TYPE ps_pspid.
 
-" Clear previous data
-CLEAR: gt_treev_node, gt_treeitm.
+  " Clear previous data
+  CLEAR: gt_treev_node, gt_treeitm.
 
-" Get project template data
-lv_pspid_template = p_pspnr.
+  " Get project template data
+  lv_pspid_template = p_pspnr.
 
-SELECT SINGLE * FROM proj INTO ls_proj
-WHERE pspid = lv_pspid_template.
+  SELECT SINGLE * FROM proj INTO ls_proj
+  WHERE pspid = lv_pspid_template.
 
-CHECK sy-subrc = 0.
+  CHECK sy-subrc = 0.
 
-" Set objects to display in hierarchy
-ls_objects_in_hierarchy-proj = abap_true.  " Project definition
-ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
-ls_objects_in_hierarchy-pstx = abap_true.  " Texts
+  " Set objects to display in hierarchy
+  ls_objects_in_hierarchy-proj = abap_true.  " Project definition
+  ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
+  ls_objects_in_hierarchy-pstx = abap_true.  " Texts
 
-" Call SAP standard function to get project hierarchy
-CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
-EXPORTING
-i_objects_in_hierarchy = ls_objects_in_hierarchy
-i_vsnmr                = ''
-i_pspid                = lv_pspid_template
-i_aufnr                = ''
-i_flg_enqueue          = space
-i_expand_levels        = 06
-IMPORTING
-et_treeitm             = gt_treeitm
-et_treev_node          = gt_treev_node
-e_objects_in_hierarchy = gs_objects_in_tree
-EXCEPTIONS
-OTHERS                 = 1.
+  " Call SAP standard function to get project hierarchy
+  CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
+    EXPORTING
+      i_objects_in_hierarchy = ls_objects_in_hierarchy
+      i_vsnmr                = ''
+      i_pspid                = lv_pspid_template
+      i_aufnr                = ''
+      i_flg_enqueue          = space
+      i_expand_levels        = 06
+    IMPORTING
+      et_treeitm             = gt_treeitm
+      et_treev_node          = gt_treev_node
+      e_objects_in_hierarchy = gs_objects_in_tree
+    EXCEPTIONS
+      OTHERS                 = 1.
 
-IF sy-subrc <> 0.
-" Fallback: Use simple table if PS functions not available
-PERFORM load_simple_preview_fallback.
-RETURN.
-ENDIF.
+  IF sy-subrc <> 0.
+    " Fallback: Use simple table if PS functions not available
+    PERFORM load_simple_preview_fallback.
+    RETURN.
+  ENDIF.
 
-" Delete existing nodes
-CALL METHOD lo_tree_preview->delete_all_nodes.
+  " Delete existing nodes
+  CALL METHOD lo_tree_preview->delete_all_nodes.
 
-" Add nodes and items to tree
-CALL METHOD lo_tree_preview->add_nodes_and_items
-EXPORTING
-node_table                     = gt_treev_node
-item_table                     = gt_treeitm
-item_table_structure_name      = 'CNPB_H_TREEITM'
-EXCEPTIONS
-failed                         = 1
-cntl_system_error              = 3
-error_in_tables                = 4
-dp_error                       = 5
-table_structure_name_not_found = 6.
+  " Add nodes and items to tree
+  CALL METHOD lo_tree_preview->add_nodes_and_items
+    EXPORTING
+      node_table                     = gt_treev_node
+      item_table                     = gt_treeitm
+      item_table_structure_name      = 'CNPB_H_TREEITM'
+    EXCEPTIONS
+      failed                         = 1
+      cntl_system_error              = 3
+      error_in_tables                = 4
+      dp_error                       = 5
+      table_structure_name_not_found = 6.
 
-" Expand root nodes
-CALL METHOD lo_tree_preview->expand_root_nodes
-EXPORTING
-level_count         = 0
-expand_subtree      = space
-EXCEPTIONS
-failed              = 1
-illegal_level_count = 2
-cntl_system_error   = 3.
+  " Expand root nodes
+  CALL METHOD lo_tree_preview->expand_root_nodes
+    EXPORTING
+      level_count         = 0
+      expand_subtree      = space
+    EXCEPTIONS
+      failed              = 1
+      illegal_level_count = 2
+      cntl_system_error   = 3.
 
-" Set column widths
-CALL METHOD lo_tree_preview->hierarchy_header_set_width
-EXPORTING
-width             = 40
-width_pix         = space
-EXCEPTIONS
-failed            = 1
-cntl_system_error = 2.
+  " Set column widths
+  CALL METHOD lo_tree_preview->hierarchy_header_set_width
+    EXPORTING
+      width             = 40
+      width_pix         = space
+    EXCEPTIONS
+      failed            = 1
+      cntl_system_error = 2.
 
-CALL METHOD lo_tree_preview->column_set_width
-EXPORTING
-column_name       = lc_hierarchy_technical_key
-width             = 21
-width_pix         = space
-EXCEPTIONS
-failed            = 1
-column_not_found  = 2
-hierarchy_column  = 3
-cntl_system_error = 4.
+  CALL METHOD lo_tree_preview->column_set_width
+    EXPORTING
+      column_name       = lc_hierarchy_technical_key
+      width             = 21
+      width_pix         = space
+    EXCEPTIONS
+      failed            = 1
+      column_not_found  = 2
+      hierarchy_column  = 3
+      cntl_system_error = 4.
 
-lv_tree_loaded = abap_true.
+  lv_tree_loaded = abap_true.
 
 ENDFORM.
 
@@ -482,21 +482,21 @@ ENDFORM.
 *&———————————————————————*
 FORM load_simple_preview_fallback.
 
-" Fallback if CNPB functions don't work
-" Use simple table control or ALV instead
-DATA: lv_pspnr TYPE ps_pspnr.
+  " Fallback if CNPB functions don't work
+  " Use simple table control or ALV instead
+  DATA: lv_pspnr TYPE ps_pspnr.
 
-SELECT SINGLE pspnr FROM proj INTO lv_pspnr
-WHERE pspid = p_pspnr.
+  SELECT SINGLE pspnr FROM proj INTO lv_pspnr
+  WHERE pspid = p_pspnr.
 
-CHECK sy-subrc = 0.
+  CHECK sy-subrc = 0.
 
-SELECT * FROM prps INTO TABLE gt_preview_data
-WHERE psphi = lv_pspnr
-ORDER BY stufe posid.
+  SELECT * FROM prps INTO TABLE gt_preview_data
+  WHERE psphi = lv_pspnr
+  ORDER BY stufe posid.
 
-" Display message that tree view not available
-MESSAGE i001 WITH 'Tree view not available, showing list view'.
+  " Display message that tree view not available
+  MESSAGE i001 WITH 'Tree view not available, showing list view'.
 
 ENDFORM.
 
@@ -505,19 +505,19 @@ ENDFORM.
 *&———————————————————————*
 FORM free_tree_control.
 
-" Free tree control when leaving screen
-IF lo_tree_preview IS NOT INITIAL.
-CALL METHOD lo_tree_preview->free.
-FREE lo_tree_preview.
-ENDIF.
+  " Free tree control when leaving screen
+  IF lo_tree_preview IS NOT INITIAL.
+    CALL METHOD lo_tree_preview->free.
+    FREE lo_tree_preview.
+  ENDIF.
 
-IF lo_cont_preview IS NOT INITIAL.
-CALL METHOD lo_cont_preview->free.
-FREE lo_cont_preview.
-ENDIF.
+  IF lo_cont_preview IS NOT INITIAL.
+    CALL METHOD lo_cont_preview->free.
+    FREE lo_cont_preview.
+  ENDIF.
 
-lv_tree_loaded = abap_false.
-CLEAR: gt_treev_node, gt_treeitm.
+  lv_tree_loaded = abap_false.
+  CLEAR: gt_treev_node, gt_treeitm.
 
 ENDFORM.
 
@@ -533,22 +533,22 @@ iv_profl TYPE profidproj
 iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
 CHANGING cv_error TYPE abap_bool.
 
-" CORRECTED: Using exact field names from SE11
-" Table: ZTB_A2R_CONFTAB2
-" Fields: MANDT, BUKRS, PROFL, Z_REQTYPE, ZAPROVAL_1, ZAPROVAL_2, ZERROR_HANDLING
+  " CORRECTED: Using exact field names from SE11
+  " Table: ZTB_A2R_CONFTAB2
+  " Fields: MANDT, BUKRS, PROFL, Z_REQTYPE, ZAPROVAL_1, ZAPROVAL_2, ZERROR_HANDLING
 
-DATA: ls_config TYPE ztb_a2r_conftab2.
+  DATA: ls_config TYPE ztb_a2r_conftab2.
 
-SELECT SINGLE * FROM ztb_a2r_conftab2
-INTO ls_config
-WHERE bukrs = iv_bukrs
-AND profl = iv_profl
-AND z_reqtype = iv_reqtype.
+  SELECT SINGLE * FROM ztb_a2r_conftab2
+  INTO ls_config
+  WHERE bukrs = iv_bukrs
+  AND profl = iv_profl
+  AND z_reqtype = iv_reqtype.
 
-IF sy-subrc <> 0.
-MESSAGE e023 WITH 'No approver found for' iv_bukrs iv_profl iv_reqtype.
-cv_error = gc_x.
-ENDIF.
+  IF sy-subrc <> 0.
+    MESSAGE e023 WITH 'No approver found for' iv_bukrs iv_profl iv_reqtype.
+    cv_error = gc_x.
+  ENDIF.
 
 ENDFORM.
 
@@ -562,50 +562,50 @@ ENDFORM.
 *& Module STATUS_0200 OUTPUT
 *&———————————————————————*
 MODULE status_0200 OUTPUT.
-SET PF-STATUS 'STATUS_200'.
-SET TITLEBAR 'TITLE_200'.
+  SET PF-STATUS 'STATUS_200'.
+  SET TITLEBAR 'TITLE_200'.
 
-" Make fields required and handle editability
-LOOP AT SCREEN.
+  " Make fields required and handle editability
+  LOOP AT SCREEN.
 
-```
-" CORRECTED: Profit Center should ALWAYS be editable
-" Remove the graying logic that was causing the issue
-" FDS Table 4.1.4: Profit Center is editable for ALL request types
 
-" Finish Date (PLSEZ): Editable based on investment reason
-IF screen-name = 'P_PLSEZ'.
-  IF gv_izwek = 'LS'.           " Lumpsum
-    screen-input = 0.            " Not editable - auto-calculated
-  ELSE.                          " Projects/ESR
-    screen-input = 1.            " Editable
-  ENDIF.
-  MODIFY SCREEN.
-ENDIF.
+    " CORRECTED: Profit Center should ALWAYS be editable
+    " Remove the graying logic that was causing the issue
+    " FDS Table 4.1.4: Profit Center is editable for ALL request types
 
-" GE Ariba Flag (USR10): NOT editable (auto-filled from IM)
-IF screen-name = 'P_USR10'.
-  screen-input = 0.              " Not editable
-  MODIFY SCREEN.
-ENDIF.
+    " Finish Date (PLSEZ): Editable based on investment reason
+    IF screen-name = 'P_PLSEZ'.
+      IF gv_izwek = 'LS'.           " Lumpsum
+        screen-input = 0.            " Not editable - auto-calculated
+      ELSE.                          " Projects/ESR
+        screen-input = 1.            " Editable
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
 
-" REMOVED: Profit Center graying logic
-" Profit Center should remain editable in all cases
-```
+    " GE Ariba Flag (USR10): NOT editable (auto-filled from IM)
+    IF screen-name = 'P_USR10'.
+      screen-input = 0.              " Not editable
+      MODIFY SCREEN.
+    ENDIF.
 
-ENDLOOP.
+    " REMOVED: Profit Center graying logic
+    " Profit Center should remain editable in all cases
+
+
+  ENDLOOP.
 ENDMODULE.
 
 *&———————————————————————*
 *& Module STATUS_0100 OUTPUT
 *&———————————————————————*
 MODULE status_0100 OUTPUT.
-SET PF-STATUS 'STATUS_100'.
-SET TITLEBAR 'TITLE_100'.
+  SET PF-STATUS 'STATUS_100'.
+  SET TITLEBAR 'TITLE_100'.
 
-" Initialize table control
+  " Initialize table control
 
-- DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
+  - DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
 
 ENDMODULE.
 
@@ -613,25 +613,25 @@ ENDMODULE.
 *& Module FILL_TABLE_CONTROL OUTPUT
 *&———————————————————————*
 MODULE fill_table_control OUTPUT.
-" Read current line of table control
+  " Read current line of table control
 
-- READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
+  - READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
   IF sy-subrc = 0.
-  " Fields are automatically filled from gs_wbs_display
+    " Fields are automatically filled from gs_wbs_display
   ENDIF.
-  ENDMODULE.
+ENDMODULE.
 
 MODULE display_tree_preview OUTPUT.
 
-" Only create tree once
-CHECK lo_tree_preview IS INITIAL.
-CHECK p_pspnr IS NOT INITIAL.
+  " Only create tree once
+  CHECK lo_tree_preview IS INITIAL.
+  CHECK p_pspnr IS NOT INITIAL.
 
-" Create tree control
-PERFORM create_tree_control.
+  " Create tree control
+  PERFORM create_tree_control.
 
-" Load hierarchy
-PERFORM load_tree_hierarchy.
+  " Load hierarchy
+  PERFORM load_tree_hierarchy.
 
 ENDMODULE.
 
@@ -711,7 +711,7 @@ TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
 *–––––––––––––––––––––––––––––––––––*
 
-- Preview Data (fallback if PS functions not available)
+- Preview Data (fallback if ps functions not available)
   *–––––––––––––––––––––––––––––––––––*
   DATA: gt_preview_data TYPE TABLE OF prps,
   gs_preview_data TYPE prps.
@@ -732,11 +732,11 @@ TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
   gv_z_remarks TYPE char255.
 
 DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
-gs_wbs_display TYPE ty_wbs_display.
+      gs_wbs_display TYPE ty_wbs_display.
 
 *–––––––––––––––––––––––––––––––––––*
 
-- Global Variables - Additional IM Data
+- Global Variables - Additional im Data
   *–––––––––––––––––––––––––––––––––––*
   DATA: gv_bukrs            TYPE bukrs,
   gv_werks            TYPE werks_d,
@@ -762,7 +762,7 @@ gs_wbs_display TYPE ty_wbs_display.
 
 - Table Control
   *–––––––––––––––––––––––––––––––––––*
-  *CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 100.
+  *controls: tc_wbs TYPE TABLEVIEW USING SCREEN 100.
 
 *–––––––––––––––––––––––––––––––––––*
 
@@ -771,10 +771,10 @@ gs_wbs_display TYPE ty_wbs_display.
 
 *–––––––––––––––––––––––––––––––––––*
 
-- CORRECTED: Work structure for internal use (aligned with ZTB table)
+- corrected: Work structure for internal use (aligned with ztb table)
   *–––––––––––––––––––––––––––––––––––*
 - This structure is ONLY used internally for data conversion
-- It should NOT be mixed with GT_WBS_DISPLAY
+- It should NOT be mixed with gt_wbs_display
   *–––––––––––––––––––––––––––––––––––*
   TYPES: BEGIN OF ts_items,
   select        TYPE flag,
@@ -805,7 +805,7 @@ gs_wbs_display TYPE ty_wbs_display.
 
 *–––––––––––––––––––––––––––––––––––*
 
-- Work variable - USE THIS ONLY for internal conversions
-- DO NOT mix this with GT_WBS_DISPLAY operations
+- Work variable - use THIS ONLY for internal conversions
+- DO NOT mix this with gt_wbs_display operations
   *–––––––––––––––––––––––––––––––––––*
   DATA: ls_items TYPE ts_items.
