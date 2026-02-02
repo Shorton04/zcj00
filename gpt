@@ -105,3 +105,25 @@ MODULE build_im_dropdown OUTPUT.
       values = gt_im_dropdown.
 
 ENDMODULE.
+
+
+MODULE validate_posnr INPUT.
+
+  IF p_posnr IS NOT INITIAL.
+    
+    " Add leading zeros
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = p_posnr
+      IMPORTING
+        output = p_posnr.
+    
+    " Load data if changed
+    IF p_posnr <> gv_posnr_old.
+      PERFORM get_im_data USING p_posnr.
+      gv_posnr_old = p_posnr.
+    ENDIF.
+    
+  ENDIF.
+
+ENDMODULE.
