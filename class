@@ -1,442 +1,204 @@
-*&---------------------------------------------------------------------*
-*& Class ZCL_A2R_WBSBUILDER Definition
-*&---------------------------------------------------------------------*
-CLASS zcl_a2r_wbsbuilder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
+class ZCL_A2R_WBS_REQUEST_FLEXWF definition
+  public
+  create public .
 
-  PUBLIC SECTION.
+*  FOR EVENT HANDLER.
+public section.
 
-    METHODS:
-      " Copy template structure to WBS items
-      copy_template_structure
-        IMPORTING
-          iv_pspid     TYPE ps_spdid
-        CHANGING
-          ct_wbs_items TYPE ANY TABLE,
+  interfaces BI_OBJECT .
+  interfaces BI_PERSISTENT .
+  interfaces IF_WORKFLOW .
 
-      " Total up budget from children to parents
-      total_up_budget
-        CHANGING
-          ct_wbs_items TYPE ANY TABLE,
+  types:
+    BEGIN OF t_instance ,
+        insid    TYPE sibfinstid,
+        instance TYPE REF TO zcl_a2r_wbs_request_flexwf,
+      END OF t_instance .
+  types:
+    t_instances TYPE STANDARD TABLE OF t_instance .
 
-      " Save request (DRAFT status)
-      save_request
-        IMPORTING
-          is_header     TYPE ztb_a2r_wbshdr
-          it_wbs_items  TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_reqnum) TYPE char10,
+  data MS_HEADER type ZTB_A2R_WBSHDR read-only .
+  data MT_L2APPROVER type HPA_T_BNAME read-only .
+  data MS_LPOR type SIBFLPOR read-only .
+  data MT_L1APPROVER type HPA_T_BNAME read-only .
+  data GV_REQNUM type ZDE_A2R_REQNUM read-only .
+  data MV_EVENT_ID type SIBFEVENT read-only value 'START' ##NO_TEXT.
+  class-data MT_INSTANCE type T_INSTANCES read-only .
 
-      " Submit request and trigger workflow
-      submit_request
-        IMPORTING
-          is_header    TYPE ztb_a2r_wbshdr
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
+  events START
+    exporting
+      value(IV_HEADER) type ZTB_A2R_WBSHDR
+      value(IT_L1APPROVER) type HPA_T_BNAME
+      value(IT_L2APPROVER) type HPA_T_BNAME .
 
-      " Create project after approval
-      create_project
-        IMPORTING
-          is_header    TYPE ztb_a2r_wbshdr
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool.
-
-  PRIVATE SECTION.
-
-    METHODS:
-      " Get next request number from number range
-      get_next_request_number
-        RETURNING
-          VALUE(rv_reqnum) TYPE char10,
-
-      " Check approver matrix
-      check_approver_matrix
-        IMPORTING
-          iv_bukrs  TYPE bukrs
-          iv_profl  TYPE profidproj
-          iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
-        EXPORTING
-          ev_appr1  TYPE ztb_a2r_conftab2-zapproval_1
-          ev_appr2  TYPE ztb_a2r_conftab2-zapproval_2
-          ev_auto   TYPE ztb_a2r_conftab2-zerror_handling
-        RETURNING
-          VALUE(rv_found) TYPE abap_bool,
-
-      " Trigger workflow
-      trigger_workflow
-        IMPORTING
-          is_header TYPE ztb_a2r_wbshdr
-          iv_appr1  TYPE ztb_a2r_conftab2-zapproval_1
-          iv_appr2  TYPE ztb_a2r_conftab2-zapproval_2
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Create WBS elements
-      create_wbs_elements
-        IMPORTING
-          is_header    TYPE ztb_a2r_wbshdr
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Assign plan values
-      assign_plan_values
-        IMPORTING
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Distribute IM budget
-      distribute_im_budget
-        IMPORTING
-          is_header    TYPE ztb_a2r_wbshdr
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Create settlement rules
-      create_settlement_rules
-        IMPORTING
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool,
-
-      " Activate system statuses
-      activate_statuses
-        IMPORTING
-          it_wbs_items TYPE ANY TABLE
-        RETURNING
-          VALUE(rv_success) TYPE abap_bool.
-
+  methods CONSTRUCTOR
+    importing
+      !IV_REQNUM type ZDE_A2R_REQNUM
+      !IT_L1APPROVER type HPA_T_BNAME optional
+      !IT_L2APPROVER type HPA_T_BNAME optional
+      !IS_HEADER type ZTB_A2R_WBSHDR optional .
+  methods SUBMIT .
+private section.
 ENDCLASS.
 
 
 
+CLASS ZCL_A2R_WBS_REQUEST_FLEXWF IMPLEMENTATION.
 
 
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~DEFAULT_ATTRIBUTE_VALUE
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RESULT                         TYPE REF TO DATA
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method BI_OBJECT~DEFAULT_ATTRIBUTE_VALUE.
+  endmethod.
 
-*&---------------------------------------------------------------------*
-*& Class ZCL_A2R_WBSBUILDER Implementation
-*&---------------------------------------------------------------------*
-CLASS zcl_a2r_wbsbuilder IMPLEMENTATION.
 
-  METHOD copy_template_structure.
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~EXECUTE_DEFAULT_METHOD
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method BI_OBJECT~EXECUTE_DEFAULT_METHOD.
+  endmethod.
 
-    DATA: lt_prpss TYPE TABLE OF prpss,
-          ls_prpss TYPE prpss,
-          ls_wbs   TYPE ztb_a2r_wbsitem.
 
-    FIELD-SYMBOLS: <fs_wbs_item> TYPE any.
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~RELEASE
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method BI_OBJECT~RELEASE.
+  endmethod.
 
-    " Get WBS hierarchy from template
-    SELECT * FROM prpss
-      INTO TABLE lt_prpss
-      WHERE pspid = iv_pspid
-      ORDER BY stufe posid.
 
-    LOOP AT lt_prpss INTO ls_prpss.
-      CLEAR ls_wbs.
-
-      " Map fields
-      ls_wbs-stufe = ls_prpss-stufe.
-      ls_wbs-posid = ls_prpss-posid.
-      ls_wbs-post1 = ls_prpss-post1.
-      ls_wbs-imprf = ls_prpss-imprf.
-      ls_wbs-prart = ls_prpss-prart.
-
-      " Append to output table
-      APPEND ls_wbs TO ct_wbs_items.
-    ENDLOOP.
-
-  ENDMETHOD.
-
-  METHOD total_up_budget.
-
-    DATA: lt_wbs TYPE TABLE OF ztb_a2r_wbsitem,
-          ls_wbs TYPE ztb_a2r_wbsitem,
-          lv_total TYPE bpge-wlges,
-          lv_parent_posid TYPE ps_posid,
-          lv_max_level TYPE ps_stufe.
-
-    FIELD-SYMBOLS: <fs_wbs> TYPE any,
-                   <fs_wbs_parent> TYPE any.
-
-    " Copy to work table
-    lt_wbs = ct_wbs_items.
-
-    " Get maximum level
-    LOOP AT lt_wbs INTO ls_wbs.
-      IF ls_wbs-stufe > lv_max_level.
-        lv_max_level = ls_wbs-stufe.
-      ENDIF.
-    ENDLOOP.
-
-    " Process from bottom up
-    DO lv_max_level TIMES.
-      DATA(lv_current_level) = lv_max_level - sy-index + 1.
-
-      LOOP AT lt_wbs INTO ls_wbs WHERE stufe = lv_current_level.
-        " Find parent (one level up)
-        " Simplified logic - needs actual parent determination
-        LOOP AT lt_wbs ASSIGNING <fs_wbs_parent>
-          WHERE stufe = lv_current_level - 1.
-          " Add child budget to parent
-          " This is simplified - implement proper parent-child logic
-        ENDLOOP.
-      ENDLOOP.
-    ENDDO.
-
-    " Update output table
-    ct_wbs_items = lt_wbs.
-
-  ENDMETHOD.
-
-  METHOD save_request.
-
-    DATA: ls_header TYPE ztb_a2r_wbshdr,
-          lt_items  TYPE TABLE OF ztb_a2r_wbsitem,
-          ls_item   TYPE ztb_a2r_wbsitem.
-
-    " Get request number
-    rv_reqnum = get_next_request_number( ).
-
-    IF rv_reqnum IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    " Prepare header
-    ls_header = is_header.
-    ls_header-zreq_num = rv_reqnum.
-    ls_header-request_status = 'DRAFT'.
-    ls_header-erdat = sy-datum.
-    ls_header-ernam = sy-uname.
-
-    " Save header
-    INSERT ztb_a2r_wbshdr FROM ls_header.
-
-    IF sy-subrc = 0.
-      " Save items
-      LOOP AT it_wbs_items ASSIGNING FIELD-SYMBOL(<fs_item>).
-        ls_item = <fs_item>.
-        ls_item-zreq_num = rv_reqnum.
-        INSERT ztb_a2r_wbsitem FROM ls_item.
-      ENDLOOP.
-
-      COMMIT WORK.
-    ELSE.
-      CLEAR rv_reqnum.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD submit_request.
-
-    DATA: lv_reqnum TYPE char10,
-          lv_appr1  TYPE ztb_a2r_conftab2-zapproval_1,
-          lv_appr2  TYPE ztb_a2r_conftab2-zapproval_2,
-          lv_auto   TYPE ztb_a2r_conftab2-zerror_handling,
-          lv_found  TYPE abap_bool,
-          ls_header TYPE ztb_a2r_wbshdr.
-
-    " First save the request
-    lv_reqnum = save_request(
-      is_header    = is_header
-      it_wbs_items = it_wbs_items
-    ).
-
-    IF lv_reqnum IS INITIAL.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Check approver matrix
-    lv_found = check_approver_matrix(
-      EXPORTING
-        iv_bukrs   = is_header-bukrs
-        iv_profl   = is_header-profl
-        iv_reqtype = is_header-zz_request_type
-      IMPORTING
-        ev_appr1   = lv_appr1
-        ev_appr2   = lv_appr2
-        ev_auto    = lv_auto
-    ).
-
-    IF lv_found = abap_false.
-      MESSAGE e008(zcj00).
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Update status to PENDING
-    ls_header = is_header.
-    ls_header-zreq_num = lv_reqnum.
-    ls_header-request_status = 'PENDING'.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'PENDING'
-      WHERE zreq_num = lv_reqnum.
-
-    " Trigger workflow
-    rv_success = trigger_workflow(
-      is_header = ls_header
-      iv_appr1  = lv_appr1
-      iv_appr2  = lv_appr2
-    ).
-
-    IF rv_success = abap_true.
-      COMMIT WORK.
-    ELSE.
-      ROLLBACK WORK.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD create_project.
-
-    " Main orchestration method for project creation
-    rv_success = abap_false.
-
-    " Step 1: Create WBS elements
-    IF create_wbs_elements(
-         is_header    = is_header
-         it_wbs_items = it_wbs_items
-       ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Step 2: Assign plan values
-    IF assign_plan_values(
-         it_wbs_items = it_wbs_items
-       ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Step 3: Distribute IM budget
-    IF distribute_im_budget(
-         is_header    = is_header
-         it_wbs_items = it_wbs_items
-       ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Step 4: Create settlement rules
-    IF create_settlement_rules(
-         it_wbs_items = it_wbs_items
-       ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Step 5: Activate statuses
-    IF activate_statuses(
-         it_wbs_items = it_wbs_items
-       ) = abap_false.
-      RETURN.
-    ENDIF.
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
-  METHOD get_next_request_number.
-
-    CALL FUNCTION 'NUMBER_GET_NEXT'
-      EXPORTING
-        nr_range_nr             = '01'
-        object                  = 'ZCJ00_REQN'
-      IMPORTING
-        number                  = rv_reqnum
-      EXCEPTIONS
-        interval_not_found      = 1
-        number_range_not_intern = 2
-        object_not_found        = 3
-        OTHERS                  = 4.
-
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_A2R_WBS_REQUEST_FLEXWF=>BI_PERSISTENT~FIND_BY_LPOR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] LPOR                           TYPE        SIBFLPOR
+* | [<-()] RESULT                         TYPE REF TO BI_PERSISTENT
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD bi_persistent~find_by_lpor.
+    DATA lv_typename      TYPE seoclsname.
+    DATA ls_instance      TYPE zcl_a2r_wbs_request_flexwf=>t_instance.
+    DATA lo_instance      TYPE REF TO zcl_a2r_wbs_request_flexwf.
+    CHECK lpor-instid IS NOT INITIAL.
+    CHECK strlen( lpor-instid ) = 10.
+    lv_typename = lpor-typeid.
+    READ TABLE mt_instance WITH KEY insid = lpor-instid INTO ls_instance.
     IF sy-subrc <> 0.
-      CLEAR rv_reqnum.
-      MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
-        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      TRY.
+          CREATE OBJECT lo_instance TYPE (lv_typename)
+            EXPORTING
+              IV_REQNUM = lpor-instid.
+        CATCH cx_bo_error .
+          EXIT.
+      ENDTRY.
+      ls_instance-insid    = lpor-instid.
+      ls_instance-instance = lo_instance.
+      APPEND ls_instance TO mt_instance.
     ENDIF.
-
+    result = ls_instance-instance.
   ENDMETHOD.
 
-  METHOD check_approver_matrix.
 
-    DATA: ls_config TYPE ztb_a2r_conftab2.
-
-    SELECT SINGLE * FROM ztb_a2r_conftab2
-      INTO ls_config
-      WHERE bukrs = iv_bukrs
-        AND profl = iv_profl
-        AND zz_request_type = iv_reqtype.
-
-    IF sy-subrc = 0.
-      ev_appr1 = ls_config-zapproval_1.
-      ev_appr2 = ls_config-zapproval_2.
-      ev_auto  = ls_config-zerror_handling.
-      rv_found = abap_true.
-    ELSE.
-      rv_found = abap_false.
-    ENDIF.
-
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_PERSISTENT~LPOR
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RESULT                         TYPE        SIBFLPOR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD bi_persistent~lpor.
+     result = me->ms_lpor.
   ENDMETHOD.
 
-  METHOD trigger_workflow.
 
-    " Placeholder for workflow triggering
-    " Implement using SAP Business Workflow
-    " CALL FUNCTION 'SAP_WAPI_START_WORKFLOW'
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_PERSISTENT~REFRESH
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method BI_PERSISTENT~REFRESH.
+  endmethod.
 
-    rv_success = abap_true.
 
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->CONSTRUCTOR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_REQNUM                      TYPE        ZDE_A2R_REQNUM
+* | [--->] IT_L1APPROVER                  TYPE        HPA_T_BNAME(optional)
+* | [--->] IT_L2APPROVER                  TYPE        HPA_T_BNAME(optional)
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD constructor.
+    me->ms_lpor-catid  = cl_swf_evt_event=>mc_objcateg_cl.
+    me->ms_lpor-typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'.
+    me->ms_lpor-instid = iv_reqnum.
+    gv_reqnum = iv_reqnum.
+    me->mt_l1approver = it_l1approver.
+    me->mt_l2approver = it_l2approver.
+    me->ms_header = is_header.
   ENDMETHOD.
 
-  METHOD create_wbs_elements.
 
-    " Placeholder for project/WBS creation
-    " Use BAPI_PROJECT_MAINTAIN or similar
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->SUBMIT
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD submit.
+    DATA:
+      lv_event            TYPE        sibfevent,
+      lv_objkey           TYPE        sibfinstid,
+      lr_event_parameters TYPE REF TO cl_swf_cnt_container.
 
-    rv_success = abap_true.
 
+    CREATE OBJECT lr_event_parameters.
+
+    lv_event  = me->mv_event_id.
+    lv_objkey = me->gv_reqnum.
+    DATA(lv_typeid) = 'ZCL_A2R_WBS_REQUEST_FLEXWF'.
+
+    TRY.
+        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+          EXPORTING
+            name  = 'IV_HEADER'
+            value = me->ms_header.
+      CATCH cx_root .
+    ENDTRY.
+
+    TRY.
+        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+          EXPORTING
+            name  = 'IT_L1APPROVER'
+            value = me->mt_l1approver.
+      CATCH cx_root .
+    ENDTRY.
+
+    TRY.
+        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+          EXPORTING
+            name  = 'IT_L2APPROVER'
+            value = me->mt_l2approver.
+      CATCH cx_root .
+    ENDTRY.
+
+*    TRY.
+*        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+*          EXPORTING
+*            name  = 'Submitter'
+**            value = 'US' && sy-uname.
+*            value = 'US' && 'HQ75177'.
+*      CATCH cx_root .
+*    ENDTRY.
+
+    TRY.
+        CALL METHOD cl_swf_evt_event=>raise
+          EXPORTING
+            im_objcateg        = cl_swf_evt_event=>mc_objcateg_cl
+            im_objtype         = lv_typeid
+            im_event           = lv_event
+            im_objkey          = lv_objkey
+            im_event_container = lr_event_parameters.
+        COMMIT WORK.
+      CATCH cx_swf_evt_invalid_objtype .
+      CATCH cx_swf_evt_invalid_event .
+    ENDTRY.
   ENDMETHOD.
-
-  METHOD assign_plan_values.
-
-    " Placeholder for plan values assignment
-    " Reference transaction CJ40
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
-  METHOD distribute_im_budget.
-
-    " Placeholder for IM budget distribution
-    " Reference transaction IM52
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
-  METHOD create_settlement_rules.
-
-    " Placeholder for settlement rule creation
-    " Use FM K_SRULE_SAVE_UTASK
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
-  METHOD activate_statuses.
-
-    " Placeholder for status activation
-    " Use FM STATUS_CHANGE_INTERN_VB
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
-
 ENDCLASS.
