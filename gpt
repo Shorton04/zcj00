@@ -10,19 +10,19 @@ DATA: lt_impr   TYPE TABLE OF impr,
 lt_return TYPE TABLE OF ddshretval,
 ls_return TYPE ddshretval.
 
-“ Get list of IM positions
+" Get list of IM positions
 SELECT posnr prnam gjahr FROM impr
 INTO CORRESPONDING FIELDS OF TABLE lt_impr
 UP TO 500 ROWS.
 
-“ Display F4 help
-CALL FUNCTION ‘F4IF_INT_TABLE_VALUE_REQUEST’
+" Display F4 help
+CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
 EXPORTING
-retfield        = ‘POSNR’
+retfield        = 'POSNR'
 dynpprog        = sy-repid
 dynpnr          = sy-dynnr
-dynprofield     = ‘P_POSNR’
-value_org       = ‘S’
+dynprofield     = 'P_POSNR'
+value_org       = 'S'
 TABLES
 value_tab       = lt_impr
 return_tab      = lt_return
@@ -52,7 +52,7 @@ INTO ls_impr
 WHERE posnr = iv_posnr.
 
 IF sy-subrc = 0.
-“ Populate fields from IM
+" Populate fields from IM
 p_prnam = ls_impr-prnam.
 p_gjahr = ls_impr-gjahr.
 p_prctr = ls_impr-prctr.
@@ -80,7 +80,7 @@ ENDIF.
 ```
 
 ELSE.
-MESSAGE e002 WITH iv_posnr. “ IM Number not found
+MESSAGE e002 WITH iv_posnr. " IM Number not found
 ENDIF.
 
 ENDFORM.
@@ -92,13 +92,13 @@ FORM get_profile_template USING iv_izwek TYPE izwek
 CHANGING cv_profl TYPE profidproj
 cv_pspnr TYPE ps_ispsp.
 
-“ CORRECTED: Using exact field names from SE11
-“ Table: ZTB_A2R_CONFTAB1
-“ Fields: MANDT, IZWEK, Z_STAGE, PROFL, PSPNR
+" CORRECTED: Using exact field names from SE11
+" Table: ZTB_A2R_CONFTAB1
+" Fields: MANDT, IZWEK, Z_STAGE, PROFL, PSPNR
 
 DATA: ls_config TYPE ztb_a2r_conftab1.
 
-“ Query using correct field name IZWEK
+" Query using correct field name IZWEK
 SELECT SINGLE * FROM ztb_a2r_conftab1
 INTO ls_config
 WHERE izwek = iv_izwek.
@@ -107,7 +107,7 @@ IF sy-subrc = 0.
 cv_profl = ls_config-profl.
 cv_pspnr = ls_config-pspnr.
 ELSE.
-MESSAGE w003 WITH ‘No configuration found for IZWEK’ iv_izwek.
+MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
 CLEAR: cv_profl, cv_pspnr.
 ENDIF.
 ENDFORM.
@@ -118,9 +118,9 @@ ENDFORM.
 FORM check_ge_ariba USING is_impr TYPE impr
 CHANGING cv_flag TYPE char1.
 
-“ Check if project management field = GE (Global Engineering)
-“ This is a placeholder - adjust based on actual IM field
-IF is_impr-usr10 = ‘GE’.
+" Check if project management field = GE (Global Engineering)
+" This is a placeholder - adjust based on actual IM field
+IF is_impr-usr10 = 'GE'.
 cv_flag = gc_x.
 ELSE.
 CLEAR cv_flag.
@@ -135,24 +135,24 @@ FORM validate_screen1.
 
 DATA: lv_error TYPE abap_bool.
 
-“ Cost Center validation
+" Cost Center validation
 PERFORM validate_cost_center USING p_kostl p_plsez
 CHANGING lv_error.
 
-“ Profit Center validation
+" Profit Center validation
 PERFORM validate_profit_center USING p_prctr p_plsez
 CHANGING lv_error.
 
-“ CC to PC assignment
+" CC to PC assignment
 PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
 CHANGING lv_error.
 
-“ FR Unit validation
+" FR Unit validation
 PERFORM validate_fr_unit USING p_posnr p_prctr
 CHANGING lv_error.
 
 IF lv_error = abap_true.
-MESSAGE e004. “ Validation errors found
+MESSAGE e004. " Validation errors found
 ENDIF.
 
 ENDFORM.
@@ -166,17 +166,17 @@ CHANGING cv_error TYPE abap_bool.
 
 DATA: ls_csks TYPE csks.
 
-“ Check cost center validity against Finish Date (not sy-datum)
+" Check cost center validity against Finish Date (not sy-datum)
 SELECT SINGLE * FROM csks
 INTO ls_csks
 WHERE kostl = iv_kostl
-AND datab <= iv_plsez          “ Valid from <= Finish date
-AND datbi >= iv_plsez.         “ Valid to >= Finish date (FDS Table 4.1.6)
+AND datab <= iv_plsez          " Valid from <= Finish date
+AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
 
 IF sy-subrc = 0.
 CLEAR cv_error.
 ELSE.
-MESSAGE e005 WITH iv_kostl iv_plsez.  “ Cost center not valid for finish date
+MESSAGE e005 WITH iv_kostl iv_plsez.  " Cost center not valid for finish date
 cv_error = gc_x.
 ENDIF.
 ENDFORM.
@@ -190,16 +190,16 @@ CHANGING cv_error TYPE abap_bool.
 
 DATA: ls_cepc TYPE cepc.
 
-“ Check profit center validity against Finish Date (not sy-datum)
+" Check profit center validity against Finish Date (not sy-datum)
 SELECT SINGLE * FROM cepc
 INTO ls_cepc
 WHERE prctr = iv_prctr
-AND datbi >= iv_plsez.         “ Valid to >= Finish date (FDS Table 4.1.6)
+AND datbi >= iv_plsez.         " Valid to >= Finish date (FDS Table 4.1.6)
 
 IF sy-subrc = 0.
 CLEAR cv_error.
 ELSE.
-MESSAGE e007 WITH iv_prctr iv_plsez.  “ Profit center not valid for finish date
+MESSAGE e007 WITH iv_prctr iv_plsez.  " Profit center not valid for finish date
 cv_error = gc_x.
 ENDIF.
 ENDFORM.
@@ -219,7 +219,7 @@ INTO ls_csks
 WHERE kostl = iv_kostl.
 
 IF ls_csks-prctr IS INITIAL.
-MESSAGE e009 WITH iv_kostl. “ CC has no PC assigned
+MESSAGE e009 WITH iv_kostl. " CC has no PC assigned
 cv_error = gc_x.
 RETURN.
 ENDIF.
@@ -230,7 +230,7 @@ WHERE prctr = iv_prctr.
 
 IF ls_cepc-bukrs IS NOT INITIAL AND
 ls_cepc-bukrs NE ls_csks-bukrs.
-MESSAGE e010. “ Company codes do not match
+MESSAGE e010. " Company codes do not match
 cv_error = gc_x.
 ENDIF.
 
@@ -243,9 +243,9 @@ FORM validate_fr_unit USING iv_posnr TYPE im_posnr
 iv_prctr TYPE prctr
 CHANGING cv_error TYPE abap_bool.
 
-“ Placeholder for FR Unit validation
-“ Implement based on actual custom tables
-“ Reference: Table ZTXCA_ORG01
+" Placeholder for FR Unit validation
+" Implement based on actual custom tables
+" Reference: Table ZTXCA_ORG01
 
 ENDFORM.
 
@@ -257,13 +257,13 @@ FORM show_template_preview USING iv_pspnr TYPE ps_ispsp.
 DATA: lt_prps TYPE TABLE OF prps,
 lv_pspnr TYPE ps_pspnr.
 
-“ Get project internal number
+" Get project internal number
 SELECT SINGLE pspnr FROM proj
 INTO lv_pspnr
 WHERE pspid = iv_pspnr.
 
 IF sy-subrc = 0.
-“ Get WBS elements
+" Get WBS elements
 SELECT * FROM prps
 INTO TABLE lt_prps
 WHERE psphi = lv_pspnr
@@ -284,7 +284,7 @@ ENDIF.
 ```
 
 ELSE.
-MESSAGE i011 WITH iv_pspnr. “ Template not found
+MESSAGE i011 WITH iv_pspnr. " Template not found
 ENDIF.
 
 ENDFORM.
@@ -327,7 +327,7 @@ ENDFORM.
 *&———————————————————————*
 FORM create_tree_control.
 
-“ Create custom container
+" Create custom container
 CREATE OBJECT lo_cont_preview
 EXPORTING
 container_name              = gc_tree_container
@@ -340,16 +340,16 @@ lifetime_dynpro_dynpro_link = 5
 OTHERS                      = 6.
 
 IF sy-subrc <> 0.
-MESSAGE e001 WITH ‘Error creating container’.
+MESSAGE e001 WITH 'Error creating container'.
 RETURN.
 ENDIF.
 
-“ Set hierarchy header
-ls_hierarchy_header-heading = ‘Project Structure: Description’.
-ls_hierarchy_header-tooltip = ‘Project Structure: Description’.
+" Set hierarchy header
+ls_hierarchy_header-heading = 'Project Structure: Description'.
+ls_hierarchy_header-tooltip = 'Project Structure: Description'.
 ls_hierarchy_header-width   = 40.
 
-“ Create tree control
+" Create tree control
 CREATE OBJECT lo_tree_preview
 EXPORTING
 parent                      = lo_cont_preview
@@ -366,18 +366,18 @@ failed                      = 5
 illegal_column_name         = 6.
 
 IF sy-subrc <> 0.
-MESSAGE e001 WITH ‘Error creating tree control’.
+MESSAGE e001 WITH 'Error creating tree control'.
 RETURN.
 ENDIF.
 
-“ Add identification column
+" Add identification column
 CALL METHOD lo_tree_preview->add_column
 EXPORTING
 name           = lc_hierarchy_technical_key
 width          = 30
 alignment      = cl_gui_column_tree=>align_left
-header_text    = ‘Identification’
-header_tooltip = ‘WBS Element Code’.
+header_text    = 'Identification'
+header_tooltip = 'WBS Element Code'.
 
 ENDFORM.
 
@@ -389,10 +389,10 @@ FORM load_tree_hierarchy.
 DATA: ls_proj TYPE proj,
 lv_pspid_template TYPE ps_pspid.
 
-“ Clear previous data
+" Clear previous data
 CLEAR: gt_treev_node, gt_treeitm.
 
-“ Get project template data
+" Get project template data
 lv_pspid_template = p_pspnr.
 
 SELECT SINGLE * FROM proj INTO ls_proj
@@ -400,18 +400,18 @@ WHERE pspid = lv_pspid_template.
 
 CHECK sy-subrc = 0.
 
-“ Set objects to display in hierarchy
-ls_objects_in_hierarchy-proj = abap_true.  “ Project definition
-ls_objects_in_hierarchy-prps = abap_true.  “ WBS elements
-ls_objects_in_hierarchy-pstx = abap_true.  “ Texts
+" Set objects to display in hierarchy
+ls_objects_in_hierarchy-proj = abap_true.  " Project definition
+ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
+ls_objects_in_hierarchy-pstx = abap_true.  " Texts
 
-“ Call SAP standard function to get project hierarchy
-CALL FUNCTION ‘CNPB_H_PROJ_HIER_SELECT’
+" Call SAP standard function to get project hierarchy
+CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
 EXPORTING
 i_objects_in_hierarchy = ls_objects_in_hierarchy
-i_vsnmr                = ‘’
+i_vsnmr                = ''
 i_pspid                = lv_pspid_template
-i_aufnr                = ‘’
+i_aufnr                = ''
 i_flg_enqueue          = space
 i_expand_levels        = 06
 IMPORTING
@@ -422,20 +422,20 @@ EXCEPTIONS
 OTHERS                 = 1.
 
 IF sy-subrc <> 0.
-“ Fallback: Use simple table if PS functions not available
+" Fallback: Use simple table if PS functions not available
 PERFORM load_simple_preview_fallback.
 RETURN.
 ENDIF.
 
-“ Delete existing nodes
+" Delete existing nodes
 CALL METHOD lo_tree_preview->delete_all_nodes.
 
-“ Add nodes and items to tree
+" Add nodes and items to tree
 CALL METHOD lo_tree_preview->add_nodes_and_items
 EXPORTING
 node_table                     = gt_treev_node
 item_table                     = gt_treeitm
-item_table_structure_name      = ‘CNPB_H_TREEITM’
+item_table_structure_name      = 'CNPB_H_TREEITM'
 EXCEPTIONS
 failed                         = 1
 cntl_system_error              = 3
@@ -443,7 +443,7 @@ error_in_tables                = 4
 dp_error                       = 5
 table_structure_name_not_found = 6.
 
-“ Expand root nodes
+" Expand root nodes
 CALL METHOD lo_tree_preview->expand_root_nodes
 EXPORTING
 level_count         = 0
@@ -453,7 +453,7 @@ failed              = 1
 illegal_level_count = 2
 cntl_system_error   = 3.
 
-“ Set column widths
+" Set column widths
 CALL METHOD lo_tree_preview->hierarchy_header_set_width
 EXPORTING
 width             = 40
@@ -482,8 +482,8 @@ ENDFORM.
 *&———————————————————————*
 FORM load_simple_preview_fallback.
 
-“ Fallback if CNPB functions don’t work
-“ Use simple table control or ALV instead
+" Fallback if CNPB functions don't work
+" Use simple table control or ALV instead
 DATA: lv_pspnr TYPE ps_pspnr.
 
 SELECT SINGLE pspnr FROM proj INTO lv_pspnr
@@ -495,8 +495,8 @@ SELECT * FROM prps INTO TABLE gt_preview_data
 WHERE psphi = lv_pspnr
 ORDER BY stufe posid.
 
-“ Display message that tree view not available
-MESSAGE i001 WITH ‘Tree view not available, showing list view’.
+" Display message that tree view not available
+MESSAGE i001 WITH 'Tree view not available, showing list view'.
 
 ENDFORM.
 
@@ -505,7 +505,7 @@ ENDFORM.
 *&———————————————————————*
 FORM free_tree_control.
 
-“ Free tree control when leaving screen
+" Free tree control when leaving screen
 IF lo_tree_preview IS NOT INITIAL.
 CALL METHOD lo_tree_preview->free.
 FREE lo_tree_preview.
@@ -533,9 +533,9 @@ iv_profl TYPE profidproj
 iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
 CHANGING cv_error TYPE abap_bool.
 
-“ CORRECTED: Using exact field names from SE11
-“ Table: ZTB_A2R_CONFTAB2
-“ Fields: MANDT, BUKRS, PROFL, Z_REQTYPE, ZAPROVAL_1, ZAPROVAL_2, ZERROR_HANDLING
+" CORRECTED: Using exact field names from SE11
+" Table: ZTB_A2R_CONFTAB2
+" Fields: MANDT, BUKRS, PROFL, Z_REQTYPE, ZAPROVAL_1, ZAPROVAL_2, ZERROR_HANDLING
 
 DATA: ls_config TYPE ztb_a2r_conftab2.
 
@@ -546,7 +546,7 @@ AND profl = iv_profl
 AND z_reqtype = iv_reqtype.
 
 IF sy-subrc <> 0.
-MESSAGE e023 WITH ‘No approver found for’ iv_bukrs iv_profl iv_reqtype.
+MESSAGE e023 WITH 'No approver found for' iv_bukrs iv_profl iv_reqtype.
 cv_error = gc_x.
 ENDIF.
 
@@ -562,10 +562,10 @@ ENDFORM.
 *& Module STATUS_0200 OUTPUT
 *&———————————————————————*
 MODULE status_0200 OUTPUT.
-SET PF-STATUS ‘STATUS_200’.
-SET TITLEBAR ‘TITLE_200’.
+SET PF-STATUS 'STATUS_200'.
+SET TITLEBAR 'TITLE_200'.
 
-“ Make fields required and handle editability
+" Make fields required and handle editability
 LOOP AT SCREEN.
 
 ```
@@ -600,10 +600,10 @@ ENDMODULE.
 *& Module STATUS_0100 OUTPUT
 *&———————————————————————*
 MODULE status_0100 OUTPUT.
-SET PF-STATUS ‘STATUS_100’.
-SET TITLEBAR ‘TITLE_100’.
+SET PF-STATUS 'STATUS_100'.
+SET TITLEBAR 'TITLE_100'.
 
-“ Initialize table control
+" Initialize table control
 
 - DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
 
@@ -613,24 +613,24 @@ ENDMODULE.
 *& Module FILL_TABLE_CONTROL OUTPUT
 *&———————————————————————*
 MODULE fill_table_control OUTPUT.
-“ Read current line of table control
+" Read current line of table control
 
 - READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
   IF sy-subrc = 0.
-  “ Fields are automatically filled from gs_wbs_display
+  " Fields are automatically filled from gs_wbs_display
   ENDIF.
   ENDMODULE.
 
 MODULE display_tree_preview OUTPUT.
 
-“ Only create tree once
+" Only create tree once
 CHECK lo_tree_preview IS INITIAL.
 CHECK p_pspnr IS NOT INITIAL.
 
-“ Create tree control
+" Create tree control
 PERFORM create_tree_control.
 
-“ Load hierarchy
+" Load hierarchy
 PERFORM load_tree_hierarchy.
 
 ENDMODULE.
@@ -706,8 +706,8 @@ TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
 - Constants for Tree
   *–––––––––––––––––––––––––––––––––––*
-  CONSTANTS: lc_hierarchy_short_text  TYPE char12 VALUE ‘SHORT_TEXT’,
-  lc_hierarchy_technical_key TYPE char12 VALUE ‘TECHN_KEY’.
+  CONSTANTS: lc_hierarchy_short_text  TYPE char12 VALUE 'SHORT_TEXT',
+  lc_hierarchy_technical_key TYPE char12 VALUE 'TECHN_KEY'.
 
 *–––––––––––––––––––––––––––––––––––*
 
@@ -720,7 +720,7 @@ TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
 
 - Custom Container Name
   *–––––––––––––––––––––––––––––––––––*
-  CONSTANTS: gc_tree_container TYPE scrfname VALUE ‘CC_TREE_PREVIEW’.
+  CONSTANTS: gc_tree_container TYPE scrfname VALUE 'CC_TREE_PREVIEW'.
 
 *–––––––––––––––––––––––––––––––––––*
 
@@ -756,7 +756,7 @@ gs_wbs_display TYPE ty_wbs_display.
 
 - Constants
   *–––––––––––––––––––––––––––––––––––*
-  CONSTANTS: gc_x TYPE char1 VALUE ‘X’.
+  CONSTANTS: gc_x TYPE char1 VALUE 'X'.
 
 *–––––––––––––––––––––––––––––––––––*
 
@@ -790,7 +790,7 @@ gs_wbs_display TYPE ty_wbs_display.
   imprf         TYPE im_profil,
   prart         TYPE ps_prart,
   waers         TYPE waers,
-  “ Additional fields from original ts_items
+  " Additional fields from original ts_items
   werks_name    TYPE name1,
   asset_box     TYPE zasset_box,
   zrevstr_name  TYPE zde_de_revstr,
