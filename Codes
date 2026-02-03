@@ -1,34 +1,354 @@
+*&———————————————————————*
+*& CORRECTED CODE BASED ON FDS TABLE 4.1 ROW 1
+*& IM Number Field Specification from FDS
+*&———————————————————————*
+
+*======================================================================*
+
+- FDS SPECIFICATION - TABLE 4.1 ROW 1: IM Program Position
+  *======================================================================*
+- Field name:            IM Program Position
+- Tech Field Name:       POSNR
+- Table:                 IMPR
+- Check Table:           -
+- Primary:               X
+- Data Type:             NUMC
+- Data Element:          IM_POSNR
+- Population Method:     Selected by user
+- Editable:              Yes
+- Mandatory:             Yes
+  *======================================================================*
+
+*–––––––––––––––––––––––––––––––––––*
+
+- CRITICAL FINDING: FDS says use POSNR (not POSID)!
+  *–––––––––––––––––––––––––––––––––––*
+- However, your screenshot shows you entering “PR02” which is POSID.
+- 
+- PROBLEM: Screen field is defined as type IM_POSNR (NUMC 8)
+- ```
+       But you're entering POSID format (CHAR like "PR02")
+  ```
+- 
+- SOLUTION: We need to handle BOTH formats in validation
+  *–––––––––––––––––––––––––––––––––––*
+
+*&———————————————————————*
+*& Include          ZTR_A2R_WBSZCJ01_TOP - DECLARATIONS
+*&———————————————————————*
+
+DATA: p_posnr TYPE im_posnr.  “ As per FDS: Data Element IM_POSNR
+
+*&———————————————————————*
+*& MODULE VALIDATE_POSNR INPUT - CORRECTED PER FDS
+*&———————————————————————*
 MODULE validate_posnr INPUT.
-  
-  DATA: lv_input TYPE char20.
-  
-  IF p_posnr IS NOT INITIAL.
-    
-    lv_input = p_posnr.
-    
-    " Try as POSID first (PR02)
-    SELECT SINGLE posnr FROM impr
-      INTO p_posnr
-      WHERE posid = lv_input.
-    
-    IF sy-subrc <> 0.
-      " Try as POSNR (00000011)
-      SELECT SINGLE posnr FROM impr
-        INTO p_posnr
-        WHERE posnr = lv_input.
-      
-      IF sy-subrc <> 0.
-        MESSAGE e002 WITH lv_input.
-        RETURN.
-      ENDIF.
-    ENDIF.
-    
-    " Load data
-    IF p_posnr <> gv_posnr_old.
-      PERFORM get_im_data USING p_posnr.
-      gv_posnr_old = p_posnr.
-    ENDIF.
-    
+
+DATA: lv_posnr_numeric TYPE im_posnr,
+lv_input_char    TYPE char20,
+lv_posid         TYPE im_posid.
+
+IF p_posnr IS NOT INITIAL.
+
+```
+" Save original input
+lv_input_char = p_posnr.
+
+" Remove leading spaces and convert to uppercase
+CONDENSE lv_input_char NO-GAPS.
+TRANSLATE lv_input_char TO UPPER CASE.
+
+" STEP 1: Try to find as POSID (user-friendly format like "PR02")
+" This handles when user types PR02 instead of 00000011
+lv_posid = lv_input_char.
+
+SELECT SINGLE posnr FROM impr
+  INTO lv_posnr_numeric
+  WHERE posid = lv_posid.
+
+IF sy-subrc = 0.
+  " Found via POSID - use the POSNR we got
+  p_posnr = lv_posnr_numeric.
+ELSE.
+  " STEP 2: Not found as POSID, try as POSNR with leading zeros
+  " Apply ALPHA conversion to add leading zeros
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_input_char
+    IMPORTING
+      output = lv_posnr_numeric.
+
+  " Validate this POSNR exists
+  SELECT SINGLE posnr FROM impr
+    INTO @DATA(lv_check)
+    WHERE posnr = lv_posnr_numeric.
+
+  IF sy-subrc = 0.
+    " Found as POSNR
+    p_posnr = lv_posnr_numeric.
+  ELSE.
+    " Not found in either format
+    MESSAGE e002 WITH lv_input_char. " IM Number not found
+    RETURN.
   ENDIF.
-  
+ENDIF.
+
+" Load data if POSNR changed
+IF p_posnr <> gv_posnr_old.
+  PERFORM get_im_data USING p_posnr.
+  gv_posnr_old = p_posnr.
+ENDIF.
+```
+
+ENDIF.
+
 ENDMODULE.
+
+*&———————————————————————*
+*& Form F4_IM_NUMBER - CORRECTED PER FDS
+*&———————————————————————*
+
+- FDS says: “Selected by user”
+- Show both POSID (user-friendly) and POSNR in dropdown
+  *&———————————————————————*
+  FORM f4_im_number CHANGING cv_posnr TYPE im_posnr.
+  
+  TYPES: BEGIN OF ty_im_display,
+  posid TYPE im_posid,
+  posnr TYPE im_posnr,
+  prnam TYPE im_prnam,
+  gjahr TYPE im_gnjhr,
+  END OF ty_im_display.
+  
+  DATA: lt_impr   TYPE TABLE OF ty_im_display,
+  lt_return TYPE TABLE OF ddshretval,
+  ls_return TYPE ddshretval.
+  
+  “ Get IM positions with config check
+  SELECT i~posid i~posnr i~prnam i~gjahr
+  FROM impr AS i
+  INNER JOIN ztb_a2r_conftab1 AS c
+  ON c~izwek = i~izwek
+  INTO CORRESPONDING FIELDS OF TABLE lt_impr
+  UP TO 500 ROWS
+  ORDER BY i~posid DESCENDING.
+  
+  “ Display F4 help
+  CALL FUNCTION ‘F4IF_INT_TABLE_VALUE_REQUEST’
+  EXPORTING
+  retfield        = ‘POSNR’
+  dynpprog        = sy-repid
+  dynpnr          = sy-dynnr
+  dynprofield     = ‘P_POSNR’
+  value_org       = ‘S’
+  window_title    = ‘Select IM Program Position’
+  TABLES
+  value_tab       = lt_impr
+  return_tab      = lt_return
+  EXCEPTIONS
+  parameter_error = 1
+  no_values_found = 2
+  OTHERS          = 3.
+  
+  IF sy-subrc = 0.
+  READ TABLE lt_return INTO ls_return INDEX 1.
+  IF sy-subrc = 0.
+  cv_posnr = ls_return-fieldval.
+  ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&———————————————————————*
+*& Form GET_IM_DATA - PER FDS TABLE 4.1
+*&———————————————————————*
+FORM get_im_data USING iv_posnr TYPE im_posnr.
+
+DATA: ls_impr TYPE impr.
+
+“ Validate POSNR exists and get data
+SELECT SINGLE * FROM impr
+INTO ls_impr
+WHERE posnr = iv_posnr.
+
+IF sy-subrc = 0.
+
+```
+" FDS Table 4.1 Row 5: Get IM Program (PRNAM)
+" Population: Get IMPR-POSID where IMPR-POSNR = selected POSNR
+p_prnam = ls_impr-prnam.
+
+" FDS Table 4.1 Row 6: Get Approval Year (GJAHR)
+" Population: Get IMPR-GJAHR where IMPR-POSNR = selected POSNR
+p_gjahr = ls_impr-gjahr.
+
+" FDS Table 4.1 Row 10: Get Profit Center (PRCTR)
+" Population: Get IMPR-PRCTR where IMPR-POSNR = selected POSNR
+p_prctr = ls_impr-prctr.
+
+" FDS Table 4.1 Row 11: Get Cost Center (KOSTL)
+" Population: Get IMPR-KOSTL where IMPR-POSNR = selected POSNR
+p_kostl = ls_impr-kostl.
+
+" Store additional fields for Screen 2
+gv_bukrs = ls_impr-bukrs.
+gv_werks = ls_impr-werks.
+gv_izwek = ls_impr-izwek.
+gv_usr008 = ls_impr-usr08.
+
+" FDS Table 4.1 Row 2 & 3: Get Project Profile and Template
+" Population: From IMPR-POSNR, get IMPR-IZWEK, then query config table
+PERFORM get_profile_template USING ls_impr-izwek
+                             CHANGING p_profl p_pspid.
+
+" FDS Table 4.1 Row 12: Check GE Ariba flag
+" Population: Auto-selected if IM Project management field = "GE"
+PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
+
+" FDS Table 4.1 Row 9: Set finish date for lumpsum
+" Population: For Lumpsum, auto-populate with last day of current year
+IF ls_impr-izwek = 'LS'.
+  p_plsez = sy-datum.
+  p_plsez+4(4) = '1231'. " Last day of year (e.g., 31.12.2025)
+ENDIF.
+```
+
+ELSE.
+MESSAGE e002 WITH iv_posnr. “ IM Number not found
+ENDIF.
+
+ENDFORM.
+
+*&———————————————————————*
+*& Module BUILD_IM_DROPDOWN OUTPUT - CORRECTED
+*&———————————————————————*
+MODULE build_im_dropdown OUTPUT.
+
+DATA: ls_value TYPE vrm_value,
+lt_impr  TYPE TABLE OF impr,
+ls_impr  TYPE impr.
+
+CHECK gt_im_dropdown IS INITIAL.
+
+“ Get IM positions that have config entries
+SELECT i~posid i~posnr i~prnam i~gjahr i~izwek
+FROM impr AS i
+INNER JOIN ztb_a2r_conftab1 AS c
+ON c~izwek = i~izwek
+INTO CORRESPONDING FIELDS OF TABLE lt_impr
+UP TO 500 ROWS
+ORDER BY i~posid DESCENDING.
+
+LOOP AT lt_impr INTO ls_impr.
+CLEAR ls_value.
+
+```
+" KEY = POSNR (what system needs)
+ls_value-key = ls_impr-posnr.
+
+" TEXT = POSID + PRNAM (what user sees)
+CONCATENATE ls_impr-posid '-' ls_impr-prnam
+  INTO ls_value-text SEPARATED BY space.
+
+APPEND ls_value TO gt_im_dropdown.
+```
+
+ENDLOOP.
+
+CALL FUNCTION ‘VRM_SET_VALUES’
+EXPORTING
+id     = ‘P_POSNR’
+values = gt_im_dropdown.
+
+ENDMODULE.
+
+*–––––––––––––––––––––––––––––––––––*
+
+- SCREEN FIELD DEFINITION (SE51)
+  *–––––––––––––––––––––––––––––––––––*
+- According to FDS Table 4.1 Row 1:
+- 
+- Field Name:       P_POSNR
+- Data Element:     IM_POSNR
+- Format:           NUMC 8
+- Mandatory:        Yes
+- Editable:         Yes
+- 
+- The field is correctly defined as IM_POSNR.
+- The validation logic above handles both POSID and POSNR formats.
+  *–––––––––––––––––––––––––––––––––––*
+
+*–––––––––––––––––––––––––––––––––––*
+
+- WHY “Invalid field format” ERROR OCCURS
+  *–––––––––––––––––––––––––––––––––––*
+- The error happens because:
+- 
+- 1. Screen field is defined as NUMC (numeric only)
+- 1. User enters “PR02” (contains letters)
+- 1. SAP dynpro validation rejects it BEFORE PAI module runs
+- 
+- SOLUTIONS:
+- 
+- Option A: Change screen field format to CHAR
+- - In SE51, change field format from NUMC to CHAR
+- - Keep data element as IM_POSNR
+- - Validation in PAI converts POSID → POSNR
+- 
+- Option B: Use dropdown list (VRM_SET_VALUES)
+- - Populate dropdown with POSNR values
+- - Display text shows “PR02 - Program Name”
+- - When selected, field gets POSNR (00000011)
+- - User never types anything
+- 
+- Option C: Use search help (F4IF_INT_TABLE_VALUE_REQUEST)
+- - User clicks F4 help
+- - Sees list with POSID
+- - System fills in POSNR
+- 
+- RECOMMENDED: Option B (Dropdown) - matches FDS “Selected by user”
+  *–––––––––––––––––––––––––––––––––––*
+
+*&———————————————————————*
+*& SCREEN MODIFICATION INSTRUCTIONS
+*&———————————————————————*
+
+- If using DROPDOWN approach (recommended):
+- 
+- 1. In Screen 200 (SE51):
+- - Keep field P_POSNR as is
+- - Keep data element IM_POSNR
+- 
+- 1. The dropdown will handle conversion automatically:
+- - Displays: “PR02 - Program Name”
+- - Stores: “00000011”
+- 
+- 1. Make sure PBO calls: MODULE build_im_dropdown OUTPUT
+- 
+- If using MANUAL INPUT approach:
+- 
+- 1. In Screen 200 (SE51):
+- - Change P_POSNR field format to CHAR 20
+- - Keep label as “IM Number”
+- 
+- 1. The validation module will convert POSID to POSNR
+- 
+- 1. Make sure PAI calls: MODULE validate_posnr INPUT
+   *–––––––––––––––––––––––––––––––––––*
+
+*&———————————————————————*
+*& TESTING INSTRUCTIONS
+*&———————————————————————*
+
+- Test these inputs in the IM Number field:
+- 
+- 1. PR02          → Should convert to 00000011 and load data
+- 1. 00000011      → Should directly load data
+- 1. 11            → Should pad to 00000011 and load data
+- 1. INVALID       → Should show error message
+- 
+- If using dropdown:
+- - Dropdown should show: “PR02 - PR02” (or similar)
+- - After selection, field shows: “00000011”
+- - Data auto-loads when selected
+    *–––––––––––––––––––––––––––––––––––*
