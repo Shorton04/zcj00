@@ -1,1030 +1,35 @@
-* ====================================================================
-* RICEFW ID.........: 6577
-* TR Number.........: D30K912694
-* Version...........: 1.0
-* Program...........: ZTR_A2R_WBSCJ01
-* Transaction Code..:
-* Author............: RQ28830
-* Date..............: 08.12.2025 -
-* --------------------------------------------------------------------
-* Description.......: Internal Project Cockpit
-* --------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 12/8/25  RQ28830   D30K912694    Initialized program.
-* 01/27/26 HQ75177                 Part 1 Logics and Modules
-* ====================================================================
-REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
-*----------------------------------------------------------------------*
-* Include files
-*----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbszcj01_top.
-" Selection screen removed - using dynpro screens only
-"INCLUDE ztr_a2r_wbszcj01_sel.
-INCLUDE ztr_a2r_wbszcj01_f01.
-INCLUDE ztr_a2r_wbszcj01_pbo.
-INCLUDE ztr_a2r_wbszcj01_pai.
+*&---------------------------------------------------------------------*
+*& Include          ZTR_A2R_WBSZCJ01_PBO
+*&---------------------------------------------------------------------*
 
 *&---------------------------------------------------------------------*
-*& INITIALIZATION
+*& Module DISPLAY_TREE_PREVIEW OUTPUT
 *&---------------------------------------------------------------------*
-INITIALIZATION.
-  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-  IF gv_request_type IS INITIAL.
-    gv_request_type = 'A1'.
+MODULE display_tree_preview OUTPUT.
+
+  " Check if template is provided
+  CHECK p_pspid IS NOT INITIAL.
+
+  " Create tree control on first call OR if it was destroyed
+  IF lo_tree_preview IS INITIAL.
+    PERFORM create_tree_control.
   ENDIF.
 
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
-  CREATE OBJECT go_builder.
-  CALL SCREEN 200.
+  " CRITICAL FIX: Reload tree data if PSPID changed
+  IF p_pspid <> gv_pspid_old OR lv_tree_loaded = abap_false.
+    " Load/reload hierarchy
+    PERFORM load_tree_hierarchy.
+    gv_pspid_old = p_pspid.
+  ENDIF.
 
-*&SPWIZARD: DECLARATION OF TABLECONTROL 'TC_WBS' ITSELF
-CONTROLS: TC_WBS TYPE TABLEVIEW USING SCREEN 0100.
-
-*&SPWIZARD: LINES OF TABLECONTROL 'TC_WBS'
-DATA:     G_TC_WBS_LINES  LIKE SY-LOOPC.
-
-DATA:     OK_CODE LIKE SY-UCOMM.
-
-*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
-*&SPWIZARD: UPDATE LINES FOR EQUIVALENT SCROLLBAR
-MODULE TC_WBS_CHANGE_TC_ATTR OUTPUT.
-  DESCRIBE TABLE GT_WBS_DISPLAY LINES TC_WBS-lines.
 ENDMODULE.
 
-*&SPWIZARD: OUTPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
-*&SPWIZARD: GET LINES OF TABLECONTROL
-MODULE TC_WBS_GET_LINES OUTPUT.
-  G_TC_WBS_LINES = SY-LOOPC.
-ENDMODULE.
 
-*&SPWIZARD: INPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
-*&SPWIZARD: MODIFY TABLE
-MODULE TC_WBS_MODIFY INPUT.
-  MODIFY GT_WBS_DISPLAY
-    FROM GS_WBS_DISPLAY
-    INDEX TC_WBS-CURRENT_LINE.
-ENDMODULE.
-
-*&SPWIZARD: INPUT MODUL FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
-*&SPWIZARD: MARK TABLE
-MODULE TC_WBS_MARK INPUT.
-  DATA: g_TC_WBS_wa2 like line of GT_WBS_DISPLAY.
-    if TC_WBS-line_sel_mode = 1
-    and GS_WBS_DISPLAY-MARK = 'X'.
-     loop at GT_WBS_DISPLAY into g_TC_WBS_wa2
-       where MARK = 'X'.
-       g_TC_WBS_wa2-MARK = ''.
-       modify GT_WBS_DISPLAY
-         from g_TC_WBS_wa2
-         transporting MARK.
-     endloop.
-  endif.
-  MODIFY GT_WBS_DISPLAY
-    FROM GS_WBS_DISPLAY
-    INDEX TC_WBS-CURRENT_LINE
-    TRANSPORTING MARK.
-ENDMODULE.
-
-*&SPWIZARD: INPUT MODULE FOR TC 'TC_WBS'. DO NOT CHANGE THIS LINE!
-*&SPWIZARD: PROCESS USER COMMAND
-MODULE TC_WBS_USER_COMMAND INPUT.
-  OK_CODE = SY-UCOMM.
-  PERFORM USER_OK_TC USING    'TC_WBS'
-                              'GT_WBS_DISPLAY'
-                              'MARK'
-                     CHANGING OK_CODE.
-  SY-UCOMM = OK_CODE.
-ENDMODULE.
-
-*----------------------------------------------------------------------*
-*   INCLUDE TABLECONTROL_FORMS                                         *
-*----------------------------------------------------------------------*
-
-*&---------------------------------------------------------------------*
-*&      Form  USER_OK_TC                                               *
-*&---------------------------------------------------------------------*
- FORM USER_OK_TC USING    P_TC_NAME TYPE DYNFNAM
-                          P_TABLE_NAME
-                          P_MARK_NAME
-                 CHANGING P_OK      LIKE SY-UCOMM.
-
-*&SPWIZARD: BEGIN OF LOCAL DATA----------------------------------------*
-   DATA: L_OK              TYPE SY-UCOMM,
-         L_OFFSET          TYPE I.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-*&SPWIZARD: Table control specific operations                          *
-*&SPWIZARD: evaluate TC name and operations                            *
-   SEARCH P_OK FOR P_TC_NAME.
-   IF SY-SUBRC <> 0.
-     EXIT.
-   ENDIF.
-   L_OFFSET = STRLEN( P_TC_NAME ) + 1.
-   L_OK = P_OK+L_OFFSET.
-*&SPWIZARD: execute general and TC specific operations                 *
-   CASE L_OK.
-     WHEN 'INSR'.                      "insert row
-       PERFORM FCODE_INSERT_ROW USING    P_TC_NAME
-                                         P_TABLE_NAME.
-       CLEAR P_OK.
-
-     WHEN 'DELE'.                      "delete row
-       PERFORM FCODE_DELETE_ROW USING    P_TC_NAME
-                                         P_TABLE_NAME
-                                         P_MARK_NAME.
-       CLEAR P_OK.
-
-     WHEN 'P--' OR                     "top of list
-          'P-'  OR                     "previous page
-          'P+'  OR                     "next page
-          'P++'.                       "bottom of list
-       PERFORM COMPUTE_SCROLLING_IN_TC USING P_TC_NAME
-                                             L_OK.
-       CLEAR P_OK.
-*     WHEN 'L--'.                       "total left
-*       PERFORM FCODE_TOTAL_LEFT USING P_TC_NAME.
-*
-*     WHEN 'L-'.                        "column left
-*       PERFORM FCODE_COLUMN_LEFT USING P_TC_NAME.
-*
-*     WHEN 'R+'.                        "column right
-*       PERFORM FCODE_COLUMN_RIGHT USING P_TC_NAME.
-*
-*     WHEN 'R++'.                       "total right
-*       PERFORM FCODE_TOTAL_RIGHT USING P_TC_NAME.
-*
-     WHEN 'MARK'.                      "mark all filled lines
-       PERFORM FCODE_TC_MARK_LINES USING P_TC_NAME
-                                         P_TABLE_NAME
-                                         P_MARK_NAME   .
-       CLEAR P_OK.
-
-     WHEN 'DMRK'.                      "demark all filled lines
-       PERFORM FCODE_TC_DEMARK_LINES USING P_TC_NAME
-                                           P_TABLE_NAME
-                                           P_MARK_NAME .
-       CLEAR P_OK.
-
-*     WHEN 'SASCEND'   OR
-*          'SDESCEND'.                  "sort column
-*       PERFORM FCODE_SORT_TC USING P_TC_NAME
-*                                   l_ok.
-
-   ENDCASE.
-
- ENDFORM.                              " USER_OK_TC
-
-*&---------------------------------------------------------------------*
-*&      Form  FCODE_INSERT_ROW                                         *
-*&---------------------------------------------------------------------*
- FORM fcode_insert_row
-               USING    P_TC_NAME           TYPE DYNFNAM
-                        P_TABLE_NAME             .
-
-*&SPWIZARD: BEGIN OF LOCAL DATA----------------------------------------*
-   DATA L_LINES_NAME       LIKE FELD-NAME.
-   DATA L_SELLINE          LIKE SY-STEPL.
-   DATA L_LASTLINE         TYPE I.
-   DATA L_LINE             TYPE I.
-   DATA L_TABLE_NAME       LIKE FELD-NAME.
-   FIELD-SYMBOLS <TC>                 TYPE CXTAB_CONTROL.
-   FIELD-SYMBOLS <TABLE>              TYPE STANDARD TABLE.
-   FIELD-SYMBOLS <LINES>              TYPE I.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-   ASSIGN (P_TC_NAME) TO <TC>.
-
-*&SPWIZARD: get the table, which belongs to the tc                     *
-   CONCATENATE P_TABLE_NAME '[]' INTO L_TABLE_NAME. "table body
-   ASSIGN (L_TABLE_NAME) TO <TABLE>.                "not headerline
-
-*&SPWIZARD: get looplines of TableControl                              *
-   CONCATENATE 'G_' P_TC_NAME '_LINES' INTO L_LINES_NAME.
-   ASSIGN (L_LINES_NAME) TO <LINES>.
-
-*&SPWIZARD: get current line                                           *
-   GET CURSOR LINE L_SELLINE.
-   IF SY-SUBRC <> 0.                   " append line to table
-     L_SELLINE = <TC>-LINES + 1.
-*&SPWIZARD: set top line                                               *
-     IF L_SELLINE > <LINES>.
-       <TC>-TOP_LINE = L_SELLINE - <LINES> + 1 .
-     ELSE.
-       <TC>-TOP_LINE = 1.
-     ENDIF.
-   ELSE.                               " insert line into table
-     L_SELLINE = <TC>-TOP_LINE + L_SELLINE - 1.
-     L_LASTLINE = <TC>-TOP_LINE + <LINES> - 1.
-   ENDIF.
-*&SPWIZARD: set new cursor line                                        *
-   L_LINE = L_SELLINE - <TC>-TOP_LINE + 1.
-
-*&SPWIZARD: insert initial line                                        *
-   INSERT INITIAL LINE INTO <TABLE> INDEX L_SELLINE.
-   <TC>-LINES = <TC>-LINES + 1.
-*&SPWIZARD: set cursor                                                 *
-   SET CURSOR 1 L_LINE.
-
- ENDFORM.                              " FCODE_INSERT_ROW
-
-*&---------------------------------------------------------------------*
-*&      Form  FCODE_DELETE_ROW                                         *
-*&---------------------------------------------------------------------*
- FORM fcode_delete_row
-               USING    P_TC_NAME           TYPE DYNFNAM
-                        P_TABLE_NAME
-                        P_MARK_NAME   .
-
-*&SPWIZARD: BEGIN OF LOCAL DATA----------------------------------------*
-   DATA L_TABLE_NAME       LIKE FELD-NAME.
-
-   FIELD-SYMBOLS <TC>         TYPE cxtab_control.
-   FIELD-SYMBOLS <TABLE>      TYPE STANDARD TABLE.
-   FIELD-SYMBOLS <WA>.
-   FIELD-SYMBOLS <MARK_FIELD>.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-   ASSIGN (P_TC_NAME) TO <TC>.
-
-*&SPWIZARD: get the table, which belongs to the tc                     *
-   CONCATENATE P_TABLE_NAME '[]' INTO L_TABLE_NAME. "table body
-   ASSIGN (L_TABLE_NAME) TO <TABLE>.                "not headerline
-
-*&SPWIZARD: delete marked lines                                        *
-   DESCRIBE TABLE <TABLE> LINES <TC>-LINES.
-
-   LOOP AT <TABLE> ASSIGNING <WA>.
-
-*&SPWIZARD: access to the component 'FLAG' of the table header         *
-     ASSIGN COMPONENT P_MARK_NAME OF STRUCTURE <WA> TO <MARK_FIELD>.
-
-     IF <MARK_FIELD> = 'X'.
-       DELETE <TABLE> INDEX SYST-TABIX.
-       IF SY-SUBRC = 0.
-         <TC>-LINES = <TC>-LINES - 1.
-       ENDIF.
-     ENDIF.
-   ENDLOOP.
-
- ENDFORM.                              " FCODE_DELETE_ROW
-
-*&---------------------------------------------------------------------*
-*&      Form  COMPUTE_SCROLLING_IN_TC
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-*      -->P_TC_NAME  name of tablecontrol
-*      -->P_OK       ok code
-*----------------------------------------------------------------------*
- FORM COMPUTE_SCROLLING_IN_TC USING    P_TC_NAME
-                                       P_OK.
-*&SPWIZARD: BEGIN OF LOCAL DATA----------------------------------------*
-   DATA L_TC_NEW_TOP_LINE     TYPE I.
-   DATA L_TC_NAME             LIKE FELD-NAME.
-   DATA L_TC_LINES_NAME       LIKE FELD-NAME.
-   DATA L_TC_FIELD_NAME       LIKE FELD-NAME.
-
-   FIELD-SYMBOLS <TC>         TYPE cxtab_control.
-   FIELD-SYMBOLS <LINES>      TYPE I.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-   ASSIGN (P_TC_NAME) TO <TC>.
-*&SPWIZARD: get looplines of TableControl                              *
-   CONCATENATE 'G_' P_TC_NAME '_LINES' INTO L_TC_LINES_NAME.
-   ASSIGN (L_TC_LINES_NAME) TO <LINES>.
-
-
-*&SPWIZARD: is no line filled?                                         *
-   IF <TC>-LINES = 0.
-*&SPWIZARD: yes, ...                                                   *
-     L_TC_NEW_TOP_LINE = 1.
-   ELSE.
-*&SPWIZARD: no, ...                                                    *
-     CALL FUNCTION 'SCROLLING_IN_TABLE'
-          EXPORTING
-               ENTRY_ACT             = <TC>-TOP_LINE
-               ENTRY_FROM            = 1
-               ENTRY_TO              = <TC>-LINES
-               LAST_PAGE_FULL        = 'X'
-               LOOPS                 = <LINES>
-               OK_CODE               = P_OK
-               OVERLAPPING           = 'X'
-          IMPORTING
-               ENTRY_NEW             = L_TC_NEW_TOP_LINE
-          EXCEPTIONS
-*              NO_ENTRY_OR_PAGE_ACT  = 01
-*              NO_ENTRY_TO           = 02
-*              NO_OK_CODE_OR_PAGE_GO = 03
-               OTHERS                = 0.
-   ENDIF.
-
-*&SPWIZARD: get actual tc and column                                   *
-   GET CURSOR FIELD L_TC_FIELD_NAME
-              AREA  L_TC_NAME.
-
-   IF SYST-SUBRC = 0.
-     IF L_TC_NAME = P_TC_NAME.
-*&SPWIZARD: et actual column                                           *
-       SET CURSOR FIELD L_TC_FIELD_NAME LINE 1.
-     ENDIF.
-   ENDIF.
-
-*&SPWIZARD: set the new top line                                       *
-   <TC>-TOP_LINE = L_TC_NEW_TOP_LINE.
-
-
- ENDFORM.                              " COMPUTE_SCROLLING_IN_TC
-
-*&---------------------------------------------------------------------*
-*&      Form  FCODE_TC_MARK_LINES
-*&---------------------------------------------------------------------*
-*       marks all TableControl lines
-*----------------------------------------------------------------------*
-*      -->P_TC_NAME  name of tablecontrol
-*----------------------------------------------------------------------*
-FORM FCODE_TC_MARK_LINES USING P_TC_NAME
-                               P_TABLE_NAME
-                               P_MARK_NAME.
-*&SPWIZARD: EGIN OF LOCAL DATA-----------------------------------------*
-  DATA L_TABLE_NAME       LIKE FELD-NAME.
-
-  FIELD-SYMBOLS <TC>         TYPE cxtab_control.
-  FIELD-SYMBOLS <TABLE>      TYPE STANDARD TABLE.
-  FIELD-SYMBOLS <WA>.
-  FIELD-SYMBOLS <MARK_FIELD>.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-  ASSIGN (P_TC_NAME) TO <TC>.
-
-*&SPWIZARD: get the table, which belongs to the tc                     *
-   CONCATENATE P_TABLE_NAME '[]' INTO L_TABLE_NAME. "table body
-   ASSIGN (L_TABLE_NAME) TO <TABLE>.                "not headerline
-
-*&SPWIZARD: mark all filled lines                                      *
-  LOOP AT <TABLE> ASSIGNING <WA>.
-
-*&SPWIZARD: access to the component 'FLAG' of the table header         *
-     ASSIGN COMPONENT P_MARK_NAME OF STRUCTURE <WA> TO <MARK_FIELD>.
-
-     <MARK_FIELD> = 'X'.
-  ENDLOOP.
-ENDFORM.                                          "fcode_tc_mark_lines
-
-*&---------------------------------------------------------------------*
-*&      Form  FCODE_TC_DEMARK_LINES
-*&---------------------------------------------------------------------*
-*       demarks all TableControl lines
-*----------------------------------------------------------------------*
-*      -->P_TC_NAME  name of tablecontrol
-*----------------------------------------------------------------------*
-FORM FCODE_TC_DEMARK_LINES USING P_TC_NAME
-                                 P_TABLE_NAME
-                                 P_MARK_NAME .
-*&SPWIZARD: BEGIN OF LOCAL DATA----------------------------------------*
-  DATA L_TABLE_NAME       LIKE FELD-NAME.
-
-  FIELD-SYMBOLS <TC>         TYPE cxtab_control.
-  FIELD-SYMBOLS <TABLE>      TYPE STANDARD TABLE.
-  FIELD-SYMBOLS <WA>.
-  FIELD-SYMBOLS <MARK_FIELD>.
-*&SPWIZARD: END OF LOCAL DATA------------------------------------------*
-
-  ASSIGN (P_TC_NAME) TO <TC>.
-
-*&SPWIZARD: get the table, which belongs to the tc                     *
-   CONCATENATE P_TABLE_NAME '[]' INTO L_TABLE_NAME. "table body
-   ASSIGN (L_TABLE_NAME) TO <TABLE>.                "not headerline
-
-*&SPWIZARD: demark all filled lines                                    *
-  LOOP AT <TABLE> ASSIGNING <WA>.
-
-*&SPWIZARD: access to the component 'FLAG' of the table header         *
-     ASSIGN COMPONENT P_MARK_NAME OF STRUCTURE <WA> TO <MARK_FIELD>.
-
-     <MARK_FIELD> = SPACE.
-  ENDLOOP.
-ENDFORM.                                          "fcode_tc_mark_lines
-
-
-*&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_TOP
-*&---------------------------------------------------------------------*
-TABLES: impr, projs, proj, prps, prpss, tcj41, cepc, csks, bpge.
-
-DATA: gt_im_dropdown TYPE vrm_values.
-
-*----------------------------------------------------------------------*
-* Type Definitions
-*----------------------------------------------------------------------*
-TYPES: BEGIN OF ty_wbs_display,
-         stufe          TYPE ps_stufe,
-         posid          TYPE ps_posid,
-         post1          TYPE ps_post1,
-         kostl          TYPE kostl,
-         posnr          TYPE ps_pspnr,
-         zapproved_budg TYPE bpge-wlges,
-         zbudget_check  TYPE char1,
-         bukrs          TYPE bukrs,
-         imprf          TYPE im_profil,
-         prart          TYPE ps_prart,
-         mark           TYPE char1,
-       END OF ty_wbs_display.
-
-
-*----------------------------------------------------------------------*
-* Tracking Variables
-*----------------------------------------------------------------------*
-DATA: gv_posnr_old TYPE im_posnr.
-
-*----------------------------------------------------------------------*
-* Selection Screen
-*----------------------------------------------------------------------*
-DATA: p_posnr TYPE im_posnr,
-      p_profl TYPE profidproj,
-      p_pspid TYPE ps_pspid,
-      p_prnam TYPE im_prnam,
-      p_gjahr TYPE im_gnjhr,
-      p_post1 TYPE ps_post1,
-      p_verna TYPE ps_verna,
-      p_plsez TYPE ps_plsez_chg,
-      p_prctr TYPE prctr,
-      p_kostl TYPE kostl,
-      p_usr10 TYPE char1.
-
-*----------------------------------------------------------------------*
-* Tree Control Objects for Preview (Screen 200)
-*----------------------------------------------------------------------*
-DATA: lo_cont_preview TYPE REF TO cl_gui_custom_container,
-      lo_tree_preview TYPE REF TO cl_gui_column_tree,
-      lv_tree_loaded  TYPE abap_bool.
-
-*----------------------------------------------------------------------*
-* Tree Control Data Structures
-*----------------------------------------------------------------------*
-DATA: ls_hierarchy_header     TYPE treev_hhdr,
-      gt_treev_node           TYPE TABLE OF treev_node,
-      gt_treeitm              TYPE TABLE OF cnpb_h_treeitm,
-      ls_objects_in_hierarchy TYPE cnpb_h_objects_in_hierarchy,
-      gs_objects_in_tree      TYPE cnpb_h_objects_in_hierarchy.
-
-*----------------------------------------------------------------------*
-* Constants for Tree
-*----------------------------------------------------------------------*
-CONSTANTS: lc_hierarchy_short_text    TYPE char12 VALUE 'SHORT_TEXT',
-           lc_hierarchy_technical_key TYPE char12 VALUE 'TECHN_KEY'.
-
-*----------------------------------------------------------------------*
-* Preview Data (fallback if PS functions not available)
-*----------------------------------------------------------------------*
-DATA: gt_preview_data TYPE TABLE OF prps,
-      gs_preview_data TYPE prps.
-
-*----------------------------------------------------------------------*
-* Custom Container Name
-*----------------------------------------------------------------------*
-CONSTANTS: gc_tree_container TYPE scrfname VALUE 'CC_TREE_PREVIEW'.
-
-
-*DATA: go_tree_container TYPE REF TO cl_gui_custom_container,
-*      go_tree           TYPE REF TO cl_gui_alv_tree,
-*      gv_tree_loaded    TYPE abap_bool.
-*
-*DATA: BEGIN OF gs_tree_node,
-*        node_key   TYPE lvc_nkey,
-*        parent_key TYPE lvc_nkey,
-*        stufe      TYPE ps_stufe,
-*        posid      TYPE ps_posid,
-*        post1      TYPE ps_post1,
-*        imprf      TYPE im_profil,
-*        prart      TYPE prart,
-*      END OF gs_tree_node.
-*
-*DATA: gt_tree_nodes LIKE TABLE OF gs_tree_node.
-
-*----------------------------------------------------------------------*
-* Global Variables - Screen 2
-*----------------------------------------------------------------------*
-DATA: gs_header    TYPE ztb_a2r_wbshdr,
-      gt_wbs_items TYPE TABLE OF ztb_a2r_wbsitem,
-      gs_wbs_item  TYPE ztb_a2r_wbsitem,
-      gv_z_remarks TYPE char255.
-
-DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
-      gs_wbs_display TYPE ty_wbs_display.
-
-*----------------------------------------------------------------------*
-* Global Variables - Additional IM Data
-*----------------------------------------------------------------------*
-DATA: gv_bukrs            TYPE bukrs,
-      gv_werks            TYPE werks_d,
-      gv_izwek            TYPE izwek,
-      gv_usr008           TYPE dats,
-      gv_available_budget TYPE bpge-wlges,
-      gv_request_type     TYPE ztb_a2r_reqtype-z_reqtype,
-      gv_request_number   TYPE char10.
-
-*----------------------------------------------------------------------*
-* Global Objects
-*----------------------------------------------------------------------*
-DATA: go_builder TYPE REF TO zcl_a2r_wbs_builder.
-
-*----------------------------------------------------------------------*
-* Constants
-*----------------------------------------------------------------------*
-CONSTANTS: gc_x TYPE char1 VALUE 'X'.
-
-*----------------------------------------------------------------------*
-* Table Control
-*----------------------------------------------------------------------*
-*CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 100.
-
-*----------------------------------------------------------------------*
-* Screen 100 Buttons
-*----------------------------------------------------------------------*
-
-*Cost Center table
-TYPES: BEGIN OF ts_items,
-         mandt         TYPE mandt,
-         zreq_num      TYPE zde_a2r_reqnum,
-         pspid         TYPE ps_pspid,
-         stufe         TYPE ps_stufe,
-         posid         TYPE ps_posid,
-         post1         TYPE ps_post1,
-         pspnr         TYPE ps_pspnr,
-         kostl         TYPE kostl,
-         zbudget_check TYPE char1,
-         bukrs         TYPE bukrs,
-         imprf         TYPE im_profil,
-         prart         TYPE ps_prart,
-         wert2         TYPE bp_wert2,
-         " Additional fields from original ts_items
-         werks_name    TYPE name1,
-         asset_box     TYPE zasset_box,
-         zrevstr_name  TYPE zde_de_revstr,
-         zscopcha_name TYPE zde_a2r_de_scopcha,
-         zsynergy_type TYPE zde_a2r_synergyid,
-         maktx         TYPE maktx,
-         long_text     TYPE flag,
-         updkz         TYPE updkz_d,
-         status        TYPE flag,
-         stat_curr     TYPE j_txt04,
-       END OF ts_items.
-
-DATA: ls_items            TYPE ts_items.
 
 
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_F01
 *&---------------------------------------------------------------------*
-*&---------------------------------------------------------------------*
-*& Form F4_IM_NUMBER
-*&---------------------------------------------------------------------*
-FORM f4_im_number CHANGING cv_posnr TYPE im_posnr.
-
-  TYPES: BEGIN OF ty_im_display,
-           posid TYPE im_posid,
-           posnr TYPE im_posnr,
-           prnam TYPE im_prnam,
-           gjahr TYPE im_gnjhr,
-         END OF ty_im_display.
-
-  DATA: lt_impr   TYPE TABLE OF ty_im_display,
-        lt_return TYPE TABLE OF ddshretval,
-        ls_return TYPE ddshretval.
-
-  " Get IM positions with config check
-  SELECT i~posid i~posnr i~prnam i~gjahr
-  FROM impr AS i
-  INNER JOIN ztb_a2r_conftab1 AS c
-  ON c~izwek = i~izwek
-  INTO CORRESPONDING FIELDS OF TABLE lt_impr
-  UP TO 500 ROWS
-  ORDER BY i~posid DESCENDING.
-
-  " Display F4 help
-  CALL FUNCTION 'f4if_int_table_value_request'
-    EXPORTING
-      retfield        = 'posnr'
-      dynpprog        = sy-repid
-      dynpnr          = sy-dynnr
-      dynprofield     = 'p_posnr'
-      value_org       = 's'
-      window_title    = 'Select im PROGRAM Position'
-    TABLES
-      value_tab       = lt_impr
-      return_tab      = lt_return
-    EXCEPTIONS
-      parameter_error = 1
-      no_values_found = 2
-      OTHERS          = 3.
-
-  IF sy-subrc = 0.
-    READ TABLE lt_return INTO ls_return INDEX 1.
-    IF sy-subrc = 0.
-      cv_posnr = ls_return-fieldval.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_IM_DATA
-*&---------------------------------------------------------------------*
-FORM get_im_data USING iv_posnr TYPE im_posnr.
-
-  DATA: ls_impr TYPE impr.
-
-  " Validate posnr exists and get data
-  SELECT SINGLE * FROM impr
-  INTO ls_impr
-  WHERE posnr = iv_posnr.
-
-  IF sy-subrc = 0.
-
-
-    " FDS Table 4.1 Row 5: Get IM Program (PRNAM)
-    " Population: Get IMPR-POSID where IMPR-POSNR = selected POSNR
-    p_prnam = ls_impr-prnam.
-
-    " FDS Table 4.1 Row 6: Get Approval Year (GJAHR)
-    " Population: Get IMPR-GJAHR where IMPR-POSNR = selected POSNR
-    p_gjahr = ls_impr-gjahr.
-
-    " FDS Table 4.1 Row 10: Get Profit Center (PRCTR)
-    " Population: Get IMPR-PRCTR where IMPR-POSNR = selected POSNR
-    p_prctr = ls_impr-prctr.
-
-    " FDS Table 4.1 Row 11: Get Cost Center (KOSTL)
-    " Population: Get IMPR-KOSTL where IMPR-POSNR = selected POSNR
-    p_kostl = ls_impr-kostl.
-
-    " Store additional fields for Screen 2
-    gv_bukrs = ls_impr-bukrs.
-    gv_werks = ls_impr-werks.
-    gv_izwek = ls_impr-izwek.
-    gv_usr008 = ls_impr-usr08.
-
-    " FDS Table 4.1 Row 2 & 3: Get Project Profile and Template
-    " Population: From IMPR-POSNR, get IMPR-IZWEK, then query config table
-    PERFORM get_profile_template USING ls_impr-izwek
-                                 CHANGING p_profl p_pspid.
-
-    " FDS Table 4.1 Row 12: Check GE Ariba flag
-    " Population: Auto-selected if IM Project management field = "GE"
-    PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
-
-    " FDS Table 4.1 Row 9: Set finish date for lumpsum
-    " Population: For Lumpsum, auto-populate with last day of current year
-    IF ls_impr-izwek = 'LS'.
-      p_plsez = sy-datum.
-      p_plsez+4(4) = '1231'. " Last day of year (e.g., 31.12.2025)
-    ENDIF.
-
-
-  ELSE.
-    MESSAGE e002 WITH iv_posnr. " im Number not found
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form GET_PROFILE_TEMPLATE
-*&---------------------------------------------------------------------*
-FORM get_profile_template USING iv_izwek TYPE izwek
-CHANGING cv_profl TYPE profidproj
-cv_pspid TYPE ps_pspid.
-
-  DATA: ls_config TYPE ztb_a2r_conftab1,
-        lv_pspnr  TYPE ps_pspnr.
-
-  " CRITICAL FIX: PSPNR in config table is INTERNAL number, not PSPID!
-  " From screenshot: PSPNR = PC.000001 (display), 00000008 (internal)
-
-  SELECT SINGLE profl pspnr FROM ztb_a2r_conftab1
-  INTO (cv_profl, lv_pspnr)
-  WHERE izwek = iv_izwek.
-
-  IF sy-subrc = 0.
-    " NOW get the PSPID (external ID) from PSPNR (internal number)
-    " Use PROJS table (standard WBS structure table from screenshot 4)
-    SELECT SINGLE pspid FROM projs
-    INTO cv_pspid
-    WHERE pspnr = lv_pspnr.
-
-
-    IF sy-subrc <> 0.
-      " Fallback to PROJ table if not found in PROJS
-      SELECT SINGLE pspid FROM proj
-        INTO cv_pspid
-        WHERE pspnr = lv_pspnr.
-    ENDIF.
-
-    IF cv_pspid IS INITIAL.
-      MESSAGE w003 WITH 'Template PSPID not found for PSPNR' lv_pspnr.
-      CLEAR: cv_profl, cv_pspid.
-    ENDIF.
-
-
-  ELSE.
-    MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
-    CLEAR: cv_profl, cv_pspid.
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form CHECK_GE_ARIBA
-*&---------------------------------------------------------------------*
-FORM check_ge_ariba USING is_impr TYPE impr
-CHANGING cv_flag TYPE char1.
-
-  " Check if project management field = GE (Global Engineering)
-  IF is_impr-usr10 = 'GE'.
-    cv_flag = gc_x.
-  ELSE.
-    CLEAR cv_flag.
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_SCREEN1
-*&---------------------------------------------------------------------*
-FORM validate_screen1.
-
-  DATA: lv_error TYPE abap_bool,
-        lv_kokrs TYPE kokrs.
-
-  SELECT SINGLE kokrs
-    INTO lv_kokrs
-    FROM impr
-    WHERE posnr = p_posnr.
-
-  " Cost Center validation
-  PERFORM validate_cost_center USING lv_kokrs p_kostl p_plsez
-  CHANGING lv_error.
-
-  " Profit Center validation
-  PERFORM validate_profit_center USING lv_kokrs p_prctr p_plsez
-  CHANGING lv_error.
-
-  " CC to PC assignment
-  PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
-  CHANGING lv_error.
-
-  " FR Unit validation
-  PERFORM validate_fr_unit USING p_posnr p_prctr
-  CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004. " Validation errors found
-  ENDIF.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_COST_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_cost_center USING iv_kokrs TYPE kokrs
-      iv_kostl TYPE kostl
-      iv_plsez TYPE ps_plsez_chg
-CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_csks TYPE csks.
-
-  " Check cost center validity against Finish Date
-  SELECT SINGLE * FROM csks
-  INTO ls_csks
-  WHERE kostl = iv_kostl
-  AND kokrs = iv_kokrs
-  AND datab <= iv_plsez
-  AND datbi >= iv_plsez.
-
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e005 WITH iv_kostl iv_plsez.
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_PROFIT_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_profit_center USING iv_kokrs TYPE kokrs
-      iv_prctr TYPE prctr
-iv_plsez TYPE ps_plsez_chg
-CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_cepc TYPE cepc.
-
-  " Check profit center validity against Finish Date
-  SELECT SINGLE * FROM cepc
-  INTO ls_cepc
-  WHERE prctr = iv_prctr
-    AND kokrs = iv_kokrs
-  AND datbi >= iv_plsez.
-
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e007 WITH iv_prctr iv_plsez.
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_CC_PC_ASSIGNMENT
-*&---------------------------------------------------------------------*
-FORM validate_cc_pc_assignment USING iv_kostl TYPE kostl
-iv_prctr TYPE prctr
-CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_csks TYPE csks,
-        ls_cepc TYPE cepc.
-
-  SELECT SINGLE * FROM csks
-  INTO ls_csks
-  WHERE kostl = iv_kostl.
-
-  IF ls_csks-prctr <> iv_prctr.
-    MESSAGE e009 WITH iv_kostl.
-    cv_error = gc_x.
-    RETURN.
-  ENDIF.
-
-  SELECT SINGLE * FROM cepc
-  INTO ls_cepc
-  WHERE prctr = iv_prctr.
-
-  IF ls_cepc-bukrs IS NOT INITIAL AND
-  ls_cepc-bukrs NE ls_csks-bukrs.
-    MESSAGE e010.
-    cv_error = gc_x.
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_FR_UNIT
-*&---------------------------------------------------------------------*
-FORM validate_fr_unit USING iv_posnr TYPE im_posnr
-                            iv_prctr TYPE prctr
-                      CHANGING cv_error TYPE abap_bool.
-
-  " Placeholder for FR Unit validation
-  " Implement based on actual custom tables
-  " Reference: Table ZTXCA_ORG01
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form SHOW_TEMPLATE_PREVIEW
-*&---------------------------------------------------------------------*
-FORM show_template_preview USING iv_pspid TYPE ps_pspid.
-
-  DATA: lt_prpss TYPE TABLE OF prpss,
-        lv_pspnr TYPE ps_pspnr.
-
-  " CORRECTED: Get project internal number from PSPID
-  " Use PROJS table (as shown in screenshot 4)
-  SELECT SINGLE pspnr FROM projs
-  INTO lv_pspnr
-  WHERE pspid = iv_pspid.
-
-  IF sy-subrc <> 0.
-    " Fallback to PROJ if not found in PROJS
-    SELECT SINGLE pspnr FROM proj
-    INTO lv_pspnr
-    WHERE pspid = iv_pspid.
-  ENDIF.
-
-  IF sy-subrc = 0.
-    " Get WBS elements using PRPSS (screenshot 5 shows this is correct)
-    SELECT * FROM prpss
-    INTO TABLE lt_prpss
-    WHERE psphi = lv_pspnr
-    ORDER BY stufe posid.
-
-
-    IF sy-subrc = 0.
-      CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
-        EXPORTING
-          i_title       = 'Project Template Preview'
-          i_tabname     = 'PRPSS'
-        TABLES
-          t_outtab      = lt_prpss
-        EXCEPTIONS
-          program_error = 1
-          OTHERS        = 2.
-    ENDIF.
-
-
-  ELSE.
-    MESSAGE i011 WITH iv_pspid. " Template not found
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form GET_AVAILABLE_IM_BUDGET
-*&---------------------------------------------------------------------*
-FORM get_available_im_budget USING iv_posnr TYPE im_posnr
-CHANGING cv_budget TYPE bpge-wlges.
-
-  DATA: lv_objnr TYPE j_objnr,
-        ls_bpge  TYPE bpge.
-
-  SELECT SINGLE objnr FROM impr
-  INTO lv_objnr
-  WHERE posnr = iv_posnr.
-
-  IF sy-subrc = 0.
-    SELECT SINGLE wlges wtgev
-    FROM bpge
-    INTO (ls_bpge-wlges, ls_bpge-wtgev)
-    WHERE objnr = lv_objnr.
-
-
-    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
-
-    IF cv_budget > 0.
-      gv_available_budget = cv_budget.
-    ELSE.
-      CLEAR gv_available_budget.
-    ENDIF.
-
-
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form CREATE_TREE_CONTROL
-*&---------------------------------------------------------------------*
-FORM create_tree_control.
-
-  " Create custom container
-  CREATE OBJECT lo_cont_preview
-    EXPORTING
-      container_name              = gc_tree_container
-    EXCEPTIONS
-      cntl_error                  = 1
-      cntl_system_error           = 2
-      create_error                = 3
-      lifetime_error              = 4
-      lifetime_dynpro_dynpro_link = 5
-      OTHERS                      = 6.
-
-  IF sy-subrc <> 0.
-    MESSAGE e001 WITH 'Error creating container'.
-    RETURN.
-  ENDIF.
-
-  " Set hierarchy header
-  ls_hierarchy_header-heading = 'Project Structure: Description'.
-  ls_hierarchy_header-tooltip = 'Project Structure: Description'.
-  ls_hierarchy_header-width   = 40.
-
-  " Create tree control
-  CREATE OBJECT lo_tree_preview
-    EXPORTING
-      parent                      = lo_cont_preview
-      node_selection_mode         = 0
-      item_selection              = space
-      hierarchy_column_name       = lc_hierarchy_short_text
-      hierarchy_header            = ls_hierarchy_header
-    EXCEPTIONS
-      lifetime_error              = 1
-      cntl_system_error           = 2
-      create_error                = 3
-      illegal_node_selection_mode = 4
-      failed                      = 5
-      illegal_column_name         = 6.
-
-  IF sy-subrc <> 0.
-    MESSAGE e001 WITH 'Error creating tree control'.
-    RETURN.
-  ENDIF.
-
-  " Add identification column
-  CALL METHOD lo_tree_preview->add_column
-    EXPORTING
-      name           = lc_hierarchy_technical_key
-      width          = 30
-      alignment      = cl_gui_column_tree=>align_left
-      header_text    = 'Identification'
-      header_tooltip = 'WBS Element Code'.
-
-ENDFORM.
 
 *&---------------------------------------------------------------------*
 *& Form LOAD_TREE_HIERARCHY
@@ -1032,7 +37,8 @@ ENDFORM.
 FORM load_tree_hierarchy.
 
   DATA: ls_proj           TYPE proj,
-        lv_pspid_template TYPE ps_pspid.
+        lv_pspid_template TYPE ps_pspid,
+        lv_pspnr          TYPE ps_pspnr.
 
   " Clear previous data
   CLEAR: gt_treev_node, gt_treeitm.
@@ -1040,12 +46,27 @@ FORM load_tree_hierarchy.
   " Get project template data
   lv_pspid_template = p_pspid.
 
-  SELECT SINGLE * FROM proj INTO ls_proj
+  " CORRECTED: Get internal PSPNR from external PSPID
+  " Try PROJS first (WBS structure table)
+  SELECT SINGLE pspnr FROM projs 
+    INTO lv_pspnr
     WHERE pspid = lv_pspid_template.
 
-  CHECK sy-subrc = 0.
+  IF sy-subrc <> 0.
+    " Fallback to PROJ (project definition table)
+    SELECT SINGLE pspnr FROM proj 
+      INTO lv_pspnr
+      WHERE pspid = lv_pspid_template.
+  ENDIF.
+
+  IF sy-subrc <> 0.
+    MESSAGE i011 WITH lv_pspid_template. " Template not found
+    PERFORM load_simple_preview_fallback.
+    RETURN.
+  ENDIF.
 
   " Set objects to display in hierarchy
+  CLEAR ls_objects_in_hierarchy.
   ls_objects_in_hierarchy-proj = abap_true.  " Project definition
   ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
   ls_objects_in_hierarchy-pstx = abap_true.  " Texts
@@ -1064,16 +85,22 @@ FORM load_tree_hierarchy.
       et_treev_node          = gt_treev_node
       e_objects_in_hierarchy = gs_objects_in_tree
     EXCEPTIONS
-      OTHERS                 = 1.
+      project_not_found      = 1
+      OTHERS                 = 2.
 
-  IF sy-subrc <> 0.
+  IF sy-subrc <> 0 OR gt_treev_node IS INITIAL.
     " Fallback: Use simple table if PS functions not available
     PERFORM load_simple_preview_fallback.
     RETURN.
   ENDIF.
 
-  " Delete existing nodes
-  CALL METHOD lo_tree_preview->delete_all_nodes.
+  " Delete existing nodes before adding new ones
+  IF lo_tree_preview IS NOT INITIAL.
+    CALL METHOD lo_tree_preview->delete_all_nodes
+      EXCEPTIONS
+        failed            = 1
+        cntl_system_error = 2.
+  ENDIF.
 
   " Add nodes and items to tree
   CALL METHOD lo_tree_preview->add_nodes_and_items
@@ -1083,40 +110,33 @@ FORM load_tree_hierarchy.
       item_table_structure_name      = 'CNPB_H_TREEITM'
     EXCEPTIONS
       failed                         = 1
+      node_not_found                 = 2
       cntl_system_error              = 3
       error_in_tables                = 4
       dp_error                       = 5
       table_structure_name_not_found = 6.
 
-  " Expand root nodes
+  IF sy-subrc <> 0.
+    " If standard tree fails, use fallback
+    PERFORM load_simple_preview_fallback.
+    RETURN.
+  ENDIF.
+
+  " Expand root nodes to show structure
   CALL METHOD lo_tree_preview->expand_root_nodes
     EXPORTING
-      level_count         = 0
-      expand_subtree      = space
+      level_count         = 2  " Expand 2 levels
+      expand_subtree      = abap_true
     EXCEPTIONS
       failed              = 1
       illegal_level_count = 2
       cntl_system_error   = 3.
 
-  " Set column widths
-  CALL METHOD lo_tree_preview->hierarchy_header_set_width
-    EXPORTING
-      width             = 40
-      width_pix         = space
+  " Optimize column display
+  CALL METHOD lo_tree_preview->column_optimize
     EXCEPTIONS
       failed            = 1
       cntl_system_error = 2.
-
-  CALL METHOD lo_tree_preview->column_set_width
-    EXPORTING
-      column_name       = lc_hierarchy_technical_key
-      width             = 21
-      width_pix         = space
-    EXCEPTIONS
-      failed            = 1
-      column_not_found  = 2
-      hierarchy_column  = 3
-      cntl_system_error = 4.
 
   lv_tree_loaded = abap_true.
 
@@ -1127,293 +147,105 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM load_simple_preview_fallback.
 
-  DATA: lv_pspnr TYPE ps_pspnr.
+  DATA: lv_pspnr        TYPE ps_pspnr,
+        lt_prpss        TYPE TABLE OF prpss,
+        ls_prpss        TYPE prpss,
+        lv_node_key     TYPE tv_nodekey,
+        lv_parent_key   TYPE tv_nodekey,
+        ls_node         TYPE treev_node,
+        ls_item         TYPE cnpb_h_treeitm,
+        lv_line_no      TYPE i.
 
-  " CORRECTED: Use PROJS first, then PROJ as fallback
+  " Get internal PSPNR
   SELECT SINGLE pspnr FROM projs INTO lv_pspnr
-  WHERE pspid = p_pspid.
+    WHERE pspid = p_pspid.
 
   IF sy-subrc <> 0.
     SELECT SINGLE pspnr FROM proj INTO lv_pspnr
-    WHERE pspid = p_pspid.
+      WHERE pspid = p_pspid.
   ENDIF.
 
   CHECK sy-subrc = 0.
 
-  " Use PRPSS for preview (screenshot 5)
-  SELECT * FROM prpss INTO TABLE gt_preview_data
-  WHERE psphi = lv_pspnr
-  ORDER BY stufe posid.
+  " Get WBS structure from PRPSS
+  SELECT * FROM prpss INTO TABLE lt_prpss
+    WHERE psphi = lv_pspnr
+    ORDER BY stufe posid.
 
-  MESSAGE i001 WITH 'Tree view not available, showing list view'.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form FREE_TREE_CONTROL
-*&---------------------------------------------------------------------*
-FORM free_tree_control.
-
-  " Free tree control when leaving screen
-  IF lo_tree_preview IS NOT INITIAL.
-    CALL METHOD lo_tree_preview->free.
-    FREE lo_tree_preview.
+  IF sy-subrc <> 0 OR lt_prpss IS INITIAL.
+    MESSAGE i001 WITH 'No WBS elements found for template'.
+    RETURN.
   ENDIF.
 
-  IF lo_cont_preview IS NOT INITIAL.
-    CALL METHOD lo_cont_preview->free.
-    FREE lo_cont_preview.
-  ENDIF.
-
-  lv_tree_loaded = abap_false.
+  " Build tree manually
   CLEAR: gt_treev_node, gt_treeitm.
 
+  LOOP AT lt_prpss INTO ls_prpss.
+    lv_line_no = sy-tabix.
+
+    " Create node
+    CLEAR ls_node.
+    ls_node-node_key = lv_line_no.
+    
+    " Determine parent (Level 1 = root, Level 2+ = child of previous higher level)
+    IF ls_prpss-stufe = 1.
+      ls_node-relatkey = space.  " Root node
+    ELSE.
+      " Find parent node (previous node with lower STUFE)
+      LOOP AT lt_prpss INTO DATA(ls_parent) TO lv_line_no - 1.
+        IF ls_parent-stufe < ls_prpss-stufe.
+          ls_node-relatkey = sy-tabix.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    ls_node-relatship = cl_gui_column_tree=>relat_last_child.
+    ls_node-n_image   = '@3P@'.  " WBS icon
+    ls_node-exp_image = '@3Q@'.
+    APPEND ls_node TO gt_treev_node.
+
+    " Create items for this node
+    " Item 1: Description (Short Text)
+    CLEAR ls_item.
+    ls_item-node_key = lv_line_no.
+    ls_item-item_name = lc_hierarchy_short_text.
+    ls_item-class = cl_gui_column_tree=>item_class_text.
+    ls_item-text = ls_prpss-post1.
+    APPEND ls_item TO gt_treeitm.
+
+    " Item 2: Technical Key (POSID)
+    CLEAR ls_item.
+    ls_item-node_key = lv_line_no.
+    ls_item-item_name = lc_hierarchy_technical_key.
+    ls_item-class = cl_gui_column_tree=>item_class_text.
+    ls_item-text = ls_prpss-posid.
+    APPEND ls_item TO gt_treeitm.
+
+  ENDLOOP.
+
+  " Add nodes to tree
+  IF lo_tree_preview IS NOT INITIAL.
+    CALL METHOD lo_tree_preview->delete_all_nodes.
+
+    CALL METHOD lo_tree_preview->add_nodes_and_items
+      EXPORTING
+        node_table                     = gt_treev_node
+        item_table                     = gt_treeitm
+        item_table_structure_name      = 'CNPB_H_TREEITM'
+      EXCEPTIONS
+        failed                         = 1
+        cntl_system_error              = 3
+        error_in_tables                = 4
+        dp_error                       = 5
+        table_structure_name_not_found = 6.
+
+    CALL METHOD lo_tree_preview->expand_root_nodes
+      EXPORTING
+        level_count = 2
+        expand_subtree = abap_true.
+  ENDIF.
+
+  lv_tree_loaded = abap_true.
+
 ENDFORM.
 
-
-
-*&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_PBO
-*&---------------------------------------------------------------------*
-*&---------------------------------------------------------------------*
-*& Module STATUS_0100 OUTPUT
-*&---------------------------------------------------------------------*
-MODULE status_0200 OUTPUT.
-  SET PF-STATUS 'STATUS_200'.
-  SET TITLEBAR 'TITLE_200'.
-
-  " Make fields required and handle editability
-  LOOP AT SCREEN.
-
-
-    " CORRECTED: Profit Center should ALWAYS be editable
-    " Remove the graying logic that was causing the issue
-    " FDS Table 4.1.4: Profit Center is editable for ALL request types
-
-    " Finish Date (PLSEZ): Editable based on investment reason
-    IF screen-name = 'P_PLSEZ'.
-      IF gv_izwek = 'LS'.           " Lumpsum
-        screen-input = 0.            " Not editable - auto-calculated
-      ELSE.                          " Projects/ESR
-        screen-input = 1.            " Editable
-      ENDIF.
-      MODIFY SCREEN.
-    ENDIF.
-
-    " GE Ariba Flag (USR10): NOT editable (auto-filled from IM)
-    IF screen-name = 'P_USR10'.
-      screen-input = 0.              " Not editable
-      MODIFY SCREEN.
-    ENDIF.
-
-    " REMOVED: Profit Center graying logic
-    " Profit Center should remain editable in all cases
-
-
-  ENDLOOP.
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module STATUS_0200 OUTPUT
-*&---------------------------------------------------------------------*
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100'.
-
-  " Initialize table control
-
-  "DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
-
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module FILL_TABLE_CONTROL OUTPUT
-*&---------------------------------------------------------------------*
-MODULE fill_table_control OUTPUT.
-  " Read current line of table control
-*  READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
-  IF sy-subrc = 0.
-    " Fields are automatically filled from gs_wbs_display
-  ENDIF.
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module BUILD_IM_DROPDOWN OUTPUT
-*&---------------------------------------------------------------------*
-MODULE build_im_dropdown OUTPUT.
-
-  DATA: ls_value TYPE vrm_value,
-        lt_impr  TYPE TABLE OF impr,
-        ls_impr  TYPE impr,
-        lt_parts TYPE STANDARD TABLE OF string,
-        lv_dummy TYPE string,
-        lv_pr01  TYPE string.
-
-  CHECK gt_im_dropdown IS INITIAL.
-
-  " Get IM positions that have config entries
-  SELECT i~posid i~posnr i~prnam i~gjahr i~izwek
-  FROM impr AS i
-  INNER JOIN ztb_a2r_conftab1 AS c
-  ON c~izwek = i~izwek
-  INTO CORRESPONDING FIELDS OF TABLE lt_impr
-  UP TO 500 ROWS
-  ORDER BY i~posid DESCENDING.
-
-  LOOP AT lt_impr INTO ls_impr.
-    CLEAR ls_value.
-
-    " Internal value (hidden)
-    ls_value-key = ls_impr-posnr.
-
-    SPLIT ls_impr-prnam AT space INTO TABLE lt_parts.
-    READ TABLE lt_parts INDEX lines( lt_parts ) INTO ls_value-text.
-
-    APPEND ls_value TO gt_im_dropdown.
-  ENDLOOP.
-
-  CALL FUNCTION 'VRM_SET_VALUES'
-    EXPORTING
-      id     = 'P_POSNR'
-      values = gt_im_dropdown.
-
-ENDMODULE.
-
-
-MODULE display_tree_preview OUTPUT.
-
-  " Only create tree once
-  CHECK lo_tree_preview IS INITIAL.
-  CHECK p_pspid IS NOT INITIAL.
-
-  " Create tree control
-  PERFORM create_tree_control.
-
-  " Load hierarchy
-  PERFORM load_tree_hierarchy.
-
-ENDMODULE.
-
-
-
-*&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_PBO
-*&---------------------------------------------------------------------*
-*&---------------------------------------------------------------------*
-*& Module STATUS_0100 OUTPUT
-*&---------------------------------------------------------------------*
-MODULE status_0200 OUTPUT.
-  SET PF-STATUS 'STATUS_200'.
-  SET TITLEBAR 'TITLE_200'.
-
-  " Make fields required and handle editability
-  LOOP AT SCREEN.
-
-
-    " CORRECTED: Profit Center should ALWAYS be editable
-    " Remove the graying logic that was causing the issue
-    " FDS Table 4.1.4: Profit Center is editable for ALL request types
-
-    " Finish Date (PLSEZ): Editable based on investment reason
-    IF screen-name = 'P_PLSEZ'.
-      IF gv_izwek = 'LS'.           " Lumpsum
-        screen-input = 0.            " Not editable - auto-calculated
-      ELSE.                          " Projects/ESR
-        screen-input = 1.            " Editable
-      ENDIF.
-      MODIFY SCREEN.
-    ENDIF.
-
-    " GE Ariba Flag (USR10): NOT editable (auto-filled from IM)
-    IF screen-name = 'P_USR10'.
-      screen-input = 0.              " Not editable
-      MODIFY SCREEN.
-    ENDIF.
-
-    " REMOVED: Profit Center graying logic
-    " Profit Center should remain editable in all cases
-
-
-  ENDLOOP.
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module STATUS_0200 OUTPUT
-*&---------------------------------------------------------------------*
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100'.
-
-  " Initialize table control
-
-  "DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
-
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module FILL_TABLE_CONTROL OUTPUT
-*&---------------------------------------------------------------------*
-MODULE fill_table_control OUTPUT.
-  " Read current line of table control
-*  READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
-  IF sy-subrc = 0.
-    " Fields are automatically filled from gs_wbs_display
-  ENDIF.
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module BUILD_IM_DROPDOWN OUTPUT
-*&---------------------------------------------------------------------*
-MODULE build_im_dropdown OUTPUT.
-
-  DATA: ls_value TYPE vrm_value,
-        lt_impr  TYPE TABLE OF impr,
-        ls_impr  TYPE impr,
-        lt_parts TYPE STANDARD TABLE OF string,
-        lv_dummy TYPE string,
-        lv_pr01  TYPE string.
-
-  CHECK gt_im_dropdown IS INITIAL.
-
-  " Get IM positions that have config entries
-  SELECT i~posid i~posnr i~prnam i~gjahr i~izwek
-  FROM impr AS i
-  INNER JOIN ztb_a2r_conftab1 AS c
-  ON c~izwek = i~izwek
-  INTO CORRESPONDING FIELDS OF TABLE lt_impr
-  UP TO 500 ROWS
-  ORDER BY i~posid DESCENDING.
-
-  LOOP AT lt_impr INTO ls_impr.
-    CLEAR ls_value.
-
-    " Internal value (hidden)
-    ls_value-key = ls_impr-posnr.
-
-    SPLIT ls_impr-prnam AT space INTO TABLE lt_parts.
-    READ TABLE lt_parts INDEX lines( lt_parts ) INTO ls_value-text.
-
-    APPEND ls_value TO gt_im_dropdown.
-  ENDLOOP.
-
-  CALL FUNCTION 'VRM_SET_VALUES'
-    EXPORTING
-      id     = 'P_POSNR'
-      values = gt_im_dropdown.
-
-ENDMODULE.
-
-
-MODULE display_tree_preview OUTPUT.
-
-  " Only create tree once
-  CHECK lo_tree_preview IS INITIAL.
-  CHECK p_pspid IS NOT INITIAL.
-
-  " Create tree control
-  PERFORM create_tree_control.
-
-  " Load hierarchy
-  PERFORM load_tree_hierarchy.
-
-ENDMODULE.
