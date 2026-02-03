@@ -7,7 +7,7 @@ CLASS zcl_a2r_wbs_builder DEFINITION
 
     METHODS copy_template_structure
       IMPORTING
-        !iv_pspnr     TYPE ps_ispsp
+        !iv_pspid     TYPE ps_pspid
         !iv_kostl     TYPE kostl
       CHANGING
         !ct_wbs_items TYPE STANDARD TABLE .
@@ -304,7 +304,7 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * <SIGNATURE>---------------------------------------------------------------------------------------+
 * | Instance Public Method ZCL_A2R_WBS_BUILDER->COPY_TEMPLATE_STRUCTURE
 * +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_PSPNR                       TYPE        PS_ISPSP
+* | [--->] IV_PSPID                       TYPE        PS_PSPID
 * | [--->] IV_KOSTL                       TYPE        KOSTL
 * | [<-->] CT_WBS_ITEMS                   TYPE        STANDARD TABLE
 * +--------------------------------------------------------------------------------------</SIGNATURE>
@@ -313,16 +313,16 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
     DATA: lt_prps  TYPE TABLE OF prps,
           ls_prps  TYPE prps,
           ls_wbs   TYPE ztb_a2r_wbsitem,
-          lv_pspnr TYPE ps_ispsp.
+          lv_pspnr TYPE ps_pspid.
 
     " Get project internal number from template ID
-    SELECT SINGLE pspnr FROM proj
+    SELECT SINGLE pspnr FROM projs
       INTO lv_pspnr
-      WHERE pspnr = iv_pspnr.
+      WHERE pspid = iv_pspid.
 
     IF sy-subrc = 0.
       " Get all WBS elements belonging to this project
-      SELECT * FROM prps
+      SELECT * FROM prpss
         INTO TABLE lt_prps
         WHERE psphi = lv_pspnr
         ORDER BY stufe posid.
@@ -564,7 +564,7 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
         wait = 'X'.
 
     " Get project internal number
-    SELECT SINGLE pspnr FROM proj
+    SELECT SINGLE pspnr FROM projs
       INTO lv_level1_pspnr
       WHERE pspid = lv_pspid.
 
