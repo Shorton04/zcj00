@@ -1,110 +1,142 @@
-*&---------------------------------------------------------------------*
-*& Module DISPLAY_TREE_PREVIEW OUTPUT
-*&---------------------------------------------------------------------*
-MODULE display_tree_preview OUTPUT.
+*----------------------------------------------------------------------*
+* Tree Control Objects for Preview (Screen 200)
+*----------------------------------------------------------------------*
+DATA: lo_cont_preview TYPE REF TO cl_gui_custom_container,
+      lo_tree_preview TYPE REF TO cl_gui_column_tree,
+      lv_tree_loaded  TYPE abap_bool.
 
-  " Reload tree when template changes
-  IF p_pspid IS NOT INITIAL AND 
-     ( lo_tree_preview IS INITIAL OR p_pspid NE gv_pspid_old ).
-    
-    " Free existing tree if template changed
-    IF p_pspid NE gv_pspid_old AND lo_tree_preview IS NOT INITIAL.
-      PERFORM free_tree_control.
-    ENDIF.
-    
-    " Create tree control
-    IF lo_tree_preview IS INITIAL.
-      PERFORM create_tree_control.
-    ENDIF.
-    
-    " Load hierarchy
-    PERFORM load_tree_hierarchy.
-    
-    " Store current template
-    gv_pspid_old = p_pspid.
-    
+*----------------------------------------------------------------------*
+* Tree Control Data Structures
+*----------------------------------------------------------------------*
+DATA: ls_hierarchy_header     TYPE treev_hhdr,
+      gt_treev_node           TYPE TABLE OF treev_node,
+      gt_treev_node_u         TYPE TABLE OF treev_nou, "ADD THIS
+      gt_treeitm              TYPE TABLE OF cnpb_h_treeitm,
+      gt_treeitm_u            TYPE TABLE OF cnpb_h_treeitm_upd, "ADD THIS
+      ls_objects_in_hierarchy TYPE cnpb_h_objects_in_hierarchy,
+      gs_objects_in_tree      TYPE cnpb_h_objects_in_hierarchy.
+
+*----------------------------------------------------------------------*
+* Additional Tree Variables (from reference code)
+*----------------------------------------------------------------------*
+DATA: lv_enqueue          TYPE char1,
+      lv_drag_drop_handle TYPE i,
+      lv_hier_col_is_key  TYPE char1.
+
+*----------------------------------------------------------------------*
+* Constants for Tree
+*----------------------------------------------------------------------*
+CONSTANTS: lc_hierarchy_short_text    TYPE char12 VALUE 'SHORT_TEXT',
+           lc_hierarchy_technical_key TYPE char12 VALUE 'TECHN_KEY'.
+
+*----------------------------------------------------------------------*
+* Custom Container Name
+*----------------------------------------------------------------------*
+CONSTANTS: gc_tree_container TYPE scrfname VALUE 'CC_TREE_PREVIEW'.
+
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Form CREATE_TREE_CONTROL
+*&---------------------------------------------------------------------*
+FORM create_tree_control.
+
+  " Only create if not already created
+  CHECK lo_tree_preview IS INITIAL.
+
+  " Create custom container
+  CREATE OBJECT lo_cont_preview
+    EXPORTING
+      container_name              = gc_tree_container
+    EXCEPTIONS
+      cntl_error                  = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      lifetime_error              = 4
+      lifetime_dynpro_dynpro_link = 5
+      OTHERS                      = 6.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error creating container' TYPE 'I'.
+    RETURN.
   ENDIF.
 
-ENDMODULE.
+  " Set hierarchy header
+  CLEAR ls_hierarchy_header.
+  ls_hierarchy_header-heading = 'Project Structure: Description'.
+  ls_hierarchy_header-tooltip = 'Project Structure: Description'.
+  ls_hierarchy_header-width   = 40.
 
+  " Create tree control
+  CREATE OBJECT lo_tree_preview
+    EXPORTING
+      parent                      = lo_cont_preview
+      node_selection_mode         = 0
+      item_selection              = space
+      hierarchy_column_name       = lc_hierarchy_short_text
+      hierarchy_header            = ls_hierarchy_header
+    EXCEPTIONS
+      lifetime_error              = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      illegal_node_selection_mode = 4
+      failed                      = 5
+      illegal_column_name         = 6
+      OTHERS                      = 7.
 
-
-
-*&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_PAI
-*&---------------------------------------------------------------------*
-
-*&---------------------------------------------------------------------*
-*& Module USER_COMMAND_0200 INPUT
-*&---------------------------------------------------------------------*
-MODULE user_command_0200 INPUT.
-
-  DATA: lv_okcode TYPE sy-ucomm.
-  
-  lv_okcode = sy-ucomm.
-  CLEAR sy-ucomm.
-
-  CASE lv_okcode.
-    WHEN 'BACK' OR 'EXIT' OR 'CANCEL'.
-      PERFORM free_tree_control.
-      LEAVE TO SCREEN 0.
-      
-    WHEN 'NEXT'.
-      PERFORM validate_screen1.
-      " Proceed to next screen
-      
-    WHEN OTHERS.
-      " Handle other commands
-  ENDCASE.
-
-ENDMODULE.
-
-*&---------------------------------------------------------------------*
-*& Module POSNR_CHANGED INPUT
-*&---------------------------------------------------------------------*
-MODULE posnr_changed INPUT.
-
-  " Check if IM Number changed
-  IF p_posnr NE gv_posnr_old.
-    
-    " Get new IM data
-    PERFORM get_im_data USING p_posnr.
-    
-    " Free existing tree to force refresh
-    IF lo_tree_preview IS NOT INITIAL.
-      PERFORM free_tree_control.
-    ENDIF.
-    
-    " Store new value
-    gv_posnr_old = p_posnr.
-    
+  IF sy-subrc <> 0.
+    MESSAGE 'Error creating tree control' TYPE 'I'.
+    RETURN.
   ENDIF.
 
-ENDMODULE.
+  " Add identification column
+  CALL METHOD lo_tree_preview->add_column
+    EXPORTING
+      name           = lc_hierarchy_technical_key
+      width          = 30
+      alignment      = cl_gui_column_tree=>align_left
+      header_text    = 'Identification'
+      header_tooltip = 'WBS Element Code'
+    EXCEPTIONS
+      failed         = 1
+      OTHERS         = 2.
+
+  " Set alignment (workaround for CFW bug)
+  CALL METHOD lo_tree_preview->set_alignment
+    EXPORTING
+      alignment = 15
+    EXCEPTIONS
+      failed    = 1
+      OTHERS    = 2.
+
+  lv_tree_loaded = abap_true.
+
+ENDFORM.
 
 
 
 
-PROCESS AFTER INPUT.
-  MODULE user_command_0200.
-  
-  FIELD p_posnr MODULE posnr_changed ON REQUEST.
-
-
-
-
+*&---------------------------------------------------------------------*
+*& Form LOAD_TREE_HIERARCHY
+*&---------------------------------------------------------------------*
 FORM load_tree_hierarchy.
 
   DATA: ls_proj           TYPE proj,
-        lv_pspid_template TYPE ps_pspid,
-        lv_msg            TYPE string.
-
-  " Clear previous data
-  CLEAR: gt_treev_node, gt_treeitm.
+        lv_pspid_template TYPE ps_pspid.
 
   " Validate input
   CHECK p_pspid IS NOT INITIAL.
+  CHECK lo_tree_preview IS NOT INITIAL.
+
+  " Clear previous data
+  CLEAR: gt_treev_node, gt_treeitm, gs_objects_in_tree.
   
+  " CRITICAL: Refresh hierarchy cache (from reference code)
+  CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
+
   lv_pspid_template = p_pspid.
 
   " Get project template data
@@ -112,19 +144,18 @@ FORM load_tree_hierarchy.
     WHERE pspid = lv_pspid_template.
 
   IF sy-subrc <> 0.
-    " Template not found - show message and use fallback
-    MESSAGE i001 WITH 'Template not found:' p_pspid.
+    MESSAGE 'Template project not found' TYPE 'I'.
     PERFORM load_simple_preview_fallback.
     RETURN.
   ENDIF.
 
   " Set objects to display in hierarchy
   CLEAR ls_objects_in_hierarchy.
-  ls_objects_in_hierarchy-proj = abap_true.
-  ls_objects_in_hierarchy-prps = abap_true.
-  ls_objects_in_hierarchy-pstx = abap_true.
+  ls_objects_in_hierarchy-proj = abap_true.  " Project definition
+  ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
+  ls_objects_in_hierarchy-pstx = abap_true.  " Texts
 
-  " Call SAP standard function
+  " Call SAP standard function to get project hierarchy
   CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
     EXPORTING
       i_objects_in_hierarchy = ls_objects_in_hierarchy
@@ -133,26 +164,36 @@ FORM load_tree_hierarchy.
       i_aufnr                = ''
       i_flg_enqueue          = space
       i_expand_levels        = 06
+      i_drag_drop_handle     = lv_drag_drop_handle
+      i_hier_col_is_key      = lv_hier_col_is_key
     IMPORTING
       et_treeitm             = gt_treeitm
       et_treev_node          = gt_treev_node
+      e_flg_enqueue          = lv_enqueue
       e_objects_in_hierarchy = gs_objects_in_tree
     EXCEPTIONS
       OTHERS                 = 1.
 
   IF sy-subrc <> 0 OR gt_treev_node IS INITIAL.
-    MESSAGE i001 WITH 'PS hierarchy function unavailable, using list view'.
+    MESSAGE 'Error loading project hierarchy' TYPE 'I'.
     PERFORM load_simple_preview_fallback.
     RETURN.
   ENDIF.
 
   " Delete existing nodes before adding new ones
-  IF lo_tree_preview IS NOT INITIAL.
-    CALL METHOD lo_tree_preview->delete_all_nodes
-      EXCEPTIONS
-        failed = 1
-        OTHERS = 2.
-  ENDIF.
+  CALL METHOD lo_tree_preview->delete_all_nodes
+    EXCEPTIONS
+      failed = 1
+      OTHERS = 2.
+
+  " Reset hierarchy header
+  CALL METHOD lo_tree_preview->hierarchy_header_set_text
+    EXPORTING
+      text              = 'Project Structure: Description'
+    EXCEPTIONS
+      failed            = 1
+      cntl_system_error = 2
+      OTHERS            = 3.
 
   " Add nodes and items to tree
   CALL METHOD lo_tree_preview->add_nodes_and_items
@@ -169,28 +210,124 @@ FORM load_tree_hierarchy.
       OTHERS                         = 7.
 
   IF sy-subrc <> 0.
-    lv_msg = 'Error adding tree nodes'.
-    MESSAGE i001 WITH lv_msg.
+    MESSAGE 'Error adding nodes to tree' TYPE 'I'.
     RETURN.
   ENDIF.
 
   " Expand root nodes
   CALL METHOD lo_tree_preview->expand_root_nodes
     EXPORTING
-      level_count         = 2
-      expand_subtree      = abap_true
+      level_count         = 0
+      expand_subtree      = space
     EXCEPTIONS
       failed              = 1
       illegal_level_count = 2
       cntl_system_error   = 3
       OTHERS              = 4.
 
-  " Frontend update
+  " Set column widths
+  CALL METHOD lo_tree_preview->hierarchy_header_set_width
+    EXPORTING
+      width             = 40
+      width_pix         = space
+    EXCEPTIONS
+      failed            = 1
+      cntl_system_error = 2
+      OTHERS            = 3.
+
+  CALL METHOD lo_tree_preview->column_set_width
+    EXPORTING
+      column_name       = lc_hierarchy_technical_key
+      width             = 21
+      width_pix         = space
+    EXCEPTIONS
+      failed            = 1
+      column_not_found  = 2
+      hierarchy_column  = 3
+      cntl_system_error = 4
+      OTHERS            = 5.
+
+  " Flush frontend
   CALL METHOD cl_gui_cfw=>flush
     EXCEPTIONS
       cntl_system_error = 1
       OTHERS            = 2.
 
-  lv_tree_loaded = abap_true.
+ENDFORM.
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Form FREE_TREE_CONTROL
+*&---------------------------------------------------------------------*
+FORM free_tree_control.
+
+  " Clear hierarchy cache
+  CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
+
+  " Free tree control
+  IF lo_tree_preview IS NOT INITIAL.
+    CALL METHOD lo_tree_preview->free
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+    FREE lo_tree_preview.
+    CLEAR lo_tree_preview.
+  ENDIF.
+
+  " Free container
+  IF lo_cont_preview IS NOT INITIAL.
+    CALL METHOD lo_cont_preview->free
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+    FREE lo_cont_preview.
+    CLEAR lo_cont_preview.
+  ENDIF.
+
+  lv_tree_loaded = abap_false.
+  CLEAR: gt_treev_node, gt_treeitm, gt_treev_node_u, gt_treeitm_u.
 
 ENDFORM.
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Module DISPLAY_TREE_PREVIEW OUTPUT
+*&---------------------------------------------------------------------*
+MODULE display_tree_preview OUTPUT.
+
+  " Only load when template is populated
+  CHECK p_pspid IS NOT INITIAL.
+
+  " Create tree control on first display
+  IF lo_tree_preview IS INITIAL.
+    PERFORM create_tree_control.
+  ENDIF.
+
+  " Check if tree control was successfully created
+  CHECK lo_tree_preview IS NOT INITIAL.
+
+  " Reload tree if template changed
+  IF p_pspid NE gv_pspid_old.
+    PERFORM load_tree_hierarchy.
+    gv_pspid_old = p_pspid.
+  ENDIF.
+
+ENDMODULE.
+
+
+
+
+PROCESS BEFORE OUTPUT.
+  MODULE status_0200.
+  MODULE build_im_dropdown.
+  MODULE display_tree_preview.
+
+PROCESS AFTER INPUT.
+  MODULE user_command_0200.
+  FIELD p_posnr MODULE posnr_changed ON REQUEST.
