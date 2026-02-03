@@ -1,93 +1,42 @@
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_COST_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_cost_center USING iv_kostl TYPE kostl
-iv_plsez TYPE ps_plsez_chg
-CHANGING cv_error TYPE abap_bool.
+FORM validate_fr_unit
+  USING    iv_posnr TYPE im_posnr
+           iv_prctr TYPE prctr
+           iv_gjahr TYPE gjahr
+  CHANGING cv_error TYPE abap_bool.
 
-  DATA: ls_csks TYPE csks.
+  DATA: lv_bukrs TYPE bukrs,
+        lv_fr_im TYPE zzfrunit,
+        lv_fr_pc TYPE zzfrunit.
 
-  " Check cost center validity against Finish Date
-  SELECT SINGLE * FROM csks
-  INTO ls_csks
-  WHERE kostl = iv_kostl
-  AND datab <= iv_plsez
-  AND datbi >= iv_plsez.
+  " Get Company Code from IM
+  SELECT SINGLE bukrs
+    INTO lv_bukrs
+    FROM impr
+    WHERE posnr = iv_posnr.
 
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e005 WITH iv_kostl iv_plsez.
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
+  " Get FR Unit stored on IM
+  SELECT SINGLE fr_unit
+    INTO lv_fr_im
+    FROM zimp_req_header
+    WHERE posnr = iv_posnr.
 
+  " Get FR Unit from configuration (ZTXCA_ORG01)
+  SELECT SINGLE frunit
+    INTO lv_fr_pc
+    FROM ztxca_org01
+    WHERE gjahr = iv_gjahr
+      AND bukrs = lv_bukrs
+      AND prctr = iv_prctr.
 
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_PROFIT_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_profit_center USING iv_prctr TYPE prctr
-iv_plsez TYPE ps_plsez_chg
-CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_cepc TYPE cepc.
-
-  " Check profit center validity against Finish Date
-  SELECT SINGLE * FROM cepc
-  INTO ls_cepc
-  WHERE prctr = iv_prctr
-  AND datbi >= iv_plsez.
-
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e007 WITH iv_prctr iv_plsez.
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_CC_PC_ASSIGNMENT
-*&---------------------------------------------------------------------*
-FORM validate_cc_pc_assignment USING iv_kostl TYPE kostl
-iv_prctr TYPE prctr
-CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_csks TYPE csks,
-        ls_cepc TYPE cepc.
-
-  SELECT SINGLE * FROM csks
-  INTO ls_csks
-  WHERE kostl = iv_kostl.
-
-  IF ls_csks-prctr IS INITIAL.
-    MESSAGE e009 WITH iv_kostl.
-    cv_error = gc_x.
+  IF sy-subrc <> 0.
+    MESSAGE e012 WITH iv_prctr iv_gjahr.
+    cv_error = abap_true.
     RETURN.
   ENDIF.
 
-  SELECT SINGLE * FROM cepc
-  INTO ls_cepc
-  WHERE prctr = iv_prctr.
-
-  IF ls_cepc-bukrs IS NOT INITIAL AND
-  ls_cepc-bukrs NE ls_csks-bukrs.
-    MESSAGE e010.
-    cv_error = gc_x.
+  IF lv_fr_im <> lv_fr_pc.
+    MESSAGE e011 WITH lv_fr_im lv_fr_pc.
+    cv_error = abap_true.
   ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_FR_UNIT
-*&---------------------------------------------------------------------*
-FORM validate_fr_unit USING iv_posnr TYPE im_posnr
-                            iv_prctr TYPE prctr
-                      CHANGING cv_error TYPE abap_bool.
-
-  " Placeholder for FR Unit validation
-  " Implement based on actual custom tables
-  " Reference: Table ZTXCA_ORG01
 
 ENDFORM.
