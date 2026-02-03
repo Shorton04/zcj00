@@ -1,86 +1,81 @@
-*----------------------------------------------------------------------*
-* Tree Control Objects for Preview (Screen 200)
-*----------------------------------------------------------------------*
-DATA: lo_cont_preview TYPE REF TO cl_gui_custom_container,
-      lo_tree_preview TYPE REF TO cl_gui_column_tree,
-      lv_tree_loaded  TYPE abap_bool.
-
-*----------------------------------------------------------------------*
-* Tree Control Data Structures (matching reference system)
-*----------------------------------------------------------------------*
-DATA: lt_treeitm_u              TYPE cnpb_h_t_treeitm_upd,
-      lt_treev_node_u           TYPE treev_upno,
-      ls_hierarchy_header       TYPE treev_hhdr,
-      gt_treev_node             TYPE cnpb_h_t_treev_node,
-      gt_treeitm                TYPE TABLE OF cnpb_h_treeitm,
-      ls_objects_in_hierarchy   TYPE cnpb_h_objects_in_hierarchy,
-      gs_objects_in_tree        TYPE cnpb_h_objects_in_hierarchy.
-
-*----------------------------------------------------------------------*
-* Additional Tree Variables
-*----------------------------------------------------------------------*
-DATA: lv_enqueue          TYPE char1,
-      lv_drag_drop_handle TYPE i,
-      lv_hier_col_is_key  TYPE char1.
-
-*----------------------------------------------------------------------*
-* Constants for Tree
-*----------------------------------------------------------------------*
-CONSTANTS: lc_hierarchy_short_text    TYPE char12 VALUE 'SHORT_TEXT',
-           lc_hierarchy_technical_key TYPE char12 VALUE 'TECHN_KEY'.
-
-*----------------------------------------------------------------------*
-* Custom Container Name
-*----------------------------------------------------------------------*
-CONSTANTS: gc_tree_container TYPE scrfname VALUE 'CC_TREE_PREVIEW'.
-
-*----------------------------------------------------------------------*
-* Tracking Variables
-*----------------------------------------------------------------------*
-DATA: gv_posnr_old TYPE im_posnr,
-      gv_pspid_old TYPE ps_pspid.
-
-
-
-
 *&---------------------------------------------------------------------*
-*& Form FREE_TREE_CONTROL
+*& Form CREATE_TREE_CONTROL
 *&---------------------------------------------------------------------*
-FORM free_tree_control.
+FORM create_tree_control.
 
-  " Clear hierarchy cache
-  CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
+  " Only create if not already created
+  CHECK lo_tree_preview IS INITIAL.
 
-  " Free tree control
-  IF lo_tree_preview IS NOT INITIAL.
-    CALL METHOD lo_tree_preview->free
-      EXCEPTIONS
-        cntl_error        = 1
-        cntl_system_error = 2
-        OTHERS            = 3.
-    FREE lo_tree_preview.
-    CLEAR lo_tree_preview.
+  " Create custom container
+  CREATE OBJECT lo_cont_preview
+    EXPORTING
+      container_name              = gc_tree_container
+    EXCEPTIONS
+      cntl_error                  = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      lifetime_error              = 4
+      lifetime_dynpro_dynpro_link = 5
+      OTHERS                      = 6.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error creating container' TYPE 'I'.
+    RETURN.
   ENDIF.
 
-  " Free container
-  IF lo_cont_preview IS NOT INITIAL.
-    CALL METHOD lo_cont_preview->free
-      EXCEPTIONS
-        cntl_error        = 1
-        cntl_system_error = 2
-        OTHERS            = 3.
-    FREE lo_cont_preview.
-    CLEAR lo_cont_preview.
+  " Set hierarchy header
+  CLEAR ls_hierarchy_header.
+  ls_hierarchy_header-heading = 'Project Structure: Description'.
+  ls_hierarchy_header-tooltip = 'Project Structure: Description'.
+  ls_hierarchy_header-width   = 40.
+
+  " Create tree control
+  CREATE OBJECT lo_tree_preview
+    EXPORTING
+      parent                      = lo_cont_preview
+      node_selection_mode         = 0
+      item_selection              = space
+      hierarchy_column_name       = lc_hierarchy_short_text
+      hierarchy_header            = ls_hierarchy_header
+    EXCEPTIONS
+      lifetime_error              = 1
+      cntl_system_error           = 2
+      create_error                = 3
+      illegal_node_selection_mode = 4
+      failed                      = 5
+      illegal_column_name         = 6
+      OTHERS                      = 7.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error creating tree control' TYPE 'I'.
+    RETURN.
   ENDIF.
 
-  " Clear all tree-related data
-  lv_tree_loaded = abap_false.
-  CLEAR: gt_treev_node, 
-         gt_treeitm, 
-         lt_treev_node_u, 
-         lt_treeitm_u,
-         ls_hierarchy_header,
-         ls_objects_in_hierarchy,
-         gs_objects_in_tree.
+  " Add identification column
+  CALL METHOD lo_tree_preview->add_column
+    EXPORTING
+      name           = lc_hierarchy_technical_key
+      width          = 30
+      alignment      = cl_gui_column_tree=>align_left
+      header_text    = 'Identification'
+      header_tooltip = 'WBS Element Code'
+    EXCEPTIONS
+      failed         = 1
+      OTHERS         = 2.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error adding column' TYPE 'I'.
+    RETURN.
+  ENDIF.
+
+  " Set alignment (workaround for CFW bug)
+  CALL METHOD lo_tree_preview->set_alignment
+    EXPORTING
+      alignment = 15
+    EXCEPTIONS
+      failed    = 1
+      OTHERS    = 2.
+
+  lv_tree_loaded = abap_true.
 
 ENDFORM.
