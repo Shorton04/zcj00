@@ -3,55 +3,61 @@
 *&---------------------------------------------------------------------*
 FORM load_tree_hierarchy.
 
-  DATA: ls_proj           TYPE proj,
-        lv_pspid_template TYPE ps_pspid.
+  DATA: ls_projs TYPE projs,
+        lv_pspnr TYPE ps_pspnr.
 
   " Prerequisites check
   CHECK p_pspid IS NOT INITIAL.
   CHECK lo_tree_preview IS NOT INITIAL.
 
   TRY.
-      " Clear previous data
+      " Clear old data
       CLEAR: gt_treev_node, gt_treeitm, gs_objects_in_tree.
 
-      " Refresh hierarchy cache (CRITICAL!)
+      " Refresh cache
       CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
 
-      lv_pspid_template = p_pspid.
-
-      " Get project template data - try PROJ first
-      SELECT SINGLE * FROM proj INTO ls_proj
-        WHERE pspid = lv_pspid_template.
+      " Get WBS element from PROJS (not PROJ!)
+      SELECT SINGLE * FROM projs INTO ls_projs
+        WHERE posid = p_pspid.
 
       IF sy-subrc <> 0.
-        " Try with conversion exit
-        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-          EXPORTING
-            input  = lv_pspid_template
-          IMPORTING
-            output = lv_pspid_template.
-
-        SELECT SINGLE * FROM proj INTO ls_proj
-          WHERE pspid = lv_pspid_template.
-
-        IF sy-subrc <> 0.
-          MESSAGE 'Template project not found in PROJ table' TYPE 'S' DISPLAY LIKE 'W'.
-          RETURN.
-        ENDIF.
+        MESSAGE 'Template WBS element not found' TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
       ENDIF.
 
-      " Set objects to display in hierarchy
+      " Get the parent project PSPNR for hierarchy
+      lv_pspnr = ls_projs-psphi.  " Parent project
+
+      " Convert to PSPID for hierarchy function
+      SELECT SINGLE posid FROM projs
+        INTO p_pspid
+        WHERE pspnr = lv_pspnr.
+
+      IF sy-subrc <> 0.
+        " Try PROJ as fallback
+        SELECT SINGLE pspid FROM proj
+          INTO p_pspid
+          WHERE pspnr = lv_pspnr.
+      ENDIF.
+
+      IF p_pspid IS INITIAL.
+        MESSAGE 'Parent project not found' TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
+
+      " Set objects to display
       CLEAR ls_objects_in_hierarchy.
       ls_objects_in_hierarchy-proj = abap_true.
       ls_objects_in_hierarchy-prps = abap_true.
       ls_objects_in_hierarchy-pstx = abap_true.
 
-      " Call SAP standard function to get project hierarchy
+      " Get hierarchy using parent project
       CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
         EXPORTING
           i_objects_in_hierarchy = ls_objects_in_hierarchy
           i_vsnmr                = ''
-          i_pspid                = lv_pspid_template
+          i_pspid                = p_pspid
           i_aufnr                = ''
           i_flg_enqueue          = space
           i_expand_levels        = 06
@@ -63,32 +69,32 @@ FORM load_tree_hierarchy.
           OTHERS                 = 1.
 
       IF sy-subrc <> 0 OR gt_treev_node IS INITIAL.
-        MESSAGE 'Error loading project hierarchy' TYPE 'S' DISPLAY LIKE 'W'.
+        MESSAGE 'Error loading hierarchy' TYPE 'S' DISPLAY LIKE 'W'.
         RETURN.
       ENDIF.
 
-      " Delete existing nodes before adding new ones
+      " Clear tree
       CALL METHOD lo_tree_preview->delete_all_nodes.
 
-      " Set hierarchy header
+      " Set header
       CALL METHOD lo_tree_preview->hierarchy_header_set_text
         EXPORTING
           text = 'Project Structure: Description'.
 
-      " Add nodes and items to tree
+      " Add nodes
       CALL METHOD lo_tree_preview->add_nodes_and_items
         EXPORTING
           node_table                = gt_treev_node
           item_table                = gt_treeitm
           item_table_structure_name = 'CNPB_H_TREEITM'.
 
-      " Expand root nodes
+      " Expand
       CALL METHOD lo_tree_preview->expand_root_nodes
         EXPORTING
           level_count    = 0
           expand_subtree = space.
 
-      " Set column widths
+      " Set widths
       CALL METHOD lo_tree_preview->hierarchy_header_set_width
         EXPORTING
           width     = 40
@@ -100,10 +106,8 @@ FORM load_tree_hierarchy.
           width       = 21
           width_pix   = space.
 
-      " Flush to frontend (CRITICAL!)
+      " Flush
       CALL METHOD cl_gui_cfw=>flush.
-
-      lv_tree_loaded = abap_true.
 
     CATCH cx_root INTO DATA(lx_error).
       MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
