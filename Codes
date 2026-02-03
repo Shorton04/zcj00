@@ -1,25 +1,28 @@
 *&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_PBO
-*&---------------------------------------------------------------------*
-
-*&---------------------------------------------------------------------*
 *& Module DISPLAY_TREE_PREVIEW OUTPUT
 *&---------------------------------------------------------------------*
 MODULE display_tree_preview OUTPUT.
 
-  " Check if template is provided
-  CHECK p_pspid IS NOT INITIAL.
-
-  " Create tree control on first call OR if it was destroyed
-  IF lo_tree_preview IS INITIAL.
-    PERFORM create_tree_control.
-  ENDIF.
-
-  " CRITICAL FIX: Reload tree data if PSPID changed
-  IF p_pspid <> gv_pspid_old OR lv_tree_loaded = abap_false.
-    " Load/reload hierarchy
+  " Reload tree when template changes
+  IF p_pspid IS NOT INITIAL AND 
+     ( lo_tree_preview IS INITIAL OR p_pspid NE gv_pspid_old ).
+    
+    " Free existing tree if template changed
+    IF p_pspid NE gv_pspid_old AND lo_tree_preview IS NOT INITIAL.
+      PERFORM free_tree_control.
+    ENDIF.
+    
+    " Create tree control
+    IF lo_tree_preview IS INITIAL.
+      PERFORM create_tree_control.
+    ENDIF.
+    
+    " Load hierarchy
     PERFORM load_tree_hierarchy.
+    
+    " Store current template
     gv_pspid_old = p_pspid.
+    
   ENDIF.
 
 ENDMODULE.
@@ -28,50 +31,100 @@ ENDMODULE.
 
 
 *&---------------------------------------------------------------------*
-*& Include          ZTR_A2R_WBSZCJ01_F01
+*& Include          ZTR_A2R_WBSZCJ01_PAI
 *&---------------------------------------------------------------------*
 
 *&---------------------------------------------------------------------*
-*& Form LOAD_TREE_HIERARCHY
+*& Module USER_COMMAND_0200 INPUT
 *&---------------------------------------------------------------------*
+MODULE user_command_0200 INPUT.
+
+  DATA: lv_okcode TYPE sy-ucomm.
+  
+  lv_okcode = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE lv_okcode.
+    WHEN 'BACK' OR 'EXIT' OR 'CANCEL'.
+      PERFORM free_tree_control.
+      LEAVE TO SCREEN 0.
+      
+    WHEN 'NEXT'.
+      PERFORM validate_screen1.
+      " Proceed to next screen
+      
+    WHEN OTHERS.
+      " Handle other commands
+  ENDCASE.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module POSNR_CHANGED INPUT
+*&---------------------------------------------------------------------*
+MODULE posnr_changed INPUT.
+
+  " Check if IM Number changed
+  IF p_posnr NE gv_posnr_old.
+    
+    " Get new IM data
+    PERFORM get_im_data USING p_posnr.
+    
+    " Free existing tree to force refresh
+    IF lo_tree_preview IS NOT INITIAL.
+      PERFORM free_tree_control.
+    ENDIF.
+    
+    " Store new value
+    gv_posnr_old = p_posnr.
+    
+  ENDIF.
+
+ENDMODULE.
+
+
+
+
+PROCESS AFTER INPUT.
+  MODULE user_command_0200.
+  
+  FIELD p_posnr MODULE posnr_changed ON REQUEST.
+
+
+
+
 FORM load_tree_hierarchy.
 
   DATA: ls_proj           TYPE proj,
         lv_pspid_template TYPE ps_pspid,
-        lv_pspnr          TYPE ps_pspnr.
+        lv_msg            TYPE string.
 
   " Clear previous data
   CLEAR: gt_treev_node, gt_treeitm.
 
-  " Get project template data
+  " Validate input
+  CHECK p_pspid IS NOT INITIAL.
+  
   lv_pspid_template = p_pspid.
 
-  " CORRECTED: Get internal PSPNR from external PSPID
-  " Try PROJS first (WBS structure table)
-  SELECT SINGLE pspnr FROM projs 
-    INTO lv_pspnr
+  " Get project template data
+  SELECT SINGLE * FROM proj INTO ls_proj
     WHERE pspid = lv_pspid_template.
 
   IF sy-subrc <> 0.
-    " Fallback to PROJ (project definition table)
-    SELECT SINGLE pspnr FROM proj 
-      INTO lv_pspnr
-      WHERE pspid = lv_pspid_template.
-  ENDIF.
-
-  IF sy-subrc <> 0.
-    MESSAGE i011 WITH lv_pspid_template. " Template not found
+    " Template not found - show message and use fallback
+    MESSAGE i001 WITH 'Template not found:' p_pspid.
     PERFORM load_simple_preview_fallback.
     RETURN.
   ENDIF.
 
   " Set objects to display in hierarchy
   CLEAR ls_objects_in_hierarchy.
-  ls_objects_in_hierarchy-proj = abap_true.  " Project definition
-  ls_objects_in_hierarchy-prps = abap_true.  " WBS elements
-  ls_objects_in_hierarchy-pstx = abap_true.  " Texts
+  ls_objects_in_hierarchy-proj = abap_true.
+  ls_objects_in_hierarchy-prps = abap_true.
+  ls_objects_in_hierarchy-pstx = abap_true.
 
-  " Call SAP standard function to get project hierarchy
+  " Call SAP standard function
   CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
     EXPORTING
       i_objects_in_hierarchy = ls_objects_in_hierarchy
@@ -85,11 +138,10 @@ FORM load_tree_hierarchy.
       et_treev_node          = gt_treev_node
       e_objects_in_hierarchy = gs_objects_in_tree
     EXCEPTIONS
-      project_not_found      = 1
-      OTHERS                 = 2.
+      OTHERS                 = 1.
 
   IF sy-subrc <> 0 OR gt_treev_node IS INITIAL.
-    " Fallback: Use simple table if PS functions not available
+    MESSAGE i001 WITH 'PS hierarchy function unavailable, using list view'.
     PERFORM load_simple_preview_fallback.
     RETURN.
   ENDIF.
@@ -98,8 +150,8 @@ FORM load_tree_hierarchy.
   IF lo_tree_preview IS NOT INITIAL.
     CALL METHOD lo_tree_preview->delete_all_nodes
       EXCEPTIONS
-        failed            = 1
-        cntl_system_error = 2.
+        failed = 1
+        OTHERS = 2.
   ENDIF.
 
   " Add nodes and items to tree
@@ -110,142 +162,35 @@ FORM load_tree_hierarchy.
       item_table_structure_name      = 'CNPB_H_TREEITM'
     EXCEPTIONS
       failed                         = 1
-      node_not_found                 = 2
       cntl_system_error              = 3
       error_in_tables                = 4
       dp_error                       = 5
-      table_structure_name_not_found = 6.
+      table_structure_name_not_found = 6
+      OTHERS                         = 7.
 
   IF sy-subrc <> 0.
-    " If standard tree fails, use fallback
-    PERFORM load_simple_preview_fallback.
+    lv_msg = 'Error adding tree nodes'.
+    MESSAGE i001 WITH lv_msg.
     RETURN.
   ENDIF.
 
-  " Expand root nodes to show structure
+  " Expand root nodes
   CALL METHOD lo_tree_preview->expand_root_nodes
     EXPORTING
-      level_count         = 2  " Expand 2 levels
+      level_count         = 2
       expand_subtree      = abap_true
     EXCEPTIONS
       failed              = 1
       illegal_level_count = 2
-      cntl_system_error   = 3.
+      cntl_system_error   = 3
+      OTHERS              = 4.
 
-  " Optimize column display
-  CALL METHOD lo_tree_preview->column_optimize
+  " Frontend update
+  CALL METHOD cl_gui_cfw=>flush
     EXCEPTIONS
-      failed            = 1
-      cntl_system_error = 2.
+      cntl_system_error = 1
+      OTHERS            = 2.
 
   lv_tree_loaded = abap_true.
 
 ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form LOAD_SIMPLE_PREVIEW_FALLBACK
-*&---------------------------------------------------------------------*
-FORM load_simple_preview_fallback.
-
-  DATA: lv_pspnr        TYPE ps_pspnr,
-        lt_prpss        TYPE TABLE OF prpss,
-        ls_prpss        TYPE prpss,
-        lv_node_key     TYPE tv_nodekey,
-        lv_parent_key   TYPE tv_nodekey,
-        ls_node         TYPE treev_node,
-        ls_item         TYPE cnpb_h_treeitm,
-        lv_line_no      TYPE i.
-
-  " Get internal PSPNR
-  SELECT SINGLE pspnr FROM projs INTO lv_pspnr
-    WHERE pspid = p_pspid.
-
-  IF sy-subrc <> 0.
-    SELECT SINGLE pspnr FROM proj INTO lv_pspnr
-      WHERE pspid = p_pspid.
-  ENDIF.
-
-  CHECK sy-subrc = 0.
-
-  " Get WBS structure from PRPSS
-  SELECT * FROM prpss INTO TABLE lt_prpss
-    WHERE psphi = lv_pspnr
-    ORDER BY stufe posid.
-
-  IF sy-subrc <> 0 OR lt_prpss IS INITIAL.
-    MESSAGE i001 WITH 'No WBS elements found for template'.
-    RETURN.
-  ENDIF.
-
-  " Build tree manually
-  CLEAR: gt_treev_node, gt_treeitm.
-
-  LOOP AT lt_prpss INTO ls_prpss.
-    lv_line_no = sy-tabix.
-
-    " Create node
-    CLEAR ls_node.
-    ls_node-node_key = lv_line_no.
-    
-    " Determine parent (Level 1 = root, Level 2+ = child of previous higher level)
-    IF ls_prpss-stufe = 1.
-      ls_node-relatkey = space.  " Root node
-    ELSE.
-      " Find parent node (previous node with lower STUFE)
-      LOOP AT lt_prpss INTO DATA(ls_parent) TO lv_line_no - 1.
-        IF ls_parent-stufe < ls_prpss-stufe.
-          ls_node-relatkey = sy-tabix.
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
-
-    ls_node-relatship = cl_gui_column_tree=>relat_last_child.
-    ls_node-n_image   = '@3P@'.  " WBS icon
-    ls_node-exp_image = '@3Q@'.
-    APPEND ls_node TO gt_treev_node.
-
-    " Create items for this node
-    " Item 1: Description (Short Text)
-    CLEAR ls_item.
-    ls_item-node_key = lv_line_no.
-    ls_item-item_name = lc_hierarchy_short_text.
-    ls_item-class = cl_gui_column_tree=>item_class_text.
-    ls_item-text = ls_prpss-post1.
-    APPEND ls_item TO gt_treeitm.
-
-    " Item 2: Technical Key (POSID)
-    CLEAR ls_item.
-    ls_item-node_key = lv_line_no.
-    ls_item-item_name = lc_hierarchy_technical_key.
-    ls_item-class = cl_gui_column_tree=>item_class_text.
-    ls_item-text = ls_prpss-posid.
-    APPEND ls_item TO gt_treeitm.
-
-  ENDLOOP.
-
-  " Add nodes to tree
-  IF lo_tree_preview IS NOT INITIAL.
-    CALL METHOD lo_tree_preview->delete_all_nodes.
-
-    CALL METHOD lo_tree_preview->add_nodes_and_items
-      EXPORTING
-        node_table                     = gt_treev_node
-        item_table                     = gt_treeitm
-        item_table_structure_name      = 'CNPB_H_TREEITM'
-      EXCEPTIONS
-        failed                         = 1
-        cntl_system_error              = 3
-        error_in_tables                = 4
-        dp_error                       = 5
-        table_structure_name_not_found = 6.
-
-    CALL METHOD lo_tree_preview->expand_root_nodes
-      EXPORTING
-        level_count = 2
-        expand_subtree = abap_true.
-  ENDIF.
-
-  lv_tree_loaded = abap_true.
-
-ENDFORM.
-
