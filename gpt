@@ -1,129 +1,28 @@
-*----------------------------------------------------------------------*
-* Dropdown List Data
-*----------------------------------------------------------------------*
-DATA: gt_im_dropdown TYPE vrm_values.
+E001: &1 is mandatory
+E002: IM Number &1 not found
+E005: Cost center &1 not valid on &2
+E007: Profit center &1 not valid on &2
+E008: Cost center &1 does not exist
+E009: Cost center &1 has no Profit Center assigned
+E010: &1 &2 &3 &4
+E013: Error saving request
+E016: Error submitting request
+E021: Fill in all required entry fields
+E022: Budget exceeds available IM budget
+E023: No approver found for &1 &2 &3
 
+W003: &1 &2 &3 &4
+W011: Please select Project Template first
+W012: FR Unit validation skipped
 
-*&---------------------------------------------------------------------*
-*& Module BUILD_IM_DROPDOWN OUTPUT
-*&---------------------------------------------------------------------*
-MODULE build_im_dropdown OUTPUT.
+S003: &1 &2 &3 &4
+S012: Request &1 saved successfully
+S014: All validations passed
+S015: Request &1 submitted
+S017: Budget totaled up successfully
+S018: &1
+S019: &1 &2
 
-  DATA: ls_value TYPE vrm_value,
-        lt_impr  TYPE TABLE OF impr,
-        ls_impr  TYPE impr.
-
-  " Only build once
-  CHECK gt_im_dropdown IS INITIAL.
-
-  " Get IM data
-  SELECT posnr prnam gjahr
-    FROM impr
-    INTO CORRESPONDING FIELDS OF TABLE lt_impr
-    UP TO 500 ROWS
-    ORDER BY posnr DESCENDING.
-
-  " Build list
-  LOOP AT lt_impr INTO ls_impr.
-    CLEAR ls_value.
-    ls_value-key = ls_impr-posnr.
-    CONCATENATE ls_impr-posnr '-' ls_impr-prnam
-      INTO ls_value-text SEPARATED BY space.
-    APPEND ls_value TO gt_im_dropdown.
-  ENDLOOP.
-
-  " Set dropdown values
-  CALL FUNCTION 'VRM_SET_VALUES'
-    EXPORTING
-      id     = 'P_POSNR'
-      values = gt_im_dropdown.
-
-ENDMODULE.
-
-
-
-
-MODULE status_0200 OUTPUT.
-  SET PF-STATUS 'STATUS_200'.
-  SET TITLEBAR 'TITLE_200'.
-  
-  " Build dropdown list
-  PERFORM build_im_dropdown.  " Or just leave it in flow logic
-  
-  " ... rest of your code
-
-
-
-PROCESS BEFORE OUTPUT.
-  MODULE status_0200.
-  MODULE build_im_dropdown.    ← ADD THIS LINE
-  MODULE display_tree_preview.
-
-PROCESS AFTER INPUT.
-  MODULE user_command_0200.
-  MODULE validate_posnr.
-
-
-
-
-MODULE build_im_dropdown OUTPUT.
-
-  DATA: ls_value TYPE vrm_value,
-        lt_impr  TYPE TABLE OF impr,
-        ls_impr  TYPE impr,
-        lv_exists TYPE abap_bool.
-
-  CHECK gt_im_dropdown IS INITIAL.
-
-  SELECT posnr prnam gjahr izwek
-    FROM impr
-    INTO CORRESPONDING FIELDS OF TABLE lt_impr
-    UP TO 500 ROWS
-    ORDER BY posnr DESCENDING.
-
-  LOOP AT lt_impr INTO ls_impr.
-    
-    " Check if config exists for this IZWEK
-    SELECT SINGLE izwek FROM ztb_a2r_conftab1
-      INTO @DATA(lv_izwek)
-      WHERE izwek = @ls_impr-izwek.
-    
-    IF sy-subrc = 0.
-      " Config exists, add to dropdown
-      CLEAR ls_value.
-      ls_value-key = ls_impr-posnr.
-      CONCATENATE ls_impr-posnr '-' ls_impr-prnam
-        INTO ls_value-text SEPARATED BY space.
-      APPEND ls_value TO gt_im_dropdown.
-    ENDIF.
-    
-  ENDLOOP.
-
-  CALL FUNCTION 'VRM_SET_VALUES'
-    EXPORTING
-      id     = 'P_POSNR'
-      values = gt_im_dropdown.
-
-ENDMODULE.
-
-
-MODULE validate_posnr INPUT.
-
-  IF p_posnr IS NOT INITIAL.
-    
-    " Add leading zeros
-    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-      EXPORTING
-        input  = p_posnr
-      IMPORTING
-        output = p_posnr.
-    
-    " Load data if changed
-    IF p_posnr <> gv_posnr_old.
-      PERFORM get_im_data USING p_posnr.
-      gv_posnr_old = p_posnr.
-    ENDIF.
-    
-  ENDIF.
-
-ENDMODULE.
+I001: &1 &2 &3 &4
+I011: Template &1 not found
+I020: &1
