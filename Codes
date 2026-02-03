@@ -20,6 +20,7 @@ REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
 *----------------------------------------------------------------------*
 INCLUDE ztr_a2r_wbszcj01_top.
 " Selection screen removed - using dynpro screens only
+"INCLUDE ztr_a2r_wbszcj01_sel.
 INCLUDE ztr_a2r_wbszcj01_f01.
 INCLUDE ztr_a2r_wbszcj01_pbo.
 INCLUDE ztr_a2r_wbszcj01_pai.
@@ -411,7 +412,7 @@ ENDFORM.                                          "fcode_tc_mark_lines
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_TOP
 *&---------------------------------------------------------------------*
-TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
+TABLES: impr, projs, proj, prps, prpss, tcj41, cepc, csks, bpge.
 
 DATA: gt_im_dropdown TYPE vrm_values.
 
@@ -443,7 +444,7 @@ DATA: gv_posnr_old TYPE im_posnr.
 *----------------------------------------------------------------------*
 DATA: p_posnr TYPE im_posnr,
       p_profl TYPE profidproj,
-      p_pspnr TYPE ps_ispsp,
+      p_pspid TYPE ps_pspid,
       p_prnam TYPE im_prnam,
       p_gjahr TYPE im_gnjhr,
       p_post1 TYPE ps_post1,
@@ -574,7 +575,6 @@ TYPES: BEGIN OF ts_items,
 
 DATA: ls_items            TYPE ts_items.
 
-
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_F01
 *&---------------------------------------------------------------------*
@@ -644,7 +644,7 @@ FORM get_im_data USING iv_posnr TYPE im_posnr.
 
     " Get Project Profile and Template
     PERFORM get_profile_template USING ls_impr-izwek
-                                 CHANGING p_profl p_pspnr.
+                                 CHANGING p_profl p_pspid.
 
     " Check GE Ariba flag
     PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
@@ -667,7 +667,7 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM get_profile_template USING iv_izwek TYPE izwek
 CHANGING cv_profl TYPE profidproj
-cv_pspnr TYPE ps_ispsp.
+cv_pspid TYPE ps_pspid.
 
   " CORRECTED: Using exact field names from SE11
   " Table: ZTB_A2R_CONFTAB1
@@ -682,10 +682,10 @@ cv_pspnr TYPE ps_ispsp.
 
   IF sy-subrc = 0.
     cv_profl = ls_config-profl.
-    cv_pspnr = ls_config-pspnr.
+    cv_pspid = ls_config-pspnr.
   ELSE.
     MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
-    CLEAR: cv_profl, cv_pspnr.
+    CLEAR: cv_profl, cv_pspid.
   ENDIF.
 ENDFORM.
 
@@ -831,19 +831,19 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *& Form SHOW_TEMPLATE_PREVIEW
 *&---------------------------------------------------------------------*
-FORM show_template_preview USING iv_pspnr TYPE ps_ispsp.
+FORM show_template_preview USING iv_pspnr TYPE ps_pspid.
 
-  DATA: lt_prps  TYPE TABLE OF prps,
+  DATA: lt_prps  TYPE TABLE OF prpss,
         lv_pspnr TYPE ps_pspnr.
 
   " Get project internal number
-  SELECT SINGLE pspnr FROM projs
+  SELECT SINGLE pspnr FROM proj
     INTO lv_pspnr
     WHERE pspid = iv_pspnr.
 
   IF sy-subrc = 0.
     " Get WBS elements
-    SELECT * FROM prps
+    SELECT * FROM prpss
       INTO TABLE lt_prps
       WHERE psphi = lv_pspnr
       ORDER BY stufe posid.
@@ -959,16 +959,16 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM load_tree_hierarchy.
 
-  DATA: ls_proj           TYPE projs,
+  DATA: ls_proj           TYPE proj,
         lv_pspid_template TYPE ps_pspid.
 
   " Clear previous data
   CLEAR: gt_treev_node, gt_treeitm.
 
   " Get project template data
-  lv_pspid_template = p_pspnr.
+  lv_pspid_template = p_pspid.
 
-  SELECT SINGLE * FROM projs INTO ls_proj
+  SELECT SINGLE * FROM proj INTO ls_proj
     WHERE pspid = lv_pspid_template.
 
   CHECK sy-subrc = 0.
@@ -1059,8 +1059,8 @@ FORM load_simple_preview_fallback.
   " Use simple table control or ALV instead
   DATA: lv_pspnr TYPE ps_pspnr.
 
-  SELECT SINGLE pspnr FROM projs INTO lv_pspnr
-    WHERE pspnr = p_pspnr.
+  SELECT SINGLE pspnr FROM proj INTO lv_pspnr
+    WHERE pspnr = p_pspid.
 
   CHECK sy-subrc = 0.
 
@@ -1093,7 +1093,6 @@ FORM free_tree_control.
   CLEAR: gt_treev_node, gt_treeitm.
 
 ENDFORM.
-
 
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_PBO
@@ -1208,7 +1207,7 @@ MODULE display_tree_preview OUTPUT.
 
   " Only create tree once
   CHECK lo_tree_preview IS INITIAL.
-  CHECK p_pspnr IS NOT INITIAL.
+  CHECK p_pspid IS NOT INITIAL.
 
   " Create tree control
   PERFORM create_tree_control.
@@ -1217,7 +1216,6 @@ MODULE display_tree_preview OUTPUT.
   PERFORM load_tree_hierarchy.
 
 ENDMODULE.
-
 
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_PAI
@@ -1249,7 +1247,7 @@ MODULE user_command_0200 INPUT.
 
     WHEN 'NEXT' OR 'ENTER'.
       " Validation
-*      IF p_pspnr IS INITIAL.
+*      IF p_pspid IS INITIAL.
 *        MESSAGE e001 WITH 'IM Number is mandatory'.
 *        RETURN.
 *      ENDIF.
@@ -1366,7 +1364,7 @@ FORM prepare_screen2.
   " Copy template structure
   CALL METHOD go_builder->copy_template_structure
     EXPORTING
-      iv_pspnr     = p_pspnr
+      iv_pspid     = p_pspid
       iv_kostl     = p_kostl
     CHANGING
       ct_wbs_items = gt_wbs_items.
