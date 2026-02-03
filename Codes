@@ -1,12 +1,16 @@
 FORM validate_fr_unit
   USING    iv_posnr TYPE im_posnr
            iv_prctr TYPE prctr
-           iv_gjahr TYPE gjahr
+           iv_plsez TYPE ps_plsez_chg   " Finish Date
   CHANGING cv_error TYPE abap_bool.
 
   DATA: lv_bukrs TYPE bukrs,
-        lv_fr_im TYPE zzfrunit,
-        lv_fr_pc TYPE zzfrunit.
+        lv_gjahr TYPE gjahr,
+        lv_fr_im TYPE zde_frunit,
+        lv_fr_pc TYPE zde_frunit.
+
+  " Derive Fiscal Year from Finish Date
+  lv_gjahr = iv_plsez+0(4).
 
   " Get Company Code from IM
   SELECT SINGLE bukrs
@@ -14,22 +18,22 @@ FORM validate_fr_unit
     FROM impr
     WHERE posnr = iv_posnr.
 
-  " Get FR Unit stored on IM
+  " Get FR Unit stored in IM
   SELECT SINGLE fr_unit
     INTO lv_fr_im
     FROM zimp_req_header
     WHERE posnr = iv_posnr.
 
-  " Get FR Unit from configuration (ZTXCA_ORG01)
+  " Get FR Unit from config (ZTXCA_ORG01)
   SELECT SINGLE frunit
     INTO lv_fr_pc
     FROM ztxca_org01
-    WHERE gjahr = iv_gjahr
+    WHERE gjahr = lv_gjahr
       AND bukrs = lv_bukrs
       AND prctr = iv_prctr.
 
   IF sy-subrc <> 0.
-    MESSAGE e012 WITH iv_prctr iv_gjahr.
+    MESSAGE e012 WITH iv_prctr lv_gjahr.
     cv_error = abap_true.
     RETURN.
   ENDIF.
