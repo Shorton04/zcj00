@@ -1,10 +1,58 @@
 *&---------------------------------------------------------------------*
+*& Form GET_PROFILE_TEMPLATE
+*&---------------------------------------------------------------------*
+FORM get_profile_template USING iv_izwek TYPE izwek
+                          CHANGING cv_profl TYPE profidproj
+                                   cv_pspid TYPE ps_pspid.
+
+  DATA: ls_config TYPE ztb_a2r_conftab1,
+        lv_pspnr  TYPE ps_pspnr.
+
+  " FDS Step 1: Get config using Investment Reason (IZWEK)
+  SELECT SINGLE profl pspnr
+    FROM ztb_a2r_conftab1
+    INTO (cv_profl, lv_pspnr)
+    WHERE izwek = iv_izwek.
+
+  IF sy-subrc <> 0.
+    MESSAGE w003 WITH 'No configuration found for IZWEK' iv_izwek.
+    CLEAR: cv_profl, cv_pspid.
+    RETURN.
+  ENDIF.
+
+  " FDS Step 2: Get POSID (PSPID) from PSPNR
+  " Try PRPS table (WBS elements)
+  SELECT SINGLE posid
+    FROM prps
+    INTO cv_pspid
+    WHERE pspnr = lv_pspnr.
+
+  IF sy-subrc <> 0.
+    " Fallback: Try PROJ table (project headers)
+    SELECT SINGLE pspid
+      FROM proj
+      INTO cv_pspid
+      WHERE pspnr = lv_pspnr.
+  ENDIF.
+
+  IF cv_pspid IS INITIAL.
+    MESSAGE w003 WITH 'Template not found for PSPNR' lv_pspnr.
+    CLEAR: cv_profl, cv_pspid.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+*&---------------------------------------------------------------------*
 *& Form LOAD_TREE_HIERARCHY
 *&---------------------------------------------------------------------*
 FORM load_tree_hierarchy.
 
-  DATA: ls_projs TYPE projs,
-        lv_pspnr TYPE ps_pspnr.
+  DATA: ls_prps       TYPE prps,
+        lv_psphi      TYPE ps_pspnr,
+        lv_pspid_proj TYPE ps_pspid.
 
   " Prerequisites check
   CHECK p_pspid IS NOT INITIAL.
@@ -17,31 +65,28 @@ FORM load_tree_hierarchy.
       " Refresh cache
       CALL FUNCTION 'CNPB_H_PROJ_HIER_REFRESH'.
 
-      " Get WBS element from PROJS (not PROJ!)
-      SELECT SINGLE * FROM projs INTO ls_projs
+      " FDS: Get WBS hierarchy from PRPSS using template POSID (p_pspid)
+      " First, get the WBS element details from PRPS
+      SELECT SINGLE *
+        FROM prps
+        INTO ls_prps
         WHERE posid = p_pspid.
 
       IF sy-subrc <> 0.
-        MESSAGE 'Template WBS element not found' TYPE 'S' DISPLAY LIKE 'W'.
+        MESSAGE 'Template WBS element not found in PRPS' TYPE 'S' DISPLAY LIKE 'W'.
         RETURN.
       ENDIF.
 
-      " Get the parent project PSPNR for hierarchy
-      lv_pspnr = ls_projs-psphi.  " Parent project
+      " Get parent project PSPNR
+      lv_psphi = ls_prps-psphi.
 
-      " Convert to PSPID for hierarchy function
-      SELECT SINGLE posid FROM projs
-        INTO p_pspid
-        WHERE pspnr = lv_pspnr.
+      " Convert parent PSPNR to PSPID for hierarchy function
+      SELECT SINGLE pspid
+        FROM proj
+        INTO lv_pspid_proj
+        WHERE pspnr = lv_psphi.
 
       IF sy-subrc <> 0.
-        " Try PROJ as fallback
-        SELECT SINGLE pspid FROM proj
-          INTO p_pspid
-          WHERE pspnr = lv_pspnr.
-      ENDIF.
-
-      IF p_pspid IS INITIAL.
         MESSAGE 'Parent project not found' TYPE 'S' DISPLAY LIKE 'W'.
         RETURN.
       ENDIF.
@@ -52,12 +97,12 @@ FORM load_tree_hierarchy.
       ls_objects_in_hierarchy-prps = abap_true.
       ls_objects_in_hierarchy-pstx = abap_true.
 
-      " Get hierarchy using parent project
+      " FDS: Get hierarchy using parent project PSPID
       CALL FUNCTION 'CNPB_H_PROJ_HIER_SELECT'
         EXPORTING
           i_objects_in_hierarchy = ls_objects_in_hierarchy
           i_vsnmr                = ''
-          i_pspid                = p_pspid
+          i_pspid                = lv_pspid_proj
           i_aufnr                = ''
           i_flg_enqueue          = space
           i_expand_levels        = 06
@@ -69,7 +114,7 @@ FORM load_tree_hierarchy.
           OTHERS                 = 1.
 
       IF sy-subrc <> 0 OR gt_treev_node IS INITIAL.
-        MESSAGE 'Error loading hierarchy' TYPE 'S' DISPLAY LIKE 'W'.
+        MESSAGE 'Error loading project hierarchy' TYPE 'S' DISPLAY LIKE 'W'.
         RETURN.
       ENDIF.
 
