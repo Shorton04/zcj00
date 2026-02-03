@@ -1,40 +1,17 @@
-MODULE build_im_dropdown OUTPUT.
+LOOP AT lt_impr INTO ls_impr.
+  CLEAR ls_value.
 
-  DATA: ls_value TYPE vrm_value,
-        lt_impr  TYPE TABLE OF impr,
-        ls_impr  TYPE impr.
+  " Internal value (hidden)
+  ls_value-key = ls_impr-posnr.
 
-  CHECK gt_im_dropdown IS INITIAL.
+  " Display value (PR01 only)
+  DATA(lv_dummy) TYPE string.
+  DATA(lv_pr01)  TYPE string.
 
-  " Get IM positions that have config entries
-  SELECT i~posid i~posnr i~prnam i~gjahr i~izwek
-  FROM impr AS i
-  INNER JOIN ztb_a2r_conftab1 AS c
-  ON c~izwek = i~izwek
-  INTO CORRESPONDING FIELDS OF TABLE lt_impr
-  UP TO 500 ROWS
-  ORDER BY i~posid DESCENDING.
+  DATA lt_parts TYPE STANDARD TABLE OF string.
 
-  LOOP AT lt_impr INTO ls_impr.
-    CLEAR ls_value.
+SPLIT ls_impr-prnam AT space INTO TABLE lt_parts.
+READ TABLE lt_parts INDEX lines( lt_parts ) INTO ls_value-text.
 
-
-    " KEY = POSNR (what system needs)
-    ls_value-key = ls_impr-posnr.
-
-
-    "TEXT = PRNAM only (what user wants)
-    ls_value-text = ls_impr-prnam.
-
-
-    APPEND ls_value TO gt_im_dropdown.
-
-
-  ENDLOOP.
-
-  CALL FUNCTION 'VRM_SET_VALUES'
-    EXPORTING
-      id     = 'P_POSNR'
-      values = gt_im_dropdown.
-
-ENDMODULE.
+  APPEND ls_value TO gt_im_dropdown.
+ENDLOOP.
