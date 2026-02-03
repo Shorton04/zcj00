@@ -46,7 +46,7 @@ private section.
     exporting
       !EV_APPR1 type CHAR8
       !EV_APPR2 type CHAR8
-      !EV_AUTO type CHAR1                               " 'X' if both approvers blank
+      !EV_AUTO type CHAR1                                          " 'X' if both approvers blank
       !EV_ERROR_HANDLER type CHAR8
     returning
       value(RV_FOUND) type ABAP_BOOL .
@@ -93,6 +93,11 @@ private section.
       !IV_PROFL type PROFIDPROJ
     returning
       value(RV_PSPID) type PS_PSPID .
+  methods GET_USER_EMAIL
+    importing
+      !IV_UNAME type XUBNAME
+    returning
+      value(RV_EMAIL) type AD_SMTPADR .
 ENDCLASS.
 
 
@@ -188,70 +193,70 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * +--------------------------------------------------------------------------------------</SIGNATURE>
   METHOD assign_plan_values.
 
-     DATA: ls_wbs    TYPE ztb_a2r_wbsitem,
-        lv_objnr  TYPE j_objnr,
-        ls_bpge   TYPE bpge.
+    DATA: ls_wbs   TYPE ztb_a2r_wbsitem,
+          lv_objnr TYPE j_objnr,
+          ls_bpge  TYPE bpge.
 
-  rv_success = abap_false.
+    rv_success = abap_false.
 
-  LOOP AT it_wbs_items INTO ls_wbs.
+    LOOP AT it_wbs_items INTO ls_wbs.
 
-    " Skip WBS without budget
-    IF ls_wbs-wert2 IS INITIAL.
-      CONTINUE.
-    ENDIF.
+      " Skip WBS without budget
+      IF ls_wbs-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
 
-    " Get WBS object number
-    SELECT SINGLE objnr FROM prps
-      INTO lv_objnr
-      WHERE posid = ls_wbs-posid.
+      " Get WBS object number
+      SELECT SINGLE objnr FROM prps
+        INTO lv_objnr
+        WHERE posid = ls_wbs-posid.
 
-    IF sy-subrc <> 0.
-      CONTINUE.
-    ENDIF.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
 
-    " Check if plan record exists
-    " CORRECTED: No GJAHR field! Use VERSN = '0' and OBJNR only
-    SELECT SINGLE * FROM bpge INTO ls_bpge
-      WHERE objnr = lv_objnr
-        AND versn = '0'
-        AND wrttp = '01'.        " Plan value type
-
-    IF sy-subrc = 0.
-      " Update existing plan
-      UPDATE bpge
-        SET wtges = @ls_wbs-wert2,
-            wlges = @ls_wbs-wert2
-        WHERE objnr = @lv_objnr
+      " Check if plan record exists
+      " CORRECTED: No GJAHR field! Use VERSN = '0' and OBJNR only
+      SELECT SINGLE * FROM bpge INTO ls_bpge
+        WHERE objnr = lv_objnr
           AND versn = '0'
-          AND wrttp = '01'.
-    ELSE.
-      " Create new plan record
-      CLEAR ls_bpge.
-      ls_bpge-mandt = sy-mandt.
-      ls_bpge-lednr = '0000'.           " Standard ledger
-      ls_bpge-objnr = lv_objnr.
-      ls_bpge-posit = '00000000'.       " No commitment item
-      ls_bpge-wrttp = '01'.             " Plan values
-      ls_bpge-versn = '0'.              " Version 0
-      ls_bpge-twaer = ls_wbs-werks.     " Currency
-      ls_bpge-wtges = ls_wbs-wert2.     " Total value
-      ls_bpge-wlges = ls_wbs-wert2.     " Overall value
+          AND wrttp = '01'.        " Plan value type
 
-      INSERT bpge FROM ls_bpge.
-    ENDIF.
+      IF sy-subrc = 0.
+        " Update existing plan
+        UPDATE bpge
+          SET wtges = @ls_wbs-wert2,
+              wlges = @ls_wbs-wert2
+          WHERE objnr = @lv_objnr
+            AND versn = '0'
+            AND wrttp = '01'.
+      ELSE.
+        " Create new plan record
+        CLEAR ls_bpge.
+        ls_bpge-mandt = sy-mandt.
+        ls_bpge-lednr = '0000'.           " Standard ledger
+        ls_bpge-objnr = lv_objnr.
+        ls_bpge-posit = '00000000'.       " No commitment item
+        ls_bpge-wrttp = '01'.             " Plan values
+        ls_bpge-versn = '0'.              " Version 0
+        ls_bpge-twaer = ls_wbs-werks.     " Currency
+        ls_bpge-wtges = ls_wbs-wert2.     " Total value
+        ls_bpge-wlges = ls_wbs-wert2.     " Overall value
 
-    IF sy-subrc <> 0.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
+        INSERT bpge FROM ls_bpge.
+      ENDIF.
 
-  ENDLOOP.
+      IF sy-subrc <> 0.
+        rv_success = abap_false.
+        RETURN.
+      ENDIF.
 
-  COMMIT WORK AND WAIT.
-  rv_success = abap_true.
+    ENDLOOP.
 
-ENDMETHOD.
+    COMMIT WORK AND WAIT.
+    rv_success = abap_true.
+
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -305,42 +310,42 @@ ENDMETHOD.
 * +--------------------------------------------------------------------------------------</SIGNATURE>
   METHOD copy_template_structure.
 
-  DATA: lt_prps  TYPE TABLE OF prps,
-        ls_prps  TYPE prps,
-        ls_wbs   TYPE ztb_a2r_wbsitem,
-        lv_pspnr TYPE ps_ispsp.
+    DATA: lt_prps  TYPE TABLE OF prps,
+          ls_prps  TYPE prps,
+          ls_wbs   TYPE ztb_a2r_wbsitem,
+          lv_pspnr TYPE ps_ispsp.
 
-  " Get project internal number from template ID
-  SELECT SINGLE pspnr FROM proj
-    INTO lv_pspnr
-    WHERE pspnr = iv_pspnr.
-
-  IF sy-subrc = 0.
-    " Get all WBS elements belonging to this project
-    SELECT * FROM prps
-      INTO TABLE lt_prps
-      WHERE psphi = lv_pspnr
-      ORDER BY stufe posid.
+    " Get project internal number from template ID
+    SELECT SINGLE pspnr FROM proj
+      INTO lv_pspnr
+      WHERE pspnr = iv_pspnr.
 
     IF sy-subrc = 0.
-      LOOP AT lt_prps INTO ls_prps.
-        CLEAR ls_wbs.
+      " Get all WBS elements belonging to this project
+      SELECT * FROM prps
+        INTO TABLE lt_prps
+        WHERE psphi = lv_pspnr
+        ORDER BY stufe posid.
 
-        ls_wbs-stufe = ls_prps-stufe.
-        ls_wbs-posid = ls_prps-posid.
-        ls_wbs-post1 = ls_prps-post1.
-        ls_wbs-posnr = ls_prps-pspnr.    " CORRECT: POSNR field
-        ls_wbs-kostl = iv_kostl.           " ADD: Inherit from header (FDS Table 4.1.6)
-        ls_wbs-imprf = ls_prps-imprf.
-        ls_wbs-prart = ls_prps-prart.
-        ls_wbs-bukrs = ls_prps-pbukr.
+      IF sy-subrc = 0.
+        LOOP AT lt_prps INTO ls_prps.
+          CLEAR ls_wbs.
 
-        APPEND ls_wbs TO ct_wbs_items.
-      ENDLOOP.
+          ls_wbs-stufe = ls_prps-stufe.
+          ls_wbs-posid = ls_prps-posid.
+          ls_wbs-post1 = ls_prps-post1.
+          ls_wbs-posnr = ls_prps-pspnr.    " CORRECT: POSNR field
+          ls_wbs-kostl = iv_kostl.           " ADD: Inherit from header (FDS Table 4.1.6)
+          ls_wbs-imprf = ls_prps-imprf.
+          ls_wbs-prart = ls_prps-prart.
+          ls_wbs-bukrs = ls_prps-pbukr.
+
+          APPEND ls_wbs TO ct_wbs_items.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
-  ENDIF.
 
-ENDMETHOD.
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -353,52 +358,70 @@ ENDMETHOD.
   METHOD create_project.
 
     DATA: lt_wbs_created TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
+    DATA(lv_dev) = xsdbool( sy-uname = 'HQ75177' ).
 
     rv_success = abap_false.
 
-    " Step 1: Create WBS elements
-    IF create_wbs_elements(
-      EXPORTING
-        is_header      = is_header
-        it_wbs_items   = it_wbs_items
-      IMPORTING
-        et_wbs_created = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e025(zcj00).
-      RETURN.
-    ENDIF.
+    IF lv_dev = abap_true.
 
-    " Step 2: Create settlement rules
-    IF create_settlement_rules(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e024(zcj00).
-      RETURN.
-    ENDIF.
+      " Step 1: Create WBS elements
+      IF create_wbs_elements(
+        EXPORTING
+          is_header      = is_header
+          it_wbs_items   = it_wbs_items
+        IMPORTING
+          et_wbs_created = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e025(zcj00).
+        RETURN.
+      ENDIF.
 
-    " Step 3: Assign plan values
-    IF assign_plan_values(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e026(zcj00).
-      RETURN.
-    ENDIF.
+      " Step 2: Create settlement rules
+      IF create_settlement_rules(
+        it_wbs_items = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e024(zcj00).
+        RETURN.
+      ENDIF.
 
-    " Step 4: Distribute IM budget
-    IF distribute_im_budget(
-      is_header    = is_header
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e027(zcj00).
-      RETURN.
-    ENDIF.
+      " Step 3: Assign plan values
+      IF assign_plan_values(
+        it_wbs_items = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e026(zcj00).
+        RETURN.
+      ENDIF.
 
-    " Step 5: Activate statuses
-    IF activate_statuses(
-      it_wbs_items = lt_wbs_created
-    ) = abap_false.
-      MESSAGE e028(zcj00).
-      RETURN.
+      " Step 4: Distribute IM budget
+      IF distribute_im_budget(
+        is_header    = is_header
+        it_wbs_items = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e027(zcj00).
+        RETURN.
+      ENDIF.
+
+      " Step 5: Activate statuses
+      IF activate_statuses(
+        it_wbs_items = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e028(zcj00).
+        RETURN.
+      ENDIF.
+
+    ELSE.
+      " Step 1: Create WBS elements
+      IF create_wbs_elements(
+        EXPORTING
+          is_header      = is_header
+          it_wbs_items   = it_wbs_items
+        IMPORTING
+          et_wbs_created = lt_wbs_created
+      ) = abap_false.
+        MESSAGE e025(zcj00).
+        RETURN.
+      ENDIF.
+
     ENDIF.
 
     rv_success = abap_true.
@@ -778,6 +801,45 @@ ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_A2R_WBS_BUILDER->GET_USER_EMAIL
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_UNAME                       TYPE        XUBNAME
+* | [<-()] RV_EMAIL                       TYPE        AD_SMTPADR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_user_email.
+
+    DATA: lv_persnumber TYPE ad_persnum.
+
+    CLEAR rv_email.
+
+    " Get person number from username (HRP1001-SOBID = USR21-BNAME)
+    SELECT SINGLE persnumber
+      FROM usr21
+      INTO @lv_persnumber
+      WHERE bname = @iv_uname.
+
+    IF sy-subrc = 0 AND lv_persnumber IS NOT INITIAL.
+
+      " Get email from ADR6 (USR21-PERSNUMBER = ADR6-PERSNUMBER)
+      SELECT SINGLE smtp_addr
+        FROM adr6
+        INTO @rv_email
+        WHERE persnumber = @lv_persnumber
+          AND flgdefault = 'X'.      " Default email
+
+      " If no default email found, get any email
+      IF sy-subrc <> 0.
+        SELECT SINGLE smtp_addr
+          FROM adr6
+          INTO @rv_email
+          WHERE persnumber = @lv_persnumber.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
 * | Instance Public Method ZCL_A2R_WBS_BUILDER->SAVE_REQUEST
 * +-------------------------------------------------------------------------------------------------+
 * | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
@@ -990,16 +1052,30 @@ ENDMETHOD.
 
     DATA: lo_instance TYPE REF TO zcl_a2r_wbs_request_flexwf.
 
-    " Placeholder for workflow
-    rv_success = abap_true.
+    rv_success = abap_false.
 
-    " trigger wf to create project
-    lo_instance = NEW zcl_a2r_wbs_request_flexwf(
-      is_header     = is_header
-      it_l1approver = it_l1_apprv
-      it_l2approver = it_l2_apprv
-    ).
+    IF is_header-zreq_num IS INITIAL.
+      RETURN.
+    ENDIF.
 
-    lo_instance->submit( ).
+*    " Placeholder for workflow
+*    rv_success = abap_true.
+    TRY.
+        " trigger wf to create project
+        lo_instance = NEW zcl_a2r_wbs_request_flexwf(
+          iv_reqnum     = is_header-zreq_num
+          is_header     = is_header
+          it_l1approver = it_l1_apprv
+          it_l2approver = it_l2_apprv
+        ).
+
+        lo_instance->submit( ).
+
+        rv_success = abap_true.
+
+      CATCH cx_root.
+        rv_success = abap_false.
+    ENDTRY.
+
   ENDMETHOD.
 ENDCLASS.
