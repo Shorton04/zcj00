@@ -1,133 +1,10 @@
-*----------------------------------------------------------------------*
-* Constants - Request Type Descriptions
-*----------------------------------------------------------------------*
-CONSTANTS: 
-  " Request Type Description - Short Text (for Screen Display)
-  gc_reqtype_a1_txt TYPE char30 VALUE 'Create New Project',
-  gc_reqtype_b1_txt TYPE char30 VALUE 'Add New WBS',
-  gc_reqtype_b2_txt TYPE char30 VALUE 'Modify WBS Description',
-  gc_reqtype_b3_txt TYPE char30 VALUE 'Change WBS Cost Center',
-  gc_reqtype_c1_txt TYPE char30 VALUE 'Budget Transfer',
-  gc_reqtype_d1_txt TYPE char30 VALUE 'Change Budget',
-  gc_reqtype_e1_txt TYPE char30 VALUE 'Close Project',
-  gc_reqtype_f1_txt TYPE char30 VALUE 'Delete WBS',
-  gc_reqtype_g1_txt TYPE char30 VALUE 'Other Changes'.
-
-*----------------------------------------------------------------------*
-* Display-Only Fields (Screen 2)
-*----------------------------------------------------------------------*
-DATA: gv_requestor_display TYPE char50,      " Full name of requestor
-      gv_reqtype_display   TYPE char30.      " Request type description text
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_REQUEST_TYPE_TEXT
-*&---------------------------------------------------------------------*
-*& Convert request type code to display text
-*& Uses constants from ZTR_A2R_WBSCJ00_TOP
-*&---------------------------------------------------------------------*
-FORM get_request_type_text USING    iv_reqtype      TYPE ztb_a2r_reqtype-z_reqtype
-                           CHANGING cv_reqtype_text TYPE char30.
-
-  CLEAR cv_reqtype_text.
-
-  " ★ HARDCODED MAPPING: Based on your constants A1-G1
-  CASE iv_reqtype.
-    WHEN gc_reqtype_a1.  " 'A1'
-      cv_reqtype_text = gc_reqtype_a1_txt.  " 'Create New Project'
-      
-    WHEN gc_reqtype_b1.  " 'B1'
-      cv_reqtype_text = gc_reqtype_b1_txt.  " 'Add New WBS'
-      
-    WHEN gc_reqtype_b2.  " 'B2'
-      cv_reqtype_text = gc_reqtype_b2_txt.  " 'Modify WBS Description'
-      
-    WHEN gc_reqtype_b3.  " 'B3'
-      cv_reqtype_text = gc_reqtype_b3_txt.  " 'Change WBS Cost Center'
-      
-    WHEN gc_reqtype_c1.  " 'C1'
-      cv_reqtype_text = gc_reqtype_c1_txt.  " 'Budget Transfer'
-      
-    WHEN gc_reqtype_d1.  " 'D1'
-      cv_reqtype_text = gc_reqtype_d1_txt.  " 'Change Budget'
-      
-    WHEN gc_reqtype_e1.  " 'E1'
-      cv_reqtype_text = gc_reqtype_e1_txt.  " 'Close Project'
-      
-    WHEN gc_reqtype_f1.  " 'F1'
-      cv_reqtype_text = gc_reqtype_f1_txt.  " 'Delete WBS'
-      
-    WHEN gc_reqtype_g1.  " 'G1'
-      cv_reqtype_text = gc_reqtype_g1_txt.  " 'Other Changes'
-      
-    WHEN OTHERS.
-      " Fallback: show the code if unmapped
-      cv_reqtype_text = iv_reqtype.
-  ENDCASE.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_USER_FULLNAME
-*&---------------------------------------------------------------------*
-*& Convert SAP username to full name
-*&---------------------------------------------------------------------*
-FORM get_user_fullname USING    iv_uname      TYPE xubname
-                       CHANGING cv_fullname   TYPE char50.
-
-  DATA: ls_usr21 TYPE usr21,
-        ls_adrp  TYPE adrp.
-
-  CLEAR cv_fullname.
-
-  " Get person number from username
-  SELECT SINGLE * FROM usr21
-    INTO ls_usr21
-    WHERE bname = iv_uname.
-
-  IF sy-subrc = 0 AND ls_usr21-persnumber IS NOT INITIAL.
-    
-    " Get full name from address data
-    SELECT SINGLE * FROM adrp
-      INTO ls_adrp
-      WHERE persnumber = ls_usr21-persnumber.
-
-    IF sy-subrc = 0.
-      " Build full name: First Name Last Name
-      IF ls_adrp-name_first IS NOT INITIAL OR ls_adrp-name_last IS NOT INITIAL.
-        CONCATENATE ls_adrp-name_first ls_adrp-name_last
-          INTO cv_fullname SEPARATED BY space.
-        CONDENSE cv_fullname.
-      ELSE.
-        " Fallback to username if no name found
-        cv_fullname = iv_uname.
-      ENDIF.
-    ELSE.
-      cv_fullname = iv_uname.
-    ENDIF.
-    
-  ELSE.
-    " If user not found, use username
-    cv_fullname = iv_uname.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
 *&---------------------------------------------------------------------*
 *& Module SET_HEADER_DISPLAY_VALUES OUTPUT
 *&---------------------------------------------------------------------*
 MODULE set_header_display_values OUTPUT.
 
   DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char30.
+        lv_reqtype_text TYPE char20.
 
   " ★ Convert username to full name
   IF gs_header-ernam IS NOT INITIAL.
@@ -136,7 +13,11 @@ MODULE set_header_display_values OUTPUT.
       CHANGING lv_fullname.
     gv_requestor_display = lv_fullname.
   ELSE.
-    gv_requestor_display = sy-uname.
+    " Default to current user if not set
+    PERFORM get_user_fullname 
+      USING    sy-uname
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
   ENDIF.
 
   " ★ Convert request type code to description
@@ -146,13 +27,11 @@ MODULE set_header_display_values OUTPUT.
       CHANGING lv_reqtype_text.
     gv_reqtype_display = lv_reqtype_text.
   ELSE.
-    " Default to 'Create New Project' if not set
-    gv_reqtype_display = gc_reqtype_a1_txt.
+    " Default to 'Create' if not set
+    gv_reqtype_display = 'Create'.
   ENDIF.
 
 ENDMODULE.
-
-
 
 
 
@@ -167,15 +46,13 @@ MODULE status_0100 OUTPUT.
   " ★ Gray out all header information fields (read-only in Screen 2)
   LOOP AT SCREEN.
     
-    " Header fields - Description section
+    " Make all header fields non-editable
     IF screen-name = 'P_POST1'                    " Description
     OR screen-name = 'P_VERNA'                    " Person Responsible
     OR screen-name = 'P_PLSEZ'                    " Finish Date
     OR screen-name = 'P_PRNAM'                    " IM Program
     OR screen-name = 'P_POSNR'                    " IM Number
-    OR screen-name = 'GV_AVAILABLE_BUDGET'        " Available Budget at IM Level
-    
-    " Header fields - Organizational data
+    OR screen-name = 'GV_AVAILABLE_BUDGET'        " Available Budget
     OR screen-name = 'GV_BUKRS'                   " Company Code
     OR screen-name = 'GV_WERKS'                   " Plant
     OR screen-name = 'P_PRCTR'                    " Profit Center
@@ -183,11 +60,9 @@ MODULE status_0100 OUTPUT.
     OR screen-name = 'GV_IZWEK'                   " Investment Reason
     OR screen-name = 'P_USR10'                    " GE Ariba WF Flag
     OR screen-name = 'GV_USR008'                  " CAR Approval Date
-    
-    " Status/Request info (always read-only)
     OR screen-name = 'GV_REQUESTOR_DISPLAY'       " Requestor (full name)
     OR screen-name = 'GS_HEADER-REQUEST_STATUS'   " Request Status
-    OR screen-name = 'GV_REQTYPE_DISPLAY'.        " Request Type (description)
+    OR screen-name = 'GV_REQTYPE_DISPLAY'.        " Request Type
     
       screen-input = 0.           " Disable input
       screen-intensified = 0.     " Gray out appearance
@@ -197,7 +72,6 @@ MODULE status_0100 OUTPUT.
   ENDLOOP.
 
 ENDMODULE.
-
 
 
 
