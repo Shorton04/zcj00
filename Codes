@@ -1,40 +1,33 @@
 *&---------------------------------------------------------------------*
-*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
+*& Form GET_IM_POSID_EXTERNAL
 *&---------------------------------------------------------------------*
-MODULE set_header_display_values OUTPUT.
+*& Convert IM internal POSNR to external POSID (e.g., 00000003 → PR01)
+*&---------------------------------------------------------------------*
+FORM get_im_posid_external USING    iv_posnr         TYPE im_posnr
+                           CHANGING cv_posid_external TYPE im_posid.
 
-  DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20,
-        lv_im_posid     TYPE im_posid.
+  CLEAR cv_posid_external.
 
-  " Convert username to full name
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname 
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    gv_requestor_display = sy-uname.
+  " Get external POSID from internal POSNR
+  IF iv_posnr IS NOT INITIAL.
+    SELECT SINGLE posid
+      FROM impr
+      INTO cv_posid_external
+      WHERE posnr = iv_posnr.
+
+    IF sy-subrc <> 0.
+      " Fallback: use POSNR if POSID not found
+      cv_posid_external = iv_posnr.
+    ENDIF.
   ENDIF.
 
-  " Convert request type code to description
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'.
-  ENDIF.
+ENDFORM.
 
-  " ★ Convert IM POSNR to external POSID and update P_POSNR for display
-  IF p_posnr IS NOT INITIAL.
-    PERFORM get_im_posid_external
-      USING    p_posnr
-      CHANGING lv_im_posid.
-    
-    " Update the screen field directly
-    p_posnr = lv_im_posid.  " This will show "PR01" instead of "00000003"
-  ENDIF.
 
-ENDMODULE.
+
+*----------------------------------------------------------------------*
+* Display-Only Fields (Screen 2)
+*----------------------------------------------------------------------*
+DATA: gv_requestor_display TYPE char50,      " Full name of requestor
+      gv_reqtype_display   TYPE char20,      " Request type description
+      gv_im_posid_display  TYPE im_posid.    " IM Position ID (external)
