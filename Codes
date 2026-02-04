@@ -1,35 +1,215 @@
-FORM get_request  CHANGING cs_head TYPE zwbs_header.
+METHOD get_next_request_number.
 
-  IF cs_head-request IS INITIAL.
-    IF zwbs_header-request IS INITIAL.
-      CALL FUNCTION 'NUMBER_GET_NEXT'
-        EXPORTING
-          nr_range_nr             = '01'
-          object                  = 'ZPSR_REQNO'
-          quantity                = '1'
-          toyear                  = '0000'
-        IMPORTING
-          number                  = zwbs_header-request
-        EXCEPTIONS
-          interval_not_found      = 1
-          number_range_not_intern = 2
-          object_not_found        = 3
-          quantity_is_0           = 4
-          quantity_is_not_1       = 5
-          interval_overflow       = 6
-          buffer_overflow         = 7
-          OTHERS                  = 8.
-      IF sy-subrc <> 0.
-      ENDIF.
-    ENDIF.
-    cs_head-request       = zwbs_header-request.
-    cs_head-created_by    = sy-uname.
-    cs_head-created_on    = sy-datum.
-    cs_head-creation_time = sy-uzeit.
+  DATA: lv_request TYPE char10.
+
+  CLEAR rv_reqnum.
+
+  " Get next request number from number range
+  CALL FUNCTION 'NUMBER_GET_NEXT'
+    EXPORTING
+      nr_range_nr             = '01'
+      object                  = 'ZCJ00_REQN'    " Use FDS object name
+      quantity                = '1'
+      toyear                  = '0000'          " Important: same as old system
+    IMPORTING
+      number                  = lv_request
+    EXCEPTIONS
+      interval_not_found      = 1
+      number_range_not_intern = 2
+      object_not_found        = 3
+      quantity_is_0           = 4
+      quantity_is_not_1       = 5
+      interval_overflow       = 6
+      buffer_overflow         = 7
+      OTHERS                  = 8.
+
+  IF sy-subrc = 0.
+    rv_reqnum = lv_request.
   ELSE.
-    cs_head-changed_by  = sy-uname.
-    cs_head-changed_on  = sy-datum.
-    cs_head-change_time = sy-uzeit.
+    " Enhanced error handling
+    CASE sy-subrc.
+      WHEN 1.
+        MESSAGE 'Number range interval not found' TYPE 'I' DISPLAY LIKE 'E'.
+      WHEN 2.
+        MESSAGE 'Number range is not internal' TYPE 'I' DISPLAY LIKE 'E'.
+      WHEN 3.
+        MESSAGE 'Number range object ZCJ00_REQN not found. Create in SNRO' TYPE 'I' DISPLAY LIKE 'E'.
+      WHEN OTHERS.
+        MESSAGE 'Error getting request number' TYPE 'I' DISPLAY LIKE 'E'.
+    ENDCASE.
+    CLEAR rv_reqnum.
   ENDIF.
 
-ENDFORM.                    " GET_REQUEST
+ENDMETHOD.
+
+
+
+
+
+METHOD save_request.
+  
+  DATA: ls_header TYPE ztb_a2r_wbshdr,
+        ls_item   TYPE ztb_a2r_wbsitem,
+        ls_wbs    TYPE ztb_a2r_wbsitem,
+        lv_error  TYPE abap_bool.
+
+  CLEAR: rv_reqnum, lv_error.
+
+  " Get request number ONLY if not already assigned
+  IF is_header-zreq_num IS INITIAL.
+    rv_reqnum = get_next_request_number( ).
+    
+    IF rv_reqnum IS INITIAL.
+      " Error message already displayed by get_next_request_number
+      RETURN.
+    ENDIF.
+  ELSE.
+    " Re-saving existing request (update scenario)
+    rv_reqnum = is_header-zreq_num.
+  ENDIF.
+
+  " Prepare header with correct field mapping
+  CLEAR ls_header.
+  ls_header-mandt = sy-mandt.
+  ls_header-zreq_num = rv_reqnum.
+  
+  " FDS Table 4.1.7 field mapping
+  ls_header-posnr = is_header-posnr.              " IM Program Position
+  ls_header-prnam = is_header-prnam.              " IM Program
+  ls_header-pspnr = is_header-pspnr.              " Project ID (populated after creation)
+  ls_header-post1 = is_header-post1.              " Description
+  ls_header-vernr = is_header-vernr.              " Person Responsible
+  ls_header-plsez = is_header-plsez.              " Finish Date
+  ls_header-bukrs = is_header-bukrs.              " Company Code
+  ls_header-werks = is_header-werks.              " Plant
+  ls_header-prctr = is_header-prctr.              " Profit Center
+  ls_header-kostl = is_header-kostl.              " Cost Center
+  ls_header-izwek = is_header-izwek.              " Investment Reason
+  ls_header-zunifier_proj = is_header-zunifier_proj.  " GE Ariba Flag
+  ls_header-usr008 = is_header-usr008.            " CAR Approval Date
+  ls_header-profl = is_header-profl.              " Project Profile
+  ls_header-z_reqtype = is_header-z_reqtype.      " Request Type
+  
+  " Status and audit fields (similar to old system pattern)
+  IF is_header-zreq_num IS INITIAL.
+    " New request
+    ls_header-ernam = sy-uname.                   " Created by
+    ls_header-erdat = sy-datum.                   " Created on
+    ls_header-request_status = 'DRAFT'.           " Draft status
+  ELSE.
+    " Existing request being updated
+    ls_header-ernam = is_header-ernam.            " Keep original creator
+    ls_header-erdat = is_header-erdat.            " Keep original date
+    " Add change tracking if fields exist:
+    " ls_header-changed_by = sy-uname.
+    " ls_header-changed_on = sy-datum.
+  ENDIF.
+  
+  " Optional fields
+  IF is_header-z_remarks IS NOT INITIAL.
+    ls_header-z_remarks = is_header-z_remarks.
+  ENDIF.
+  
+  " Validate mandatory fields
+  IF ls_header-posnr IS INITIAL.
+    MESSAGE 'IM Program Position is mandatory' TYPE 'E'.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+  
+  IF ls_header-bukrs IS INITIAL.
+    MESSAGE 'Company Code is mandatory' TYPE 'E'.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+  
+  IF ls_header-profl IS INITIAL.
+    MESSAGE 'Project Profile is mandatory' TYPE 'E'.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+  
+  IF ls_header-post1 IS INITIAL.
+    MESSAGE 'Project Description is mandatory' TYPE 'E'.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+
+  " Save with error handling
+  TRY.
+      " Check if updating or creating new
+      IF is_header-zreq_num IS INITIAL.
+        " Insert new header
+        INSERT ztb_a2r_wbshdr FROM ls_header.
+      ELSE.
+        " Update existing header
+        UPDATE ztb_a2r_wbshdr FROM ls_header.
+        IF sy-subrc <> 0.
+          " If update failed, try insert (might be new after all)
+          INSERT ztb_a2r_wbshdr FROM ls_header.
+        ENDIF.
+      ENDIF.
+      
+      IF sy-subrc = 0.
+        " Delete old items if updating
+        IF is_header-zreq_num IS NOT INITIAL.
+          DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
+        ENDIF.
+        
+        " Insert/update WBS items
+        LOOP AT it_wbs_items INTO ls_wbs.
+          CLEAR ls_item.
+          
+          " FDS Table 4.1.8 field mapping
+          ls_item-mandt = sy-mandt.
+          ls_item-zreq_num = rv_reqnum.           " Request Number (Primary Key)
+          ls_item-bukrs = ls_header-bukrs.        " Company Code (Primary Key)
+          ls_item-posid = ls_wbs-posid.           " WBS Element Code (Primary Key)
+          ls_item-stufe = ls_wbs-stufe.           " WBS Level
+          ls_item-post1 = ls_wbs-post1.           " Description
+          ls_item-kostl = ls_wbs-kostl.           " Cost Center
+          ls_item-wert2 = ls_wbs-wert2.           " Approved Budget
+          ls_item-zbudget_check = ls_wbs-zbudget_check.  " Budget Check
+          ls_item-imprf = ls_wbs-imprf.           " Investment Profile
+          ls_item-prart = ls_wbs-prart.           " Project Type
+          
+          IF ls_wbs-posnr IS NOT INITIAL.
+            ls_item-posnr = ls_wbs-posnr.         " WBS Internal Number
+          ENDIF.
+          
+          INSERT ztb_a2r_wbsitem FROM ls_item.
+          
+          IF sy-subrc <> 0.
+            lv_error = abap_true.
+            MESSAGE 'Error saving WBS item' && ls_item-posid TYPE 'I' DISPLAY LIKE 'E'.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        " Commit or rollback
+        IF lv_error = abap_false.
+          COMMIT WORK AND WAIT.
+          MESSAGE s012(zcj00) WITH rv_reqnum DISPLAY LIKE 'S'.
+        ELSE.
+          ROLLBACK WORK.
+          CLEAR rv_reqnum.
+        ENDIF.
+        
+      ELSE.
+        MESSAGE 'Error saving header. Check table structure.' TYPE 'E'.
+        CLEAR rv_reqnum.
+        ROLLBACK WORK.
+      ENDIF.
+      
+    CATCH cx_sy_sql_error INTO DATA(lx_sql).
+      MESSAGE lx_sql->get_text( ) TYPE 'E'.
+      CLEAR rv_reqnum.
+      ROLLBACK WORK.
+      
+    CATCH cx_root INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'E'.
+      CLEAR rv_reqnum.
+      ROLLBACK WORK.
+  ENDTRY.
+
+ENDMETHOD.
