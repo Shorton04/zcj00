@@ -4,131 +4,120 @@
 *&———————————————————————*
 
 METHOD save_request.
+  
+  DATA: ls_header TYPE ztb_a2r_wbshdr,
+        ls_item   TYPE ztb_a2r_wbsitem,
+        ls_wbs    TYPE ztb_a2r_wbsitem,    " ✅ ADD THIS LINE
+        lv_error  TYPE abap_bool.
 
-DATA: ls_header TYPE ztb_a2r_wbshdr,
-ls_item   TYPE ztb_a2r_wbsitem,
-lv_error  TYPE abap_bool.
+  CLEAR: rv_reqnum, lv_error.
 
-CLEAR: rv_reqnum, lv_error.
+  " Get request number
+  rv_reqnum = get_next_request_number( ).
 
-“ STEP 1: Get request number from number range
-rv_reqnum = get_next_request_number( ).
+  IF rv_reqnum IS INITIAL.
+    MESSAGE 'Error getting request number' TYPE 'E'.
+    RETURN.
+  ENDIF.
 
-IF rv_reqnum IS INITIAL.
-MESSAGE ‘Error getting request number’ TYPE ‘E’.
-RETURN.
-ENDIF.
-
-“ STEP 2: Prepare header with CORRECT field names from FDS Table 4.1.7
-CLEAR ls_header.
-ls_header-mandt = sy-mandt.                “ Client
-ls_header-zreq_num = rv_reqnum.            “ Request Number (Primary Key)
-
-“ FDS Table 4.1.7 - ZTB_A2R_WBSHDR fields:
-ls_header-posnr = is_header-posnr.         “ IM Program Position
-ls_header-prnam = is_header-prnam.         “ IM Program
-ls_header-pspnr = is_header-pspnr.         “ Project ID (will be populated after creation)
-ls_header-post1 = is_header-post1.         “ Description (FDS uses POST1 not PSPNR for description!)
-ls_header-vernr = is_header-vernr.         “ Person Responsible
-ls_header-plsez = is_header-plsez.         “ Finish Date
-ls_header-bukrs = is_header-bukrs.         “ Company Code
-ls_header-werks = is_header-werks.         “ Plant
-ls_header-prctr = is_header-prctr.         “ Profit Center
-ls_header-kostl = is_header-kostl.         “ Cost Center
-ls_header-izwek = is_header-izwek.         “ Investment Reason
-ls_header-zunifier_proj = is_header-zunifier_proj.  “ GE Ariba WF Flag
-ls_header-usr008 = is_header-usr008.       “ CAR Approval Date
-ls_header-ernam = sy-uname.                “ Requestor
-ls_header-z_reqtype = is_header-z_reqtype. “ Request Type
-ls_header-erdat = sy-datum.                “ Request Created On
-ls_header-profl = is_header-profl.         “ Project Profile
-
-“ FDS Section 4.1.3: Status handling
-“ Draft Status: When user clicks “Save” button
-ls_header-request_status = ‘DRAFT’.
-
-“ Optional fields (if they exist in your table)
-IF is_header-z_remarks IS NOT INITIAL.
-ls_header-z_remarks = is_header-z_remarks.
-ENDIF.
-
-“ STEP 3: Validate mandatory fields (FDS Table 4.1.6)
-IF ls_header-posnr IS INITIAL OR
-ls_header-bukrs IS INITIAL OR
-ls_header-profl IS INITIAL OR
-ls_header-post1 IS INITIAL.
-MESSAGE ‘Missing mandatory fields’ TYPE ‘E’.
-CLEAR rv_reqnum.
-RETURN.
-ENDIF.
-
-“ STEP 4: Save header with error handling
-TRY.
-INSERT ztb_a2r_wbshdr FROM ls_header.
-
-```
-  IF sy-subrc = 0.
-    " STEP 5: Save items with CORRECT field names from FDS Table 4.1.8
-    LOOP AT it_wbs_items ASSIGNING FIELD-SYMBOL(<fs_item>).
-      CLEAR ls_item.
-      
-      " FDS Table 4.1.8 - ZTB_A2R_WBSITEM fields:
-      ls_item-mandt = sy-mandt.
-      ls_item-zreq_num = rv_reqnum.        " Request Number (Primary Key)
-      ls_item-bukrs = ls_header-bukrs.     " Company Code (Primary Key from FDS Table 4.1.8)
-      ls_item-stufe = <fs_item>-stufe.     " WBS Level
-      ls_item-posid = <fs_item>-posid.     " WBS Element Code (Primary Key)
-      ls_item-post1 = <fs_item>-post1.     " Description
-      ls_item-kostl = <fs_item>-kostl.     " Cost Center
-      ls_item-wert2 = <fs_item>-wert2.     " Approved Budget
-      ls_item-zbudget_check = <fs_item>-zbudget_check.  " Budget Check
-      ls_item-imprf = <fs_item>-imprf.     " Investment Profile
-      ls_item-prart = <fs_item>-prart.     " Project Type
-      
-      " CRITICAL FIX: Use POSNR not PSPNR (from your original structure)
-      IF <fs_item>-posnr IS NOT INITIAL.
-        ls_item-posnr = <fs_item>-posnr.   " If this field exists in your item structure
-      ENDIF.
-      
-      INSERT ztb_a2r_wbsitem FROM ls_item.
-      
-      IF sy-subrc <> 0.
-        lv_error = abap_true.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    " STEP 6: Commit or rollback
-    IF lv_error = abap_false.
-      COMMIT WORK AND WAIT.
-      MESSAGE s012(zcj00) WITH rv_reqnum. " Request saved successfully
-    ELSE.
-      ROLLBACK WORK.
-      CLEAR rv_reqnum.
-      MESSAGE 'Error saving WBS items' TYPE 'E'.
-    ENDIF.
-    
-  ELSE.
-    " INSERT header failed
-    MESSAGE 'Error: Header insert failed' TYPE 'E'.
-    CLEAR rv_reqnum.
-    ROLLBACK WORK.
+  " Prepare header
+  CLEAR ls_header.
+  ls_header-mandt = sy-mandt.
+  ls_header-zreq_num = rv_reqnum.
+  ls_header-posnr = is_header-posnr.
+  ls_header-prnam = is_header-prnam.
+  ls_header-pspnr = is_header-pspnr.
+  ls_header-post1 = is_header-post1.
+  ls_header-vernr = is_header-vernr.
+  ls_header-plsez = is_header-plsez.
+  ls_header-bukrs = is_header-bukrs.
+  ls_header-werks = is_header-werks.
+  ls_header-prctr = is_header-prctr.
+  ls_header-kostl = is_header-kostl.
+  ls_header-izwek = is_header-izwek.
+  ls_header-zunifier_proj = is_header-zunifier_proj.
+  ls_header-usr008 = is_header-usr008.
+  ls_header-ernam = sy-uname.
+  ls_header-z_reqtype = is_header-z_reqtype.
+  ls_header-erdat = sy-datum.
+  ls_header-profl = is_header-profl.
+  ls_header-request_status = 'DRAFT'.
+  
+  IF is_header-z_remarks IS NOT INITIAL.
+    ls_header-z_remarks = is_header-z_remarks.
   ENDIF.
   
-CATCH cx_sy_sql_error INTO DATA(lx_sql).
-  MESSAGE lx_sql->get_text( ) TYPE 'E'.
-  CLEAR rv_reqnum.
-  ROLLBACK WORK.
-  
-CATCH cx_root INTO DATA(lx_error).
-  MESSAGE lx_error->get_text( ) TYPE 'E'.
-  CLEAR rv_reqnum.
-  ROLLBACK WORK.
-```
+  " Validate
+  IF ls_header-posnr IS INITIAL OR
+     ls_header-bukrs IS INITIAL OR
+     ls_header-profl IS INITIAL OR
+     ls_header-post1 IS INITIAL.
+    MESSAGE 'Missing mandatory fields' TYPE 'E'.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
 
-ENDTRY.
+  " Save with error handling
+  TRY.
+      INSERT ztb_a2r_wbshdr FROM ls_header.
+      
+      IF sy-subrc = 0.
+        " ✅ CORRECTED LOOP - Use INTO instead of ASSIGNING
+        LOOP AT it_wbs_items INTO ls_wbs.
+          CLEAR ls_item.
+          
+          ls_item-mandt = sy-mandt.
+          ls_item-zreq_num = rv_reqnum.
+          ls_item-bukrs = ls_header-bukrs.
+          ls_item-stufe = ls_wbs-stufe.
+          ls_item-posid = ls_wbs-posid.
+          ls_item-post1 = ls_wbs-post1.
+          ls_item-kostl = ls_wbs-kostl.
+          ls_item-wert2 = ls_wbs-wert2.
+          ls_item-zbudget_check = ls_wbs-zbudget_check.
+          ls_item-imprf = ls_wbs-imprf.
+          ls_item-prart = ls_wbs-prart.
+          
+          IF ls_wbs-posnr IS NOT INITIAL.
+            ls_item-posnr = ls_wbs-posnr.
+          ENDIF.
+          
+          INSERT ztb_a2r_wbsitem FROM ls_item.
+          
+          IF sy-subrc <> 0.
+            lv_error = abap_true.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        IF lv_error = abap_false.
+          COMMIT WORK AND WAIT.
+          MESSAGE s012(zcj00) WITH rv_reqnum.
+        ELSE.
+          ROLLBACK WORK.
+          CLEAR rv_reqnum.
+          MESSAGE 'Error saving WBS items' TYPE 'E'.
+        ENDIF.
+        
+      ELSE.
+        MESSAGE 'Error: Header insert failed' TYPE 'E'.
+        CLEAR rv_reqnum.
+        ROLLBACK WORK.
+      ENDIF.
+      
+    CATCH cx_sy_sql_error INTO DATA(lx_sql).
+      MESSAGE lx_sql->get_text( ) TYPE 'E'.
+      CLEAR rv_reqnum.
+      ROLLBACK WORK.
+      
+    CATCH cx_root INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'E'.
+      CLEAR rv_reqnum.
+      ROLLBACK WORK.
+  ENDTRY.
 
 ENDMETHOD.
+
 
 
 
