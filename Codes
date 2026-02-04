@@ -1,3 +1,29 @@
+" ★ Convert BOTH IM fields to external POSID format
+  " Get the POSNR value (could be in header or screen variable)
+  DATA(lv_posnr) = COND im_posnr( 
+    WHEN gs_header-posnr IS NOT INITIAL 
+    THEN gs_header-posnr 
+    ELSE p_posnr 
+  ).
+  
+  IF lv_posnr IS NOT INITIAL.
+    PERFORM get_im_posid_external
+      USING    lv_posnr
+      CHANGING lv_im_posid.
+    
+    " Store in display variable
+    gv_im_posid_display = lv_im_posid.
+    
+    " ★ CRITICAL: Also update the screen fields directly
+    " This ensures both "IM Number" and "IM" fields show external format
+    p_posnr = lv_im_posid.              " IM Number field
+    gs_header-posnr = lv_im_posid.      " IM field (the one showing "3")
+  ELSE.
+    CLEAR: gv_im_posid_display, p_posnr, gs_header-posnr.
+  ENDIF.
+
+
+
 *&---------------------------------------------------------------------*
 *& Form GET_IM_POSID_EXTERNAL
 *&---------------------------------------------------------------------*
@@ -8,20 +34,30 @@ FORM get_im_posid_external USING    iv_posnr         TYPE im_posnr
 
   CLEAR cv_posid_external.
 
-  " Get external POSID from internal POSNR
   IF iv_posnr IS NOT INITIAL.
+    " Get external POSID from IMPR table
     SELECT SINGLE posid
       FROM impr
       INTO cv_posid_external
       WHERE posnr = iv_posnr.
 
     IF sy-subrc <> 0.
-      " Fallback: use POSNR if POSID not found
-      cv_posid_external = iv_posnr.
+      " Fallback: try with leading zeros removed
+      DATA(lv_posnr_alpha) = |{ iv_posnr ALPHA = OUT }|.
+      SELECT SINGLE posid
+        FROM impr
+        INTO cv_posid_external
+        WHERE posnr = lv_posnr_alpha.
+      
+      IF sy-subrc <> 0.
+        " Last resort: use the input value
+        cv_posid_external = iv_posnr.
+      ENDIF.
     ENDIF.
   ENDIF.
 
 ENDFORM.
+
 
 
 
@@ -30,4 +66,92 @@ ENDFORM.
 *----------------------------------------------------------------------*
 DATA: gv_requestor_display TYPE char50,      " Full name of requestor
       gv_reqtype_display   TYPE char20,      " Request type description
-      gv_im_posid_display  TYPE im_posid.    " IM Position ID (external)
+      gv_im_number_display TYPE im_posid,    " IM Number field (external)
+      gv_im_display        TYPE im_posid.    " IM field (external)
+
+
+
+
+MODULE set_header_display_values OUTPUT.
+
+  DATA: lv_fullname     TYPE char50,
+        lv_reqtype_text TYPE char20,
+        lv_im_posid     TYPE im_posid.
+
+  " Convert username to full name
+  IF gs_header-ernam IS NOT INITIAL.
+    PERFORM get_user_fullname 
+      USING    gs_header-ernam
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
+  ELSE.
+    gv_requestor_display = sy-uname.
+  ENDIF.
+
+  " Convert request type code to description
+  IF gs_header-z_reqtype IS NOT INITIAL.
+    PERFORM get_request_type_text
+      USING    gs_header-z_reqtype
+      CHANGING lv_reqtype_text.
+    gv_reqtype_display = lv_reqtype_text.
+  ELSE.
+    gv_reqtype_display = 'Create'.
+  ENDIF.
+
+  " ★ Convert IM fields to external format
+  DATA(lv_posnr) = COND im_posnr( 
+    WHEN gs_header-posnr IS NOT INITIAL 
+    THEN gs_header-posnr 
+    ELSE p_posnr 
+  ).
+  
+  IF lv_posnr IS NOT INITIAL.
+    PERFORM get_im_posid_external
+      USING    lv_posnr
+      CHANGING lv_im_posid.
+    
+    " Populate both display variables
+    gv_im_number_display = lv_im_posid.  " For "IM Number" field
+    gv_im_display = lv_im_posid.         " For "IM" field
+  ELSE.
+    CLEAR: gv_im_number_display, gv_im_display.
+  ENDIF.
+
+ENDMODULE.
+
+
+
+MODULE status_0100 OUTPUT.
+  SET PF-STATUS 'STATUS_100'.
+  SET TITLEBAR 'TITLE_100'.
+
+  LOOP AT SCREEN.
+    
+    IF screen-name = 'P_POST1'                    " Description
+    OR screen-name = 'P_VERNA'                    " Person Responsible
+    OR screen-name = 'P_PLSEZ'                    " Finish Date
+    OR screen-name = 'P_PRNAM'                    " IM Program
+    OR screen-name = 'P_POSNR'                    " IM Number
+    OR screen-name = 'GS_HEADER-POSNR'            " ★ IM (the "3" field)
+    OR screen-name = 'GV_IM_NUMBER_DISPLAY'       " IM Number (display var)
+    OR screen-name = 'GV_IM_DISPLAY'              " ★ IM (display var)
+    OR screen-name = 'GV_AVAILABLE_BUDGET'        " Available Budget
+    OR screen-name = 'GV_BUKRS'                   " Company Code
+    OR screen-name = 'GV_WERKS'                   " Plant
+    OR screen-name = 'P_PRCTR'                    " Profit Center
+    OR screen-name = 'P_KOSTL'                    " Cost Center
+    OR screen-name = 'GV_IZWEK'                   " Investment Reason
+    OR screen-name = 'P_USR10'                    " GE Ariba WF Flag
+    OR screen-name = 'GV_USR008'                  " CAR Approval Date
+    OR screen-name = 'GV_REQUESTOR_DISPLAY'       " Requestor
+    OR screen-name = 'GS_HEADER-REQUEST_STATUS'   " Request Status
+    OR screen-name = 'GV_REQTYPE_DISPLAY'.        " Request Type
+    
+      screen-input = 0.
+      screen-intensified = 0.
+      MODIFY SCREEN.
+    ENDIF.
+    
+  ENDLOOP.
+
+ENDMODULE.
