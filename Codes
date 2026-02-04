@@ -1,73 +1,55 @@
 *&---------------------------------------------------------------------*
-*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
+*& Module SET_TABLE_FIELD_ATTRIBUTES OUTPUT
 *&---------------------------------------------------------------------*
-MODULE set_header_display_values OUTPUT.
+MODULE set_table_field_attributes OUTPUT.
 
-  DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20.
+  DATA: lv_read_only TYPE abap_bool.
 
-  " ★ Convert username to full name
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname 
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    " Default to current user if not set
-    PERFORM get_user_fullname 
-      USING    sy-uname
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
+  " Determine if entire row should be read-only
+  " (e.g., for approved requests or specific statuses)
+  IF gs_header-request_status = 'APPROVED'
+  OR gs_header-request_status = 'REJECTED'.
+    lv_read_only = abap_true.
   ENDIF.
 
-  " ★ Convert request type code to description
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    " Default to 'Create' if not set
-    gv_reqtype_display = 'Create'.
-  ENDIF.
-
-ENDMODULE.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Module STATUS_0100 OUTPUT
-*&---------------------------------------------------------------------*
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100'.
-
-  " ★ Gray out all header information fields (read-only in Screen 2)
   LOOP AT SCREEN.
     
-    " Make all header fields non-editable
-    IF screen-name = 'P_POST1'                    " Description
-    OR screen-name = 'P_VERNA'                    " Person Responsible
-    OR screen-name = 'P_PLSEZ'                    " Finish Date
-    OR screen-name = 'P_PRNAM'                    " IM Program
-    OR screen-name = 'P_POSNR'                    " IM Number
-    OR screen-name = 'GV_AVAILABLE_BUDGET'        " Available Budget
-    OR screen-name = 'GV_BUKRS'                   " Company Code
-    OR screen-name = 'GV_WERKS'                   " Plant
-    OR screen-name = 'P_PRCTR'                    " Profit Center
-    OR screen-name = 'P_KOSTL'                    " Cost Center
-    OR screen-name = 'GV_IZWEK'                   " Investment Reason
-    OR screen-name = 'P_USR10'                    " GE Ariba WF Flag
-    OR screen-name = 'GV_USR008'                  " CAR Approval Date
-    OR screen-name = 'GV_REQUESTOR_DISPLAY'       " Requestor (full name)
-    OR screen-name = 'GS_HEADER-REQUEST_STATUS'   " Request Status
-    OR screen-name = 'GV_REQTYPE_DISPLAY'.        " Request Type
+    " ★ ALWAYS GRAYED OUT (Template-derived fields)
+    IF screen-name = 'GS_WBS_DISPLAY-STUFE'        " Level - from template
+    OR screen-name = 'GS_WBS_DISPLAY-POSID'        " WBS Code - from template
+    OR screen-name = 'GS_WBS_DISPLAY-POSNR'        " Internal number
+    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'        " Company Code - from header
+    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'        " Investment Profile - from template
+    OR screen-name = 'GS_WBS_DISPLAY-PRART'.       " Project Type - from template
     
-      screen-input = 0.           " Disable input
-      screen-intensified = 0.     " Gray out appearance
+      screen-input = 0.
+      screen-intensified = 0.
       MODIFY SCREEN.
     ENDIF.
+    
+    " ★ CONDITIONALLY EDITABLE (based on level and status)
+    
+    " Description: Editable for Level 2/3, grayed for Level 1
+    IF screen-name = 'GS_WBS_DISPLAY-POST1'.
+      IF gs_wbs_display-stufe = 1 OR lv_read_only = abap_true.
+        screen-input = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDIF.
+    
+    " Budget fields: Editable only in DRAFT status
+    IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+    OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
+      IF lv_read_only = abap_true.
+        screen-input = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDIF.
+    
+    " Cost Center: Always editable (can be changed per WBS)
+    " No restriction needed
     
   ENDLOOP.
 
@@ -78,10 +60,11 @@ ENDMODULE.
 
 PROCESS BEFORE OUTPUT.
   MODULE status_0100.
-  MODULE set_header_display_values.   " ← Add this line
+  MODULE set_header_display_values.
   
   " Table control modules
   LOOP AT gt_wbs_display INTO gs_wbs_display 
        WITH CONTROL tc_wbs CURSOR tc_wbs-current_line.
     MODULE tc_wbs_get_lines.
+    MODULE set_table_field_attributes.   " ← Add this line
   ENDLOOP.
