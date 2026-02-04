@@ -1,23 +1,67 @@
+*----------------------------------------------------------------------*
+* Constants - Request Type Descriptions
+*----------------------------------------------------------------------*
+CONSTANTS: 
+  " Request Type Description - Short Text (for Screen Display)
+  gc_reqtype_a1_txt TYPE char30 VALUE 'Create New Project',
+  gc_reqtype_b1_txt TYPE char30 VALUE 'Add New WBS',
+  gc_reqtype_b2_txt TYPE char30 VALUE 'Modify WBS Description',
+  gc_reqtype_b3_txt TYPE char30 VALUE 'Change WBS Cost Center',
+  gc_reqtype_c1_txt TYPE char30 VALUE 'Budget Transfer',
+  gc_reqtype_d1_txt TYPE char30 VALUE 'Change Budget',
+  gc_reqtype_e1_txt TYPE char30 VALUE 'Close Project',
+  gc_reqtype_f1_txt TYPE char30 VALUE 'Delete WBS',
+  gc_reqtype_g1_txt TYPE char30 VALUE 'Other Changes'.
+
+*----------------------------------------------------------------------*
+* Display-Only Fields (Screen 2)
+*----------------------------------------------------------------------*
+DATA: gv_requestor_display TYPE char50,      " Full name of requestor
+      gv_reqtype_display   TYPE char30.      " Request type description text
+
+
+
+
 *&---------------------------------------------------------------------*
 *& Form GET_REQUEST_TYPE_TEXT
 *&---------------------------------------------------------------------*
-*& Convert request type code to display text (hardcoded mapping)
+*& Convert request type code to display text
+*& Uses constants from ZTR_A2R_WBSCJ00_TOP
 *&---------------------------------------------------------------------*
-FORM get_request_type_text USING    iv_reqtype      TYPE char2
-                           CHANGING cv_reqtype_text TYPE char20.
+FORM get_request_type_text USING    iv_reqtype      TYPE ztb_a2r_reqtype-z_reqtype
+                           CHANGING cv_reqtype_text TYPE char30.
 
   CLEAR cv_reqtype_text.
 
-  " ★ HARDCODED MAPPING: Request Type Code → Description
+  " ★ HARDCODED MAPPING: Based on your constants A1-G1
   CASE iv_reqtype.
-    WHEN 'A1'.
-      cv_reqtype_text = 'Create'.
-    WHEN 'A2'.
-      cv_reqtype_text = 'Modify'.
-    WHEN 'A3'.
-      cv_reqtype_text = 'Close'.
-    WHEN 'A4'.
-      cv_reqtype_text = 'Delete'.
+    WHEN gc_reqtype_a1.  " 'A1'
+      cv_reqtype_text = gc_reqtype_a1_txt.  " 'Create New Project'
+      
+    WHEN gc_reqtype_b1.  " 'B1'
+      cv_reqtype_text = gc_reqtype_b1_txt.  " 'Add New WBS'
+      
+    WHEN gc_reqtype_b2.  " 'B2'
+      cv_reqtype_text = gc_reqtype_b2_txt.  " 'Modify WBS Description'
+      
+    WHEN gc_reqtype_b3.  " 'B3'
+      cv_reqtype_text = gc_reqtype_b3_txt.  " 'Change WBS Cost Center'
+      
+    WHEN gc_reqtype_c1.  " 'C1'
+      cv_reqtype_text = gc_reqtype_c1_txt.  " 'Budget Transfer'
+      
+    WHEN gc_reqtype_d1.  " 'D1'
+      cv_reqtype_text = gc_reqtype_d1_txt.  " 'Change Budget'
+      
+    WHEN gc_reqtype_e1.  " 'E1'
+      cv_reqtype_text = gc_reqtype_e1_txt.  " 'Close Project'
+      
+    WHEN gc_reqtype_f1.  " 'F1'
+      cv_reqtype_text = gc_reqtype_f1_txt.  " 'Delete WBS'
+      
+    WHEN gc_reqtype_g1.  " 'G1'
+      cv_reqtype_text = gc_reqtype_g1_txt.  " 'Other Changes'
+      
     WHEN OTHERS.
       " Fallback: show the code if unmapped
       cv_reqtype_text = iv_reqtype.
@@ -26,29 +70,54 @@ FORM get_request_type_text USING    iv_reqtype      TYPE char2
 ENDFORM.
 
 
-*&---------------------------------------------------------------------*
-*& Form GET_REQUEST_TYPE_TEXT
-*&---------------------------------------------------------------------*
-FORM get_request_type_text USING    iv_reqtype      TYPE char2
-                           CHANGING cv_reqtype_text TYPE char20.
 
-  CLEAR cv_reqtype_text.
 
-  " Use constants for cleaner code
-  CASE iv_reqtype.
-    WHEN gc_reqtype_create.
-      cv_reqtype_text = gc_reqtype_create_txt.  " 'Create'
-    WHEN gc_reqtype_modify.
-      cv_reqtype_text = gc_reqtype_modify_txt.  " 'Modify'
-    WHEN gc_reqtype_close.
-      cv_reqtype_text = gc_reqtype_close_txt.   " 'Close'
-    WHEN gc_reqtype_delete.
-      cv_reqtype_text = gc_reqtype_delete_txt.  " 'Delete'
-    WHEN OTHERS.
-      cv_reqtype_text = iv_reqtype.             " Fallback
-  ENDCASE.
+*&---------------------------------------------------------------------*
+*& Form GET_USER_FULLNAME
+*&---------------------------------------------------------------------*
+*& Convert SAP username to full name
+*&---------------------------------------------------------------------*
+FORM get_user_fullname USING    iv_uname      TYPE xubname
+                       CHANGING cv_fullname   TYPE char50.
+
+  DATA: ls_usr21 TYPE usr21,
+        ls_adrp  TYPE adrp.
+
+  CLEAR cv_fullname.
+
+  " Get person number from username
+  SELECT SINGLE * FROM usr21
+    INTO ls_usr21
+    WHERE bname = iv_uname.
+
+  IF sy-subrc = 0 AND ls_usr21-persnumber IS NOT INITIAL.
+    
+    " Get full name from address data
+    SELECT SINGLE * FROM adrp
+      INTO ls_adrp
+      WHERE persnumber = ls_usr21-persnumber.
+
+    IF sy-subrc = 0.
+      " Build full name: First Name Last Name
+      IF ls_adrp-name_first IS NOT INITIAL OR ls_adrp-name_last IS NOT INITIAL.
+        CONCATENATE ls_adrp-name_first ls_adrp-name_last
+          INTO cv_fullname SEPARATED BY space.
+        CONDENSE cv_fullname.
+      ELSE.
+        " Fallback to username if no name found
+        cv_fullname = iv_uname.
+      ENDIF.
+    ELSE.
+      cv_fullname = iv_uname.
+    ENDIF.
+    
+  ELSE.
+    " If user not found, use username
+    cv_fullname = iv_uname.
+  ENDIF.
 
 ENDFORM.
+
 
 
 
@@ -58,32 +127,32 @@ ENDFORM.
 MODULE set_header_display_values OUTPUT.
 
   DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20.
+        lv_reqtype_text TYPE char30.
 
   " ★ Convert username to full name
   IF gs_header-ernam IS NOT INITIAL.
     PERFORM get_user_fullname 
       USING    gs_header-ernam
       CHANGING lv_fullname.
-    
     gv_requestor_display = lv_fullname.
   ELSE.
-    gv_requestor_display = sy-uname.  " Default to current user
+    gv_requestor_display = sy-uname.
   ENDIF.
 
-  " ★ Convert request type code to description (hardcoded)
+  " ★ Convert request type code to description
   IF gs_header-z_reqtype IS NOT INITIAL.
     PERFORM get_request_type_text
       USING    gs_header-z_reqtype
       CHANGING lv_reqtype_text.
-    
     gv_reqtype_display = lv_reqtype_text.
   ELSE.
-    " Default to 'Create' if not set
-    gv_reqtype_display = gc_reqtype_create_txt.
+    " Default to 'Create New Project' if not set
+    gv_reqtype_display = gc_reqtype_a1_txt.
   ENDIF.
 
 ENDMODULE.
+
+
 
 
 
@@ -95,33 +164,33 @@ MODULE status_0100 OUTPUT.
   SET PF-STATUS 'STATUS_100'.
   SET TITLEBAR 'TITLE_100'.
 
-  " ★ Gray out all header information fields
+  " ★ Gray out all header information fields (read-only in Screen 2)
   LOOP AT SCREEN.
     
-    " Header fields on the left side
-    IF screen-name = 'P_POST1'          " Description
-    OR screen-name = 'P_VERNA'          " Person Responsible
-    OR screen-name = 'P_PLSEZ'          " Finish Date
-    OR screen-name = 'P_PRNAM'          " IM Program
-    OR screen-name = 'P_POSNR'          " IM Number
-    OR screen-name = 'GV_AVAILABLE_BUDGET'  " Available Budget
+    " Header fields - Description section
+    IF screen-name = 'P_POST1'                    " Description
+    OR screen-name = 'P_VERNA'                    " Person Responsible
+    OR screen-name = 'P_PLSEZ'                    " Finish Date
+    OR screen-name = 'P_PRNAM'                    " IM Program
+    OR screen-name = 'P_POSNR'                    " IM Number
+    OR screen-name = 'GV_AVAILABLE_BUDGET'        " Available Budget at IM Level
     
-    " Header fields on the right side
-    OR screen-name = 'GV_BUKRS'         " Company Code
-    OR screen-name = 'GV_WERKS'         " Plant
-    OR screen-name = 'P_PRCTR'          " Profit Center
-    OR screen-name = 'P_KOSTL'          " Cost Center
-    OR screen-name = 'GV_IZWEK'         " Investment Reason
-    OR screen-name = 'P_USR10'          " GE Ariba WF Flag
-    OR screen-name = 'GV_USR008'        " CAR Approval Date
+    " Header fields - Organizational data
+    OR screen-name = 'GV_BUKRS'                   " Company Code
+    OR screen-name = 'GV_WERKS'                   " Plant
+    OR screen-name = 'P_PRCTR'                    " Profit Center
+    OR screen-name = 'P_KOSTL'                    " Cost Center
+    OR screen-name = 'GV_IZWEK'                   " Investment Reason
+    OR screen-name = 'P_USR10'                    " GE Ariba WF Flag
+    OR screen-name = 'GV_USR008'                  " CAR Approval Date
     
     " Status/Request info (always read-only)
-    OR screen-name = 'GV_REQUESTOR_DISPLAY'   " Requestor (full name)
-    OR screen-name = 'GS_HEADER-REQUEST_STATUS'  " Request Status
-    OR screen-name = 'GV_REQTYPE_DISPLAY'.    " Request Type (Create/Modify)
+    OR screen-name = 'GV_REQUESTOR_DISPLAY'       " Requestor (full name)
+    OR screen-name = 'GS_HEADER-REQUEST_STATUS'   " Request Status
+    OR screen-name = 'GV_REQTYPE_DISPLAY'.        " Request Type (description)
     
       screen-input = 0.           " Disable input
-      screen-intensified = 0.     " Gray out
+      screen-intensified = 0.     " Gray out appearance
       MODIFY SCREEN.
     ENDIF.
     
@@ -131,24 +200,14 @@ ENDMODULE.
 
 
 
-*----------------------------------------------------------------------*
-* Display-Only Fields (Screen 2)
-*----------------------------------------------------------------------*
-DATA: gv_requestor_display TYPE char50,      " Full name of requestor
-      gv_reqtype_display   TYPE char20.      " Request type text (Create, Modify, etc.)
 
-*----------------------------------------------------------------------*
-* Constants - Request Types (Hardcoded Mapping)
-*----------------------------------------------------------------------*
-CONSTANTS: 
-  " Request Type Codes (stored in database)
-  gc_reqtype_create TYPE char2 VALUE 'A1',
-  gc_reqtype_modify TYPE char2 VALUE 'A2',
-  gc_reqtype_close  TYPE char2 VALUE 'A3',
-  gc_reqtype_delete TYPE char2 VALUE 'A4',
+
+PROCESS BEFORE OUTPUT.
+  MODULE status_0100.
+  MODULE set_header_display_values.   " ← Add this line
   
-  " Request Type Display Texts (shown in UI)
-  gc_reqtype_create_txt TYPE char20 VALUE 'Create',
-  gc_reqtype_modify_txt TYPE char20 VALUE 'Modify',
-  gc_reqtype_close_txt  TYPE char20 VALUE 'Close',
-  gc_reqtype_delete_txt TYPE char20 VALUE 'Delete'.
+  " Table control modules
+  LOOP AT gt_wbs_display INTO gs_wbs_display 
+       WITH CONTROL tc_wbs CURSOR tc_wbs-current_line.
+    MODULE tc_wbs_get_lines.
+  ENDLOOP.
