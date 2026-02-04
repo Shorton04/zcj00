@@ -1,70 +1,202 @@
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->CREATE_PROJECT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
+* | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
+* | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD create_project.
+
+    DATA: lt_wbs_created TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
+
+    rv_success = abap_false.
+
+    " ★ SIMPLIFIED: Only create WBS elements, skip all other operations
+    
+    " Step 1: Create WBS elements
+    IF create_wbs_elements(
+      EXPORTING
+        is_header      = is_header
+        it_wbs_items   = it_wbs_items
+      IMPORTING
+        et_wbs_created = lt_wbs_created
+    ) = abap_false.
+      MESSAGE e025(zcj00) WITH 'Error creating WBS elements'.
+      RETURN.
+    ENDIF.
+
+    " ★ SKIPPED OPERATIONS (for now):
+    " - create_settlement_rules
+    " - assign_plan_values
+    " - distribute_im_budget
+    " - activate_statuses
+
+    rv_success = abap_true.
+    COMMIT WORK AND WAIT.
+    
+    MESSAGE s036(zcj00) WITH 'Project created successfully'.
+
+  ENDMETHOD.
+
+
+
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->SUBMIT_REQUEST
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
+* | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
+* | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD submit_request.
+
+    DATA: lv_reqnum        TYPE char10,
+          ls_header        TYPE ztb_a2r_wbshdr.
+
+    rv_success = abap_false.
+
+    " Step 1: Save the request first
+    lv_reqnum = save_request(
+      is_header    = is_header
+      it_wbs_items = it_wbs_items
+    ).
+
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e013(zcj00) WITH 'Error saving request'.
+      RETURN.
+    ENDIF.
+
+    " Step 2: Update header for project creation
+    ls_header = is_header.
+    ls_header-zreq_num = lv_reqnum.
+    ls_header-request_status = 'APPROVED'.  " Mark as approved immediately
+
+    " ★ SIMPLIFIED: Skip workflow and approver checks
+    " ★ Directly create project without approval workflow
+
+    " Step 3: Create project immediately
+    rv_success = create_project(
+      is_header    = ls_header
+      it_wbs_items = it_wbs_items
+    ).
+
+    IF rv_success = abap_true.
+      " Update status to APPROVED
+      UPDATE ztb_a2r_wbshdr
+        SET request_status = 'APPROVED'
+            zapproved_by = sy-uname
+            zrequest_approved_on = sy-datum
+        WHERE zreq_num = lv_reqnum.
+      
+      COMMIT WORK AND WAIT.
+      MESSAGE s037(zcj00) WITH 'Request' lv_reqnum 'submitted and project created'.
+    ELSE.
+      " Update status to ERROR
+      UPDATE ztb_a2r_wbshdr
+        SET request_status = 'ERROR'
+        WHERE zreq_num = lv_reqnum.
+      
+      COMMIT WORK.
+      MESSAGE e034(zcj00) WITH 'Error creating project for request' lv_reqnum.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+
+
+
+
 *&---------------------------------------------------------------------*
-*& Module SET_TABLE_FIELD_ATTRIBUTES OUTPUT
+*& Module USER_COMMAND_0100 INPUT
 *&---------------------------------------------------------------------*
-MODULE set_table_field_attributes OUTPUT.
+MODULE user_command_0100 INPUT.
+  DATA: lv_ok_code1 TYPE sy-ucomm.
 
-  DATA: lv_read_only TYPE abap_bool.
+  lv_ok_code1 = sy-ucomm.
+  CLEAR sy-ucomm.
 
-  " Determine if entire row should be read-only
-  " (e.g., for approved requests or specific statuses)
-  IF gs_header-request_status = 'APPROVED'
-  OR gs_header-request_status = 'REJECTED'.
-    lv_read_only = abap_true.
-  ENDIF.
+  CASE lv_ok_code1.
+    WHEN 'SAVE'.
+      PERFORM get_text.              " Get remarks
+      PERFORM save_request.
 
-  LOOP AT SCREEN.
-    
-    " ★ ALWAYS GRAYED OUT (Template-derived fields)
-    IF screen-name = 'GS_WBS_DISPLAY-STUFE'        " Level - from template
-    OR screen-name = 'GS_WBS_DISPLAY-POSID'        " WBS Code - from template
-    OR screen-name = 'GS_WBS_DISPLAY-POSNR'        " Internal number
-    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'        " Company Code - from header
-    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'        " Investment Profile - from template
-    OR screen-name = 'GS_WBS_DISPLAY-PRART'.       " Project Type - from template
-    
-      screen-input = 0.
-      screen-intensified = 0.
-      MODIFY SCREEN.
-    ENDIF.
-    
-    " ★ CONDITIONALLY EDITABLE (based on level and status)
-    
-    " Description: Editable for Level 2/3, grayed for Level 1
-    IF screen-name = 'GS_WBS_DISPLAY-POST1'.
-      IF gs_wbs_display-stufe = 1 OR lv_read_only = abap_true.
-        screen-input = 0.
-        screen-intensified = 0.
-        MODIFY SCREEN.
+    WHEN 'CHECK'.
+      PERFORM get_text.
+      PERFORM check_data.
+
+    WHEN 'SUBMIT'.
+      " ★ SIMPLIFIED SUBMIT: Skip workflow, directly create project
+      PERFORM get_text.              " Get remarks first
+      PERFORM check_data.            " Validate data
+      
+      IF sy-subrc = 0.
+        PERFORM submit_request_simple.  " New simplified routine
       ENDIF.
-    ENDIF.
-    
-    " Budget fields: Editable only in DRAFT status
-    IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
-    OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
-      IF lv_read_only = abap_true.
-        screen-input = 0.
-        screen-intensified = 0.
-        MODIFY SCREEN.
-      ENDIF.
-    ENDIF.
-    
-    " Cost Center: Always editable (can be changed per WBS)
-    " No restriction needed
-    
-  ENDLOOP.
 
+    WHEN 'UPLD'.
+      PERFORM upload.
+
+    WHEN 'DWNLD'.
+      PERFORM download.
+
+    WHEN 'TOTALUP'.
+      PERFORM total_up_budget.
+
+    WHEN 'ADDROW'.
+      PERFORM add_wbs_row.
+
+    WHEN 'DELROW'.
+      PERFORM delete_wbs_rows.
+
+    WHEN 'ATTACH'.
+      PERFORM handle_attachments.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 200.
+
+    WHEN 'EXIT' OR 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+  ENDCASE.
 ENDMODULE.
 
 
 
 
-PROCESS BEFORE OUTPUT.
-  MODULE status_0100.
-  MODULE set_header_display_values.
+*&---------------------------------------------------------------------*
+*& Form SUBMIT_REQUEST_SIMPLE
+*&---------------------------------------------------------------------*
+*& Simplified submit: Skip workflow, directly create project
+*&---------------------------------------------------------------------*
+FORM submit_request_simple.
+
+  DATA: lv_success TYPE abap_bool.
+
+  " Convert display to internal format
+  PERFORM convert_from_display.
   
-  " Table control modules
-  LOOP AT gt_wbs_display INTO gs_wbs_display 
-       WITH CONTROL tc_wbs CURSOR tc_wbs-current_line.
-    MODULE tc_wbs_get_lines.
-    MODULE set_table_field_attributes.   " ← Add this line
-  ENDLOOP.
+  " Populate header structure
+  PERFORM populate_header_structure.
+
+  " ★ SIMPLIFIED: Call builder method without workflow
+  CALL METHOD go_builder->submit_request
+    EXPORTING
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    RECEIVING
+      rv_success   = lv_success.
+
+  IF lv_success = abap_true.
+    COMMIT WORK AND WAIT.
+    MESSAGE s037(zcj00) WITH 'Request submitted and project created successfully'.
+    
+    " Return to main screen
+    LEAVE TO SCREEN 0.
+  ELSE.
+    ROLLBACK WORK.
+    MESSAGE e034(zcj00) WITH 'Error creating project'.
+  ENDIF.
+
+ENDFORM.
