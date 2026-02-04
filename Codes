@@ -1,139 +1,312 @@
-*&---------------------------------------------------------------------*
-*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
-*&---------------------------------------------------------------------*
-MODULE set_header_display_values OUTPUT.
+class ZCL_A2R_WBS_BUILDER definition
+  public
+  final
+  create public .
 
-  DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20,
-        lv_im_posid     TYPE im_posid.
+public section.
 
-  " ★ Convert username to full name
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname 
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    gv_requestor_display = sy-uname.
-  ENDIF.
+  methods COPY_TEMPLATE_STRUCTURE
+    importing
+      !IV_PSPID type PS_PSPID
+      !IV_KOSTL type KOSTL
+    changing
+      !CT_WBS_ITEMS type STANDARD TABLE .
+  methods TOTAL_UP_BUDGET
+    changing
+      !CT_WBS_ITEMS type STANDARD TABLE .
+  methods SAVE_REQUEST
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_REQNUM) type CHAR10 .
+  methods SUBMIT_REQUEST
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods CREATE_PROJECT
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+      
+private section.
 
-  " ★ Convert request type code to description
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'.
-  ENDIF.
+  methods GET_NEXT_REQUEST_NUMBER
+    returning
+      value(RV_REQNUM) type CHAR10 .
+  methods CHECK_APPROVER_MATRIX
+    importing
+      !IV_BUKRS type BUKRS
+      !IV_PROFL type PROFIDPROJ
+      !IV_REQTYPE type ZTB_A2R_REQTYPE-Z_REQTYPE
+    exporting
+      !EV_APPR1 type CHAR8
+      !EV_APPR2 type CHAR8
+      !EV_AUTO type CHAR1
+      !EV_ERROR_HANDLER type CHAR8
+      !ET_L1_APPROVERS type HPA_T_BNAME
+      !ET_L2_APPROVERS type HPA_T_BNAME
+    returning
+      value(RV_FOUND) type ABAP_BOOL .
+  methods TRIGGER_WORKFLOW
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_L1_APPRV type HPA_T_BNAME optional
+      !IT_L2_APPRV type HPA_T_BNAME optional
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods CREATE_WBS_ELEMENTS
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_WBS_ITEMS type STANDARD TABLE
+    exporting
+      !ET_WBS_CREATED type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods ASSIGN_PLAN_VALUES
+    importing
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods DISTRIBUTE_IM_BUDGET
+    importing
+      !IS_HEADER type ZTB_A2R_WBSHDR
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods CREATE_SETTLEMENT_RULES
+    importing
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods ACTIVATE_STATUSES
+    importing
+      !IT_WBS_ITEMS type STANDARD TABLE
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL .
+  methods GET_NEXT_PROJECT_NUMBER
+    importing
+      !IV_PROFL type PROFIDPROJ
+    returning
+      value(RV_PSPID) type PS_PSPID .
+  methods GET_USER_EMAIL
+    importing
+      !IV_UNAME type XUBNAME
+    returning
+      value(RV_EMAIL) type AD_SMTPADR .
+ENDCLASS.
 
-  " ★ FIX: Convert POSNR to external POSID format (3 → PR01)
-  " This field is showing the internal POSNR number
-  IF gs_header-posnr IS NOT INITIAL.
-    " Query IMPR table to get external POSID
-    SELECT SINGLE posid
-      FROM impr
-      INTO lv_im_posid
-      WHERE posnr = gs_header-posnr.
-    
-    IF sy-subrc = 0 AND lv_im_posid IS NOT INITIAL.
-      " Replace internal number with external POSID
-      gs_header-posnr = lv_im_posid.  " "3" becomes "PR01"
-    ENDIF.
-  ENDIF.
-
-ENDMODULE.
 
 
 
-*----------------------------------------------------------------------*
-* Display-Only Fields (Screen 2)
-*----------------------------------------------------------------------*
-DATA: gv_requestor_display TYPE char50,      " Full name of requestor
-      gv_reqtype_display   TYPE char20,      " Request type description
-      gv_posnr_display     TYPE im_posid.    " IM POSNR (external format)
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_BUKRS                       TYPE        BUKRS
+* | [--->] IV_PROFL                       TYPE        PROFIDPROJ
+* | [--->] IV_REQTYPE                     TYPE        ZTB_A2R_REQTYPE-Z_REQTYPE
+* | [<---] EV_APPR1                       TYPE        CHAR8
+* | [<---] EV_APPR2                       TYPE        CHAR8
+* | [<---] EV_AUTO                        TYPE        CHAR1
+* | [<---] EV_ERROR_HANDLER               TYPE        CHAR8
+* | [<---] ET_L1_APPROVERS                TYPE        HPA_T_BNAME
+* | [<---] ET_L2_APPROVERS                TYPE        HPA_T_BNAME
+* | [<-()] RV_FOUND                       TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD check_approver_matrix.
 
+    DATA: ls_config  TYPE ztb_a2r_conftab2,
+          lt_hrp1001 TYPE TABLE OF hrp1001,
+          ls_hrp1001 TYPE hrp1001,
+          lv_uname   TYPE xubname.
 
+    CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler, et_l1_approvers, et_l2_approvers.
 
+    " Get approver configuration from config table
+    SELECT SINGLE * FROM ztb_a2r_conftab2
+      INTO ls_config
+      WHERE bukrs = iv_bukrs
+        AND profl = iv_profl
+        AND z_reqtype = iv_reqtype.
 
+    IF sy-subrc = 0.
+      ev_appr1 = ls_config-zaproval_1.
+      ev_appr2 = ls_config-zaproval_2.
+      ev_error_handler = ls_config-zerror_handling.
 
-MODULE set_header_display_values OUTPUT.
+      " ★ Get Level 1 Approvers from HRP1001
+      IF ev_appr1 IS NOT INITIAL.
+        SELECT * FROM hrp1001
+          INTO TABLE lt_hrp1001
+          WHERE objid = ev_appr1
+            AND otype = 'S'           " Position/Org unit
+            AND plvar = '01'          " Plan version
+            AND rsign = 'A'           " A-Relationship
+            AND relat = '008'         " User assignment
+            AND sclas = 'US'          " User class
+            AND endda >= sy-datum     " Valid to date
+            AND begda <= sy-datum.    " Valid from date
 
-  DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20,
-        lv_im_posid     TYPE im_posid.
+        IF sy-subrc = 0.
+          LOOP AT lt_hrp1001 INTO ls_hrp1001.
+            " Remove 'US' prefix if present (SOBID might be 'USEV92123')
+            lv_uname = ls_hrp1001-sobid.
+            IF lv_uname(2) = 'US'.
+              lv_uname = lv_uname+2.  " Remove 'US' prefix
+            ENDIF.
+            APPEND lv_uname TO et_l1_approvers.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
 
-  " Convert username to full name
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname 
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    gv_requestor_display = sy-uname.
-  ENDIF.
+      " ★ Get Level 2 Approvers from HRP1001
+      IF ev_appr2 IS NOT INITIAL.
+        CLEAR lt_hrp1001.
+        SELECT * FROM hrp1001
+          INTO TABLE lt_hrp1001
+          WHERE objid = ev_appr2
+            AND otype = 'S'
+            AND plvar = '01'
+            AND rsign = 'A'
+            AND relat = '008'
+            AND sclas = 'US'
+            AND endda >= sy-datum
+            AND begda <= sy-datum.
 
-  " Convert request type code to description
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'.
-  ENDIF.
+        IF sy-subrc = 0.
+          LOOP AT lt_hrp1001 INTO ls_hrp1001.
+            lv_uname = ls_hrp1001-sobid.
+            IF lv_uname(2) = 'US'.
+              lv_uname = lv_uname+2.  " Remove 'US' prefix
+            ENDIF.
+            APPEND lv_uname TO et_l2_approvers.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
 
-  " ★ Convert POSNR to external POSID (3 → PR01)
-  IF gs_header-posnr IS NOT INITIAL.
-    SELECT SINGLE posid
-      FROM impr
-      INTO lv_im_posid
-      WHERE posnr = gs_header-posnr.
-    
-    IF sy-subrc = 0 AND lv_im_posid IS NOT INITIAL.
-      gv_posnr_display = lv_im_posid.
+      " Check for auto-approval (both approver lists empty)
+      IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+        ev_auto = 'X'.
+      ELSE.
+        CLEAR ev_auto.
+      ENDIF.
+
+      rv_found = abap_true.
     ELSE.
-      gv_posnr_display = gs_header-posnr.  " Fallback
+      rv_found = abap_false.
     ENDIF.
-  ELSE.
-    CLEAR gv_posnr_display.
-  ENDIF.
 
-ENDMODULE.
+  ENDMETHOD.
 
 
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->SUBMIT_REQUEST
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
+* | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
+* | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD submit_request.
 
+    DATA: lv_reqnum        TYPE char10,
+          lv_appr1         TYPE char8,
+          lv_appr2         TYPE char8,
+          lv_auto          TYPE char1,
+          lv_error_handler TYPE char8,
+          lv_found         TYPE abap_bool,
+          ls_header        TYPE ztb_a2r_wbshdr,
+          lt_l1_approvers  TYPE hpa_t_bname,
+          lt_l2_approvers  TYPE hpa_t_bname.
 
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100'.
+    rv_success = abap_false.
 
-  LOOP AT SCREEN.
-    
-    IF screen-name = 'P_POST1'
-    OR screen-name = 'P_VERNA'
-    OR screen-name = 'P_PLSEZ'
-    OR screen-name = 'P_PRNAM'
-    OR screen-name = 'P_POSNR'
-    OR screen-name = 'GV_POSNR_DISPLAY'            " ★ Add this
-    OR screen-name = 'GS_HEADER-POSNR'             " ★ Or this (if not changed)
-    OR screen-name = 'GV_AVAILABLE_BUDGET'
-    OR screen-name = 'GV_BUKRS'
-    OR screen-name = 'GV_WERKS'
-    OR screen-name = 'P_PRCTR'
-    OR screen-name = 'P_KOSTL'
-    OR screen-name = 'GV_IZWEK'
-    OR screen-name = 'P_USR10'
-    OR screen-name = 'GV_USR008'
-    OR screen-name = 'GV_REQUESTOR_DISPLAY'
-    OR screen-name = 'GS_HEADER-REQUEST_STATUS'
-    OR screen-name = 'GV_REQTYPE_DISPLAY'.
-    
-      screen-input = 0.
-      screen-intensified = 0.
-      MODIFY SCREEN.
+    " Step 1: Save the request
+    lv_reqnum = save_request(
+      is_header    = is_header
+      it_wbs_items = it_wbs_items
+    ).
+
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e013(zcj00) WITH 'Error saving request'.
+      RETURN.
     ENDIF.
-    
-  ENDLOOP.
 
-ENDMODULE.
+    " Step 2: Get approvers from configuration and HRP1001
+    lv_found = check_approver_matrix(
+      EXPORTING
+        iv_bukrs   = is_header-bukrs
+        iv_profl   = is_header-profl
+        iv_reqtype = is_header-z_reqtype
+      IMPORTING
+        ev_appr1         = lv_appr1
+        ev_appr2         = lv_appr2
+        ev_auto          = lv_auto
+        ev_error_handler = lv_error_handler
+        et_l1_approvers  = lt_l1_approvers
+        et_l2_approvers  = lt_l2_approvers
+    ).
+
+    IF lv_found = abap_false.
+      MESSAGE e008(zcj00) WITH 'No approver configuration found'.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Step 3: Update header
+    ls_header = is_header.
+    ls_header-zreq_num = lv_reqnum.
+    ls_header-request_status = 'PENDING'.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'PENDING'
+      WHERE zreq_num = lv_reqnum.
+
+    " Step 4: Auto-approval or Workflow
+    IF lv_auto = 'X'.
+      " Auto-approve if no approvers configured
+      MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
+
+      rv_success = create_project(
+        is_header    = ls_header
+        it_wbs_items = it_wbs_items
+      ).
+
+      IF rv_success = abap_true.
+        UPDATE ztb_a2r_wbshdr
+          SET request_status = 'APPROVED'
+              zapproved_by = sy-uname
+              zrequest_approved_on = sy-datum
+          WHERE zreq_num = lv_reqnum.
+        COMMIT WORK.
+        MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+      ELSE.
+        UPDATE ztb_a2r_wbshdr
+          SET request_status = 'ERROR'
+          WHERE zreq_num = lv_reqnum.
+        COMMIT WORK.
+        MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
+      ENDIF.
+
+    ELSE.
+      " Trigger workflow with approver lists
+      rv_success = trigger_workflow(
+        is_header   = ls_header
+        it_l1_apprv = lt_l1_approvers
+        it_l2_apprv = lt_l2_approvers
+      ).
+
+      IF rv_success = abap_true.
+        COMMIT WORK.
+        MESSAGE s015(zcj00) WITH 'Request' lv_reqnum 'submitted'.
+      ELSE.
+        ROLLBACK WORK.
+        MESSAGE e016(zcj00) WITH 'Workflow error for' lv_reqnum.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
