@@ -283,3 +283,362 @@ BEFORE calling trigger_workflow.
 This ensures the database record has status = ‘PENDING’ before workflow starts.
 
 ================================================================================
+
+
+
+# ================================================================================
+FIX: PASS VARYF VALUE EXACTLY AS-IS (e.g., USHQ75177)
+
+REQUIREMENT: Pass the VARYF field EXACTLY as it appears in HRP1001
+DO NOT remove the “US” prefix
+
+Example: VARYF = ‘USHQ75177’ → Pass ‘USHQ75177’ to workflow (not ‘HQ75177’)
+
+# ================================================================================
+CORRECTED CODE: ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
+
+## FIND THIS METHOD AND REPLACE:
+
+METHOD check_approver_matrix.
+
+DATA: ls_config  TYPE ztb_a2r_conftab2,
+lt_hrp1001 TYPE TABLE OF hrp1001,
+ls_hrp1001 TYPE hrp1001,
+lv_varyf   TYPE hrobjid,         “ ← Use VARYF as-is
+lv_objid   TYPE hrobjid.
+
+CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler,
+et_l1_approvers, et_l2_approvers.
+
+“ Step 1: Get approver configuration from ZTB_A2R_CONFTAB2
+SELECT SINGLE * FROM ztb_a2r_conftab2
+INTO ls_config
+WHERE bukrs = iv_bukrs
+AND profl = iv_profl
+AND z_reqtype = iv_reqtype.
+
+IF sy-subrc <> 0.
+rv_found = abap_false.
+RETURN.
+ENDIF.
+
+ev_appr1 = ls_config-zaproval_1.
+ev_appr2 = ls_config-zaproval_2.
+ev_error_handler = ls_config-zerror_handling.
+
+“ ✅ LEVEL 1 APPROVERS - Get VARYF from HRP1001
+IF ev_appr1 IS NOT INITIAL.
+CLEAR lt_hrp1001.
+
+```
+" Convert to OBJID format with leading zeros
+lv_objid = ev_appr1.
+CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+  EXPORTING
+    input  = lv_objid
+  IMPORTING
+    output = lv_objid.
+
+" Query HRP1001
+SELECT * FROM hrp1001
+  INTO TABLE lt_hrp1001
+  WHERE objid = lv_objid          " Position ID (e.g., '00030000')
+    AND otype = 'S'               " Object type = Position
+    AND plvar = '01'              " Plan version = Current
+    AND rsign = 'A'               " Relationship sign
+    AND relat = '008'             " User assignment relationship
+    AND sclas = 'US'              " User object class
+    AND endda >= sy-datum         " Valid to
+    AND begda <= sy-datum.        " Valid from
+
+IF sy-subrc = 0.
+  LOOP AT lt_hrp1001 INTO ls_hrp1001.
+    " ✅ USE VARYF EXACTLY AS-IS (e.g., 'USHQ75177')
+    lv_varyf = ls_hrp1001-varyf.
+
+    " Only add if VARYF is not empty
+    IF lv_varyf IS NOT INITIAL.
+      APPEND lv_varyf TO et_l1_approvers.
+    ENDIF.
+  ENDLOOP.
+ENDIF.
+```
+
+ENDIF.
+
+“ ✅ LEVEL 2 APPROVERS - Get VARYF from HRP1001
+IF ev_appr2 IS NOT INITIAL.
+CLEAR lt_hrp1001.
+
+```
+" Convert to OBJID format
+lv_objid = ev_appr2.
+CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+  EXPORTING
+    input  = lv_objid
+  IMPORTING
+    output = lv_objid.
+
+" Query HRP1001
+SELECT * FROM hrp1001
+  INTO TABLE lt_hrp1001
+  WHERE objid = lv_objid
+    AND otype = 'S'
+    AND plvar = '01'
+    AND rsign = 'A'
+    AND relat = '008'
+    AND sclas = 'US'
+    AND endda >= sy-datum
+    AND begda <= sy-datum.
+
+IF sy-subrc = 0.
+  LOOP AT lt_hrp1001 INTO ls_hrp1001.
+    " ✅ USE VARYF EXACTLY AS-IS
+    lv_varyf = ls_hrp1001-varyf.
+
+    IF lv_varyf IS NOT INITIAL.
+      APPEND lv_varyf TO et_l2_approvers.
+    ENDIF.
+  ENDLOOP.
+ENDIF.
+```
+
+ENDIF.
+
+“ Auto-approval logic
+IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+ev_auto = ‘X’.
+ELSE.
+CLEAR ev_auto.
+ENDIF.
+
+rv_found = abap_true.
+
+ENDMETHOD.
+
+# ================================================================================
+WHAT THIS WILL PASS TO WORKFLOW
+
+Based on your HRP1001 data (Position 30000):
+
+INPUT:  ev_appr1 = ‘30000’
+QUERY:  HRP1001 WHERE OBJID = ‘00030000’ AND SCLAS = ‘US’
+
+OUTPUT: et_l1_approvers will contain 4 entries EXACTLY as shown in HRP1001:
+
+1. USRG33470
+1. USEV92123
+1. USHQ75177
+1. USKP05750
+
+These VARYF values are passed UNCHANGED to:
+
+- trigger_workflow(it_l1_apprv = lt_l1_approvers)
+- zcl_a2r_wbs_request_flexwf constructor(it_l1approver = it_l1_apprv)
+
+# ================================================================================
+COMPLETE SUBMIT_REQUEST METHOD (No changes needed here)
+
+METHOD submit_request.
+
+DATA: lv_reqnum        TYPE char10,
+lv_appr1         TYPE char8,
+lv_appr2         TYPE char8,
+lv_auto          TYPE char1,
+lv_error_handler TYPE char8,
+lv_found         TYPE abap_bool,
+ls_header        TYPE ztb_a2r_wbshdr,
+lt_l1_approvers  TYPE hpa_t_bname,    “ Will contain VARYF values
+lt_l2_approvers  TYPE hpa_t_bname.
+
+rv_success = abap_false.
+
+“ Step 1: Save request
+lv_reqnum = save_request(
+is_header    = is_header
+it_wbs_items = it_wbs_items
+).
+
+IF lv_reqnum IS INITIAL.
+MESSAGE e013(zcj00) WITH ‘Error saving request’.
+RETURN.
+ENDIF.
+
+“ Step 2: Get approvers (now returns VARYF as-is)
+lv_found = check_approver_matrix(
+EXPORTING
+iv_bukrs   = is_header-bukrs
+iv_profl   = is_header-profl
+iv_reqtype = is_header-z_reqtype
+IMPORTING
+ev_appr1         = lv_appr1
+ev_appr2         = lv_appr2
+ev_auto          = lv_auto
+ev_error_handler = lv_error_handler
+et_l1_approvers  = lt_l1_approvers    “ ← USRG33470, USEV92123, USHQ75177, USKP05750
+et_l2_approvers  = lt_l2_approvers
+).
+
+IF lv_found = abap_false.
+MESSAGE e008(zcj00) WITH ‘No approver configuration found’.
+RETURN.
+ENDIF.
+
+“ Step 3: Update status to PENDING
+ls_header = is_header.
+ls_header-zreq_num = lv_reqnum.
+ls_header-request_status = ‘PENDING’.
+
+UPDATE ztb_a2r_wbshdr
+SET request_status = ‘PENDING’
+WHERE zreq_num = lv_reqnum.
+
+IF sy-subrc <> 0.
+MESSAGE e016(zcj00) WITH ‘Failed to update status’.
+ROLLBACK WORK.
+RETURN.
+ENDIF.
+
+“ CRITICAL: Commit before workflow
+COMMIT WORK AND WAIT.
+
+“ Step 4: Trigger workflow or auto-approve
+IF lv_auto = ‘X’.
+MESSAGE i035(zcj00) WITH ‘Request’ lv_reqnum ‘auto-approved’.
+
+```
+rv_success = create_project(
+  is_header    = ls_header
+  it_wbs_items = it_wbs_items
+).
+
+IF rv_success = abap_true.
+  UPDATE ztb_a2r_wbshdr
+    SET request_status = 'APPROVED'
+        zapproved_by = sy-uname
+        zrequest_approved_on = sy-datum
+    WHERE zreq_num = lv_reqnum.
+  COMMIT WORK.
+  MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+ELSE:
+  UPDATE ztb_a2r_wbshdr
+    SET request_status = 'ERROR'
+    WHERE zreq_num = lv_reqnum.
+  COMMIT WORK.
+  MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
+ENDIF.
+```
+
+ELSE.
+“ Pass VARYF values to workflow
+rv_success = trigger_workflow(
+is_header   = ls_header
+iv_appr1    = lv_appr1
+iv_appr2    = lv_appr2
+it_l1_apprv = lt_l1_approvers     “ ← USRG33470, USEV92123, USHQ75177, USKP05750
+it_l2_apprv = lt_l2_approvers
+).
+
+```
+IF rv_success = abap_true.
+  COMMIT WORK.
+  MESSAGE s015(zcj00) WITH lv_reqnum 'submitted for approval'.
+ELSE.
+  ROLLBACK WORK.
+  MESSAGE e020(zcj00) WITH 'Workflow error for' lv_reqnum.
+ENDIF.
+```
+
+ENDIF.
+
+ENDMETHOD.
+
+# ================================================================================
+TRIGGER_WORKFLOW METHOD (No changes needed)
+
+METHOD trigger_workflow.
+
+DATA: lo_instance TYPE REF TO zcl_a2r_wbs_request_flexwf.
+
+rv_success = abap_false.
+
+IF is_header-zreq_num IS INITIAL.
+RETURN.
+ENDIF.
+
+TRY.
+“ Create workflow instance with VARYF values
+lo_instance = NEW zcl_a2r_wbs_request_flexwf(
+iv_reqnum     = is_header-zreq_num
+is_header     = is_header
+iv_appr1      = iv_appr1              “ Position ‘30000’
+iv_appr2      = iv_appr2              “ Position for L2
+it_l1approver = it_l1_apprv           “ USRG33470, USEV92123, USHQ75177, USKP05750
+it_l2approver = it_l2_apprv
+).
+
+```
+  lo_instance->submit( ).
+
+  rv_success = abap_true.
+
+CATCH cx_root INTO DATA(lx_error).
+  MESSAGE lx_error->get_text( ) TYPE 'I' DISPLAY LIKE 'E'.
+  rv_success = abap_false.
+```
+
+ENDTRY.
+
+ENDMETHOD.
+
+# ================================================================================
+TESTING WITH YOUR ACTUAL DATA
+
+Test Case: Position 30000
+
+CONFIGURATION TABLE (ZTB_A2R_CONFTAB2):
+BUKRS: ZX99
+PROFL: ZPC0001
+Z_REQTYPE: A1
+ZAPROVAL_1: 30000
+
+HRP1001 DATA (OBJID = 00030000):
+Row 1: VARYF = USRG33470
+Row 2: VARYF = USEV92123
+Row 3: VARYF = USHQ75177
+Row 4: VARYF = USKP05750
+
+EXPECTED OUTPUT:
+et_l1_approvers = Internal table with 4 entries:
+[1] = ‘USRG33470’
+[2] = ‘USEV92123’
+[3] = ‘USHQ75177’
+[4] = ‘USKP05750’
+
+PASSED TO WORKFLOW:
+it_l1approver parameter of zcl_a2r_wbs_request_flexwf constructor
+will contain these exact VARYF values.
+
+# ================================================================================
+SUMMARY OF KEY CHANGES
+
+1. ✅ REMOVED: Code that strips “US” prefix from VARYF
+1. ✅ KEPT: VARYF value exactly as-is from HRP1001
+1. ✅ RESULT: Workflow receives ‘USHQ75177’ instead of ‘HQ75177’
+
+ONLY ONE METHOD NEEDS CHANGE:
+ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
+
+Change from:
+lv_uname = ls_hrp1001-varyf.
+IF lv_uname(2) = ‘US’.
+lv_uname = lv_uname+2.  “ ← REMOVE THIS
+ENDIF.
+
+Change to:
+lv_varyf = ls_hrp1001-varyf.  “ ← Use VARYF as-is
+APPEND lv_varyf TO et_l1_approvers.
+
+That’s it! Simple fix.
+
+================================================================================
