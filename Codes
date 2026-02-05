@@ -1,3 +1,130 @@
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_APPROVER_MATRIX
+*&---------------------------------------------------------------------*
+*& Validates that approver configuration exists and approvers are assigned
+*&---------------------------------------------------------------------*
+FORM validate_approver_matrix USING    iv_bukrs   TYPE bukrs
+                                       iv_profl   TYPE profidproj
+                                       iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
+                              CHANGING cv_error   TYPE abap_bool.
+
+  DATA: lv_appr1         TYPE char8,
+        lv_appr2         TYPE char8,
+        lv_auto          TYPE char1,
+        lv_error_handler TYPE char8,
+        lv_found         TYPE abap_bool,
+        lt_l1_approvers  TYPE hpa_t_bname,
+        lt_l2_approvers  TYPE hpa_t_bname,
+        lv_l1_count      TYPE i,
+        lv_l2_count      TYPE i.
+
+  CLEAR cv_error.
+
+  " Use the class method to check approver matrix
+  lv_found = go_builder->check_approver_matrix(
+    EXPORTING
+      iv_bukrs   = iv_bukrs
+      iv_profl   = iv_profl
+      iv_reqtype = iv_reqtype
+    IMPORTING
+      ev_appr1         = lv_appr1
+      ev_appr2         = lv_appr2
+      ev_auto          = lv_auto
+      ev_error_handler = lv_error_handler
+      et_l1_approvers  = lt_l1_approvers
+      et_l2_approvers  = lt_l2_approvers
+  ).
+
+  " ★ Validation 1: Configuration must exist
+  IF lv_found = abap_false.
+    MESSAGE e023(zcj00) WITH 'No approver configuration found for'
+                             iv_bukrs iv_profl iv_reqtype.
+    cv_error = abap_true.
+    RETURN.
+  ENDIF.
+
+  " ★ Validation 2: Check if auto-approval (no approvers configured)
+  IF lv_auto = 'X'.
+    " This is a warning, not an error - request will auto-approve
+    MESSAGE w042(zcj00) WITH 'No approvers configured - request will be auto-approved'.
+    CLEAR cv_error.  " Not an error condition
+    RETURN.
+  ENDIF.
+
+  " ★ Validation 3: Approver positions configured but no users assigned
+  IF lt_l1_approvers IS INITIAL AND lt_l2_approvers IS INITIAL.
+    " Approver positions exist in config but no users in HRP1001
+    MESSAGE e043(zcj00) WITH 'Approver positions configured but no users assigned in HRP1001'.
+    cv_error = abap_true.
+    RETURN.
+  ENDIF.
+
+  " ★ Success - Approvers found
+  lv_l1_count = lines( lt_l1_approvers ).
+  lv_l2_count = lines( lt_l2_approvers ).
+
+  MESSAGE s044(zcj00) WITH 'Approvers found: L1=' lv_l1_count 'L2=' lv_l2_count.
+  CLEAR cv_error.
+
+ENDFORM.
+
+
+
+
+FORM check_data.
+
+  DATA: lv_error TYPE abap_bool,
+        lv_kokrs TYPE kokrs.
+
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
+
+  " Validate mandatory fields
+  PERFORM check_mandatory_fields CHANGING lv_error.
+
+  " Get controlling area for validation
+  SELECT SINGLE kokrs FROM impr INTO lv_kokrs WHERE posnr = p_posnr.
+
+  " Validate cost center
+  PERFORM validate_cost_center USING lv_kokrs
+                                     gs_header-kostl
+                                     gs_header-plsez
+                              CHANGING lv_error.
+
+  " Validate profit center
+  PERFORM validate_profit_center USING lv_kokrs
+                                       gs_header-prctr
+                                       gs_header-plsez
+                                CHANGING lv_error.
+
+  " Validate CC to PC assignment
+  PERFORM validate_cc_pc_assignment USING gs_header-kostl
+                                          gs_header-prctr
+                                   CHANGING lv_error.
+
+  " Validate IM budget
+  PERFORM validate_im_budget CHANGING lv_error.
+
+  " ★★★ Validate approver matrix ★★★
+  PERFORM validate_approver_matrix USING gs_header-bukrs
+                                         gs_header-profl
+                                         gs_header-z_reqtype
+                                  CHANGING lv_error.
+
+  " Final result
+  IF lv_error = abap_true.
+    sy-subrc = 4.
+    MESSAGE e004(zcj00).  " Validation errors found
+  ELSE.
+    sy-subrc = 0.
+    MESSAGE s014(zcj00).  " Validation successful
+  ENDIF.
+
+ENDFORM.
+
+
+
+
 METHOD check_approver_matrix.
 
   DATA: ls_config  TYPE ztb_a2r_conftab2,
