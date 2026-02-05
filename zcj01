@@ -414,6 +414,7 @@ ENDFORM.                                          "fcode_tc_mark_lines
 
 
 
+
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_TOP
 *&---------------------------------------------------------------------*
@@ -574,17 +575,6 @@ TYPES: BEGIN OF ts_items,
          imprf         TYPE im_profil,
          prart         TYPE ps_prart,
          wert2         TYPE bp_wert2,
-         " Additional fields from original ts_items
-         werks_name    TYPE name1,
-         asset_box     TYPE zasset_box,
-         zrevstr_name  TYPE zde_de_revstr,
-         zscopcha_name TYPE zde_a2r_de_scopcha,
-         zsynergy_type TYPE zde_a2r_synergyid,
-         maktx         TYPE maktx,
-         long_text     TYPE flag,
-         updkz         TYPE updkz_d,
-         status        TYPE flag,
-         stat_curr     TYPE j_txt04,
        END OF ts_items,
        BEGIN OF ts_text,
         text TYPE tdline,
@@ -605,7 +595,6 @@ DATA: lo_editor   TYPE REF TO c_textedit_control,
 CONSTANTS:
       lc_false    TYPE i   VALUE 0,
       lc_true     TYPE i   VALUE 1.
-
 
 
 
@@ -1396,6 +1385,7 @@ FORM load_template_to_wbs_items USING iv_pspid TYPE ps_pspid
     gs_wbs_item-kostl = iv_kostl.
     gs_wbs_item-bukrs = gv_bukrs.              " ← FIX: Add company code
     gs_wbs_item-werks = gv_werks.              " ← FIX: Add plant
+    gs_wbs_item-bukrs = ls_prpss-pbukr.    " PBUKR = Company Code in WBS
 
     " Template properties
     gs_wbs_item-imprf = ls_prpss-imprf.
@@ -1634,6 +1624,7 @@ FORM get_request_type_text USING    iv_reqtype      TYPE char2
   ENDCASE.
 
 ENDFORM.
+
 
 
 *&---------------------------------------------------------------------*
@@ -2128,7 +2119,7 @@ FORM convert_to_display.
     gs_wbs_display-imprf = gs_wbs_item-imprf.
     gs_wbs_display-prart = gs_wbs_item-prart.
 
-    " ★ CRITICAL FIX: Convert POSID to external format (PC.000001)
+    "  CRITICAL FIX: Convert POSID to external format (PC.000001)
     IF gs_wbs_item-posid IS NOT INITIAL.
       CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
         EXPORTING
@@ -2390,7 +2381,7 @@ FORM convert_from_display.
     gs_wbs_item-imprf = gs_wbs_display-imprf.
     gs_wbs_item-prart = gs_wbs_display-prart.
 
-    " ★ CRITICAL FIX: Convert POSID from external (PC.000001) back to internal (PC000001)
+    "  CRITICAL FIX: Convert POSID from external (PC.000001) back to internal (PC000001)
     IF gs_wbs_display-posid IS NOT INITIAL.
       CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
         EXPORTING
@@ -2422,7 +2413,7 @@ FORM upload.
            stufe  TYPE ztb_a2r_wbsitem-stufe,
            pspid  TYPE ztb_a2r_wbsitem-pspid,
            post1  TYPE ztb_a2r_wbsitem-post1,
-           budget TYPE ztb_a2r_wbsitem-budget,
+           budget TYPE ztb_a2r_wbsitem-wert2,
          END OF ty_upload.
 
   DATA: lt_file_data TYPE STANDARD TABLE OF ty_upload,
@@ -2466,14 +2457,14 @@ FORM upload.
       IF sy-subrc = 0.
         " IF lv_type = 2.
         IF <fs_fdata>-post1 NE ls_file_data-post1 OR
-           <fs_fdata>-budget NE ls_file_data-budget.
+           <fs_fdata>-wert2 NE ls_file_data-budget.
           <fs_fdata>-zchange = 'U'.
         ENDIF.
         "ENDIF.
         <fs_fdata>-stufe = ls_file_data-stufe.
         <fs_fdata>-pspid = ls_file_data-pspid.
         <fs_fdata>-post1 = ls_file_data-post1.
-        <fs_fdata>-budget = ls_file_data-budget.
+        <fs_fdata>-wert2 = ls_file_data-budget.
 
       ENDIF.
     ENDLOOP.
@@ -2485,64 +2476,64 @@ ENDFORM.
 *& Form DOWNLOAD
 *&---------------------------------------------------------------------*
 FORM download.
-  TYPES: BEGIN OF ty_download,
-           pspid  TYPE ztb_a2r_wbsitem-pspid,
-           stufe  TYPE ztb_a2r_wbsitem-stufe,
-           post1  TYPE ztb_a2r_wbsitem-post1,
-           budget TYPE ztb_a2r_wbsitem-zbudget_check,
-         END OF ty_download,
-         BEGIN OF ts_fieldnames,
-           fieldname TYPE char50,
-         END OF ts_fieldnames.
-
-  DATA: ls_download   TYPE ty_download,
-        lt_download   TYPE TABLE OF ty_download,
-        lt_fieldnames TYPE STANDARD TABLE OF ts_fieldnames,
-        ls_fieldnames TYPE ts_fieldnames.
-
-  DATA: lv_action   TYPE i,
-        lv_filename TYPE string,
-        lv_fullpath TYPE string,
-        lv_path     TYPE string.
-
-  "Append header to the Excel file.
-  ls_fieldnames-fieldname = 'Level'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'WBS Element'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'Description'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'Budget'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-
-  LOOP AT gt_wbs_items INTO ls_items.
-    ls_download-stufe = ls_items-stufe.
-    ls_download-post1 = ls_items-post1.
-    ls_download-pspid = ls_items-pspid.
-    ls_download-budget = ls_items-zbudget_check.
-    APPEND ls_download TO lt_download.
-    CLEAR: ls_download.
-  ENDLOOP.
-
-  CALL METHOD cl_gui_frontend_services=>file_save_dialog
-    EXPORTING
-      window_title      = 'Please Select the location'
-      default_extension = 'XLSX'
-      default_file_name = 'Capex_template.xls'
-      file_filter       = '*.xls'
-    CHANGING
-      filename          = lv_filename
-      path              = lv_path
-      fullpath          = lv_fullpath
-      user_action       = lv_action.
-  IF NOT lv_action IS INITIAL.
-    EXIT.
-  ENDIF.
-
-  CALL METHOD cl_gui_frontend_services=>gui_download
-    EXPORTING
-      filename              = lv_filename
-      filetype              = 'ASC'
-      write_field_separator = 'X'
-      fieldnames            = lt_fieldnames
-    CHANGING
-      data_tab              = lt_download.
+*  TYPES: BEGIN OF ty_download,
+*           pspid  TYPE ztb_a2r_wbsitem-pspid,
+*           stufe  TYPE ztb_a2r_wbsitem-stufe,
+*           post1  TYPE ztb_a2r_wbsitem-post1,
+*           budget TYPE ztb_a2r_wbsitem-zbudget_check,
+*         END OF ty_download,
+*         BEGIN OF ts_fieldnames,
+*           fieldname TYPE char50,
+*         END OF ts_fieldnames.
+*
+*  DATA: ls_download   TYPE ty_download,
+*        lt_download   TYPE TABLE OF ty_download,
+*        lt_fieldnames TYPE STANDARD TABLE OF ts_fieldnames,
+*        ls_fieldnames TYPE ts_fieldnames.
+*
+*  DATA: lv_action   TYPE i,
+*        lv_filename TYPE string,
+*        lv_fullpath TYPE string,
+*        lv_path     TYPE string.
+*
+*  "Append header to the Excel file.
+*  ls_fieldnames-fieldname = 'Level'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
+*  ls_fieldnames-fieldname = 'WBS Element'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
+*  ls_fieldnames-fieldname = 'Description'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
+*  ls_fieldnames-fieldname = 'Budget'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
+*
+*  LOOP AT gt_wbs_items INTO ls_items.
+*    ls_download-stufe = ls_items-stufe.
+*    ls_download-post1 = ls_items-post1.
+*    ls_download-pspid = ls_items-pspid.
+*    ls_download-budget = ls_items-zbudget_check.
+*    APPEND ls_download TO lt_download.
+*    CLEAR: ls_download.
+*  ENDLOOP.
+*
+*  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+*    EXPORTING
+*      window_title      = 'Please Select the location'
+*      default_extension = 'XLSX'
+*      default_file_name = 'Capex_template.xls'
+*      file_filter       = '*.xls'
+*    CHANGING
+*      filename          = lv_filename
+*      path              = lv_path
+*      fullpath          = lv_fullpath
+*      user_action       = lv_action.
+*  IF NOT lv_action IS INITIAL.
+*    EXIT.
+*  ENDIF.
+*
+*  CALL METHOD cl_gui_frontend_services=>gui_download
+*    EXPORTING
+*      filename              = lv_filename
+*      filetype              = 'ASC'
+*      write_field_separator = 'X'
+*      fieldnames            = lt_fieldnames
+*    CHANGING
+*      data_tab              = lt_download.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -2685,7 +2676,9 @@ FORM validate_approver_matrix USING    iv_bukrs   TYPE bukrs
         lv_error_handler TYPE char8,
         lv_found         TYPE abap_bool,
         lt_l1_approvers  TYPE hpa_t_bname,
-        lt_l2_approvers  TYPE hpa_t_bname.
+        lt_l2_approvers  TYPE hpa_t_bname,
+        lv_l1_count      TYPE i,
+        lv_l2_count      TYPE i.
 
   CLEAR cv_error.
 
@@ -2704,32 +2697,33 @@ FORM validate_approver_matrix USING    iv_bukrs   TYPE bukrs
       et_l2_approvers  = lt_l2_approvers
   ).
 
+  "  Validation 1: Configuration must exist
   IF lv_found = abap_false.
-    " No configuration found
     MESSAGE e023(zcj00) WITH 'No approver configuration found for'
                              iv_bukrs iv_profl iv_reqtype.
     cv_error = abap_true.
     RETURN.
   ENDIF.
 
-  " Check if auto-approval (no approvers)
+  "  Validation 2: Check if auto-approval (no approvers configured)
   IF lv_auto = 'X'.
+    " This is a warning, not an error - request will auto-approve
     MESSAGE w042(zcj00) WITH 'No approvers configured - request will be auto-approved'.
-    " Not an error, just a warning
-    CLEAR cv_error.
+    CLEAR cv_error.  " Not an error condition
     RETURN.
   ENDIF.
 
-  " Validate that we found actual users
+  "  Validation 3: Approver positions configured but no users assigned
   IF lt_l1_approvers IS INITIAL AND lt_l2_approvers IS INITIAL.
+    " Approver positions exist in config but no users in HRP1001
     MESSAGE e043(zcj00) WITH 'Approver positions configured but no users assigned in HRP1001'.
     cv_error = abap_true.
     RETURN.
   ENDIF.
 
-  " Success - approvers found
-  DATA(lv_l1_count) = lines( lt_l1_approvers ).
-  DATA(lv_l2_count) = lines( lt_l2_approvers ).
+  "  Success - Approvers found
+  lv_l1_count = lines( lt_l1_approvers ).
+  lv_l2_count = lines( lt_l2_approvers ).
 
   MESSAGE s044(zcj00) WITH 'Approvers found: L1=' lv_l1_count 'L2=' lv_l2_count.
   CLEAR cv_error.
