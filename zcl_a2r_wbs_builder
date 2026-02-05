@@ -276,89 +276,112 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * | [<---] ET_L2_APPROVERS                TYPE        HPA_T_BNAME
 * | [<-()] RV_FOUND                       TYPE        ABAP_BOOL
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD check_approver_matrix.
+METHOD check_approver_matrix.
 
-    DATA: ls_config  TYPE ztb_a2r_conftab2,
-          lt_hrp1001 TYPE TABLE OF hrp1001,
-          ls_hrp1001 TYPE hrp1001,
-          lv_uname   TYPE xubname.
+  DATA: ls_config  TYPE ztb_a2r_conftab2,
+        lt_hrp1001 TYPE TABLE OF hrp1001,
+        ls_hrp1001 TYPE hrp1001,
+        lv_uname   TYPE xubname.
 
-    CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler, et_l1_approvers, et_l2_approvers.
+  CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler,
+         et_l1_approvers, et_l2_approvers.
 
-    " Get approver configuration from config table
-    SELECT SINGLE * FROM ztb_a2r_conftab2
-      INTO ls_config
-      WHERE profl = iv_profl
-        AND z_reqtype = iv_reqtype.
+  " Get approver configuration from ZTB_A2R_CONFTAB2
+  SELECT SINGLE * FROM ztb_a2r_conftab2
+    INTO ls_config
+    WHERE bukrs = iv_bukrs          " Company Code
+      AND profl = iv_profl          " Project Profile
+      AND z_reqtype = iv_reqtype.   " Request Type
+
+  IF sy-subrc <> 0.
+    rv_found = abap_false.
+    RETURN.
+  ENDIF.
+
+  " Store approver positions and error handler
+  ev_appr1 = ls_config-zaproval_1.          " Level 1 approver position
+  ev_appr2 = ls_config-zaproval_2.          " Level 2 approver position
+  ev_error_handler = ls_config-zerror_handling.
+
+  "  LEVEL 1 APPROVERS
+  " Get users assigned to Level 1 approver position from HRP1001
+  IF ev_appr1 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr1        " Position ID (e.g., 30000)
+        AND otype = 'S'             " Object type = Position
+        AND plvar = '01'            " Plan version = Current
+        AND rsign = 'A'             " Relationship sign = A
+        AND relat = '008'           " Relationship = User assignment
+        AND sclas = 'US'            " Object class = User
+        AND endda >= sy-datum       " Valid to date >= today
+        AND begda <= sy-datum.      " Valid from date <= today
 
     IF sy-subrc = 0.
-      ev_appr1 = ls_config-zaproval_1.
-      ev_appr2 = ls_config-zaproval_2.
-      ev_error_handler = ls_config-zerror_handling.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        "  FIX: Use VARYF field which contains 'US' + username
+        " From image: VARYF = 'USKP05750' (Technical Field Name shown)
+        lv_uname = ls_hrp1001-varyf.
 
-      " ★ Get Level 1 Approvers from HRP1001
-      IF ev_appr1 IS NOT INITIAL.
-        SELECT * FROM hrp1001
-          INTO TABLE lt_hrp1001
-          WHERE objid = ev_appr1
-            AND otype = 'S'           " Position/Org unit
-            AND plvar = '01'          " Plan version
-            AND rsign = 'A'           " A-Relationship
-            AND relat = '008'         " User assignment
-            AND sclas = 'US'          " User class
-            AND endda >= sy-datum     " Valid to date
-            AND begda <= sy-datum.    " Valid from date
-
-        IF sy-subrc = 0.
-          LOOP AT lt_hrp1001 INTO ls_hrp1001.
-            " Remove 'US' prefix if present (SOBID might be 'USEV92123')
-            lv_uname = ls_hrp1001-sobid.
-            IF lv_uname(2) = 'US'.
-              lv_uname = lv_uname+2.  " Remove 'US' prefix
-            ENDIF.
-            APPEND lv_uname TO et_l1_approvers.
-          ENDLOOP.
+        " Remove 'US' prefix (first 2 characters)
+        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.  " Extract username: 'USKP05750' → 'KP05750'
         ENDIF.
-      ENDIF.
 
-      " ★ Get Level 2 Approvers from HRP1001
-      IF ev_appr2 IS NOT INITIAL.
-        CLEAR lt_hrp1001.
-        SELECT * FROM hrp1001
-          INTO TABLE lt_hrp1001
-          WHERE objid = ev_appr2
-            AND otype = 'S'
-            AND plvar = '01'
-            AND rsign = 'A'
-            AND relat = '008'
-            AND sclas = 'US'
-            AND endda >= sy-datum
-            AND begda <= sy-datum.
-
-        IF sy-subrc = 0.
-          LOOP AT lt_hrp1001 INTO ls_hrp1001.
-            lv_uname = ls_hrp1001-sobid.
-            IF lv_uname(2) = 'US'.
-              lv_uname = lv_uname+2.  " Remove 'US' prefix
-            ENDIF.
-            APPEND lv_uname TO et_l2_approvers.
-          ENDLOOP.
+        " Only add if username is not empty
+        IF lv_uname IS NOT INITIAL.
+          APPEND lv_uname TO et_l1_approvers.
         ENDIF.
-      ENDIF.
-
-      " Check for auto-approval (both approver lists empty)
-      IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
-        ev_auto = 'X'.
-      ELSE.
-        CLEAR ev_auto.
-      ENDIF.
-
-      rv_found = abap_true.
-    ELSE.
-      rv_found = abap_false.
+      ENDLOOP.
     ENDIF.
+  ENDIF.
 
-  ENDMETHOD.
+  "  LEVEL 2 APPROVERS
+  " Get users assigned to Level 2 approver position from HRP1001
+  IF ev_appr2 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr2        " Position ID (e.g., 30001)
+        AND otype = 'S'
+        AND plvar = '01'
+        AND rsign = 'A'
+        AND relat = '008'
+        AND sclas = 'US'
+        AND endda >= sy-datum
+        AND begda <= sy-datum.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        "  Use VARYF field
+        lv_uname = ls_hrp1001-varyf.
+
+        " Remove 'US' prefix
+        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.
+        ENDIF.
+
+        IF lv_uname IS NOT INITIAL.
+          APPEND lv_uname TO et_l2_approvers.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  "  AUTO-APPROVAL LOGIC
+  " If BOTH approver lists are empty, mark as auto-approval
+  IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+    ev_auto = 'X'.
+  ELSE.
+    CLEAR ev_auto.
+  ENDIF.
+
+  rv_found = abap_true.
+
+ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -408,6 +431,7 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
           ls_wbs-imprf = ls_prpss-imprf.
           ls_wbs-prart = ls_prpss-prart.
           ls_wbs-bukrs = ls_prpss-pbukr.
+          ls_wbs-bukrs = ls_prpss-pbukr.    " PBUKR = Company Code in WBS
 
           APPEND ls_wbs TO ct_wbs_items.
         ENDLOOP.
@@ -1118,105 +1142,104 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
 * | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD submit_request.
+METHOD submit_request.
 
-    DATA: lv_reqnum        TYPE char10,
-          lv_appr1         TYPE char8,
-          lv_appr2         TYPE char8,
-          lv_auto          TYPE char1,
-          lv_error_handler TYPE char8,
-          lv_found         TYPE abap_bool,
-          ls_header        TYPE ztb_a2r_wbshdr,
-          lt_l1_approvers  TYPE hpa_t_bname,
-          lt_l2_approvers  TYPE hpa_t_bname.
+  DATA: lv_reqnum        TYPE char10,
+        lv_appr1         TYPE char8,
+        lv_appr2         TYPE char8,
+        lv_auto          TYPE char1,
+        lv_error_handler TYPE char8,
+        lv_found         TYPE abap_bool,
+        ls_header        TYPE ztb_a2r_wbshdr,
+        lt_l1_approvers  TYPE hpa_t_bname,    "  Will hold L1 usernames
+        lt_l2_approvers  TYPE hpa_t_bname.    "  Will hold L2 usernames
 
-    rv_success = abap_false.
+  rv_success = abap_false.
 
-    " Step 1: Save the request
-    lv_reqnum = save_request(
-      is_header    = is_header
+  "  Step 1: Save the request (get request number)
+  lv_reqnum = save_request(
+    is_header    = is_header
+    it_wbs_items = it_wbs_items
+  ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e013(zcj00) WITH 'Error saving request'.
+    RETURN.
+  ENDIF.
+
+  "  Step 2: Get approvers from config + HRP1001
+  lv_found = check_approver_matrix(
+    EXPORTING
+      iv_bukrs   = is_header-bukrs      " ZX99
+      iv_profl   = is_header-profl      " ZPC0001
+      iv_reqtype = is_header-z_reqtype  " A1
+    IMPORTING
+      ev_appr1         = lv_appr1             " Position 30000
+      ev_appr2         = lv_appr2             " Position 30001
+      ev_auto          = lv_auto              " 'X' if no approvers
+      ev_error_handler = lv_error_handler
+      et_l1_approvers  = lt_l1_approvers      "  Usernames from HRP1001
+      et_l2_approvers  = lt_l2_approvers      "  Usernames from HRP1001
+  ).
+
+  IF lv_found = abap_false.
+    MESSAGE e008(zcj00) WITH 'No approver configuration found'.
+    RETURN.
+  ENDIF.
+
+  "  Step 3: Update header with pending status
+  ls_header = is_header.
+  ls_header-zreq_num = lv_reqnum.
+  ls_header-request_status = 'PENDING'.
+
+  UPDATE ztb_a2r_wbshdr
+    SET request_status = 'PENDING'
+    WHERE zreq_num = lv_reqnum.
+
+  "  Step 4: Auto-approval or Workflow
+  IF lv_auto = 'X'.
+    "  AUTO-APPROVE: No approvers configured
+    MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
+
+    rv_success = create_project(
+      is_header    = ls_header
       it_wbs_items = it_wbs_items
     ).
 
-    IF lv_reqnum IS INITIAL.
-      MESSAGE e013(zcj00) WITH 'Error saving request'.
-      RETURN.
+    IF rv_success = abap_true.
+      UPDATE ztb_a2r_wbshdr
+        SET request_status = 'APPROVED'
+            zapproved_by = sy-uname
+            zrequest_approved_on = sy-datum
+        WHERE zreq_num = lv_reqnum.
+      COMMIT WORK.
+      MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+    ELSE.
+      UPDATE ztb_a2r_wbshdr
+        SET request_status = 'ERROR'
+        WHERE zreq_num = lv_reqnum.
+      COMMIT WORK.
+      MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
     ENDIF.
 
-    " Step 2: Get approvers from configuration and HRP1001
-    lv_found = check_approver_matrix(
-      EXPORTING
-        iv_bukrs   = is_header-bukrs
-        iv_profl   = is_header-profl
-        iv_reqtype = is_header-z_reqtype
-      IMPORTING
-        ev_appr1         = lv_appr1
-        ev_appr2         = lv_appr2
-        ev_auto          = lv_auto
-        ev_error_handler = lv_error_handler
-        et_l1_approvers  = lt_l1_approvers
-        et_l2_approvers  = lt_l2_approvers
+  ELSE.
+    "  TRIGGER WORKFLOW WITH APPROVER LISTS
+    rv_success = trigger_workflow(
+      is_header   = ls_header
+      it_l1_apprv = lt_l1_approvers    "  Pass L1 usernames
+      it_l2_apprv = lt_l2_approvers    "  Pass L2 usernames
     ).
 
-    IF lv_found = abap_false.
-      MESSAGE e008(zcj00) WITH 'No approver configuration found'.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Step 3: Update header
-    ls_header = is_header.
-    ls_header-zreq_num = lv_reqnum.
-    ls_header-request_status = 'PENDING'.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'PENDING'
-      WHERE zreq_num = lv_reqnum.
-
-    " Step 4: Auto-approval or Workflow
-    IF lv_auto = 'X'.
-      " Auto-approve if no approvers configured
-      MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
-
-      rv_success = create_project(
-        is_header    = ls_header
-        it_wbs_items = it_wbs_items
-      ).
-
-      IF rv_success = abap_true.
-        UPDATE ztb_a2r_wbshdr
-          SET request_status = 'APPROVED'
-              zapproved_by = sy-uname
-              zrequest_approved_on = sy-datum
-          WHERE zreq_num = lv_reqnum.
-        COMMIT WORK.
-        MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
-      ELSE.
-        UPDATE ztb_a2r_wbshdr
-          SET request_status = 'ERROR'
-          WHERE zreq_num = lv_reqnum.
-        COMMIT WORK.
-        MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
-      ENDIF.
-
+    IF rv_success = abap_true.
+      COMMIT WORK.
+      MESSAGE s015(zcj00) WITH lv_reqnum.
     ELSE.
-      " Trigger workflow with approver lists
-      rv_success = trigger_workflow(
-        is_header   = ls_header
-        it_l1_apprv = lt_l1_approvers
-        it_l2_apprv = lt_l2_approvers
-      ).
-
-      IF rv_success = abap_true.
-        COMMIT WORK.
-        MESSAGE s015(zcj00) WITH 'Request' lv_reqnum 'submitted'.
-      ELSE.
-        ROLLBACK WORK.
-        MESSAGE e016(zcj00) WITH 'Workflow error for' lv_reqnum.
-      ENDIF.
+      ROLLBACK WORK.
+      MESSAGE e020(zcj00) WITH 'Workflow error for' lv_reqnum.
     ENDIF.
+  ENDIF.
 
-  ENDMETHOD.
+ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
