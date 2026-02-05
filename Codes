@@ -1,14 +1,14 @@
-FORM total_up_wbs.
+FORM total_up_wbs_tc.
 
   DATA: lv_parent_len TYPE i,
-        lv_sum        TYPE gs_wbs_display-wert2,
-        lv_pspid_norm TYPE string.
+        lv_sum        TYPE ty_wbs_display-wert2,
+        lv_pspid_p    TYPE prps-posid,
+        lv_pspid_c    TYPE prps-posid.
 
   FIELD-SYMBOLS:
-    <fs_parent> TYPE gs_wbs_display,
-    <fs_child>  TYPE gs_wbs_display.
+    <fs_parent> TYPE ty_wbs_display,
+    <fs_child>  TYPE ty_wbs_display.
 
-  " Process from lowest parent to top
   DO 4 TIMES.
     DATA(lv_level) = 5 - sy-index.
 
@@ -17,19 +17,25 @@ FORM total_up_wbs.
 
       CLEAR lv_sum.
 
-      lv_pspid_norm = <fs_parent>-pspid.
-      PERFORM normalize_pspid CHANGING lv_pspid_norm.
-      lv_parent_len = strlen( lv_pspid_norm ).
+      lv_pspid_p = <fs_parent>-pspid.
+
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_p.
+
+      lv_parent_len = strlen( lv_pspid_p ).
 
       LOOP AT gt_wbs_display ASSIGNING <fs_child>
         WHERE stufe = lv_level + 1.
 
-        DATA(lv_child_pspid) = <fs_child>-pspid.
-        PERFORM normalize_pspid CHANGING lv_child_pspid.
+        lv_pspid_c = <fs_child>-pspid.
 
-        IF lv_child_pspid+0(lv_parent_len)
-           = lv_pspid_norm.
-          lv_sum += <fs_child>-wert2.
+        CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+          CHANGING
+            c_value = lv_pspid_c.
+
+        IF lv_pspid_c+0(lv_parent_len) = lv_pspid_p.
+          lv_sum = lv_sum + <fs_child>-wert2.
         ENDIF.
 
       ENDLOOP.
@@ -39,25 +45,10 @@ FORM total_up_wbs.
       ENDIF.
 
     ENDLOOP.
-
   ENDDO.
 
 ENDFORM.
 
 
 
-FORM normalize_pspid CHANGING cv_pspid TYPE string.
 
-  WHILE cv_pspid CP '*0'.
-    cv_pspid = cv_pspid( strlen( cv_pspid ) - 1 ).
-  ENDWHILE.
-
-ENDFORM.
-
-
-
-WHEN 'CHECK'.
-  PERFORM check_data_only.
-  IF sy-subrc = 0.
-    PERFORM total_up_wbs.
-  ENDIF.
