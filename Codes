@@ -1,132 +1,63 @@
-*&---------------------------------------------------------------------*
-*&      Form  FCODE_TOTAL_UP
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-*      -->P_P_TC_NAME  text
-*      -->P_P_TABLE_NAME  text
-*      -->P_P_MARK_NAME  text
-*----------------------------------------------------------------------*
-FORM fcode_total_up."  USING    p_tc_name TYPE dynfnam
-  "p_table_name
-  "p_mark_name.
+FORM total_up_wbs.
 
-  DATA: lt_table5 TYPE STANDARD TABLE OF ts_table,
-        lt_table4 TYPE STANDARD TABLE OF ts_table,
-        lt_table3 TYPE STANDARD TABLE OF ts_table,
-        lt_table2 TYPE STANDARD TABLE OF ts_table,
-        lt_table1 TYPE STANDARD TABLE OF ts_table,
-        lv_sum4   TYPE gs_wbs_item-wert2,
-        lv_sum3   TYPE gs_wbs_item-wert2,
-        lv_sum2   TYPE gs_wbs_item-wert2,
-        lv_sum1   TYPE gs_wbs_item-wert2,
-        lv_index4 TYPE sy-index,
-        lv_index3 TYPE sy-index,
-        lv_index2 TYPE sy-index,
-        lv_index1 TYPE sy-index.
-  DATA: lv_pspid_len5 TYPE numc2.
-  DATA: lv_pspid_len4 TYPE numc2.
-  DATA: lv_pspid_len3 TYPE numc2.
-  DATA: lv_pspid_len2 TYPE numc2.
-  DATA: lv_pspid_len1 TYPE numc2.
+  DATA: lv_parent_len TYPE i,
+        lv_sum        TYPE gs_wbs_display-wert2,
+        lv_pspid_norm TYPE string.
 
+  FIELD-SYMBOLS:
+    <fs_parent> TYPE gs_wbs_display,
+    <fs_child>  TYPE gs_wbs_display.
 
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa>).
-    IF <wa>-stufe = '5'.
-*      lv_pspid_len5 = strlen( <wa>-pspid_new ).
-      APPEND <wa> TO lt_table5.
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO lt_table4.
-      DATA(lv_pspid_new4) = <wa>-pspid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new4.
-      lv_pspid_len4 = strlen( lv_pspid_new4 ).
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO lt_table3.
-      DATA(lv_pspid_new3) = <wa>-pspid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new3.
-      lv_pspid_len3 = strlen( lv_pspid_new3 ).
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO lt_table2.
-      DATA(lv_pspid_new2) = <wa>-pspid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new2.
-      lv_pspid_len2 = strlen( lv_pspid_new2 ).
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO lt_table1.
-      DATA(lv_pspid_new1) = <wa>-pspid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new1.
-      lv_pspid_len1 = strlen( lv_pspid_new1 ).
-    ENDIF.
-  ENDLOOP.
+  " Process from lowest parent to top
+  DO 4 TIMES.
+    DATA(lv_level) = 5 - sy-index.
 
-* Build the Total for Level4.
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
-    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
-      IF <wa5>-pspid+0(lv_pspid_len4) = <wa4>-pspid+0(lv_pspid_len4).
-        lv_sum4 = lv_sum4 + <wa5>-wert2.
+    LOOP AT gt_wbs_display ASSIGNING <fs_parent>
+      WHERE stufe = lv_level.
+
+      CLEAR lv_sum.
+
+      lv_pspid_norm = <fs_parent>-pspid.
+      PERFORM normalize_pspid CHANGING lv_pspid_norm.
+      lv_parent_len = strlen( lv_pspid_norm ).
+
+      LOOP AT gt_wbs_display ASSIGNING <fs_child>
+        WHERE stufe = lv_level + 1.
+
+        DATA(lv_child_pspid) = <fs_child>-pspid.
+        PERFORM normalize_pspid CHANGING lv_child_pspid.
+
+        IF lv_child_pspid+0(lv_parent_len)
+           = lv_pspid_norm.
+          lv_sum += <fs_child>-wert2.
+        ENDIF.
+
+      ENDLOOP.
+
+      IF lv_sum IS NOT INITIAL.
+        <fs_parent>-wert2 = lv_sum.
       ENDIF.
-    ENDLOOP.
-    IF lv_sum4 IS NOT INITIAL.
-      <wa4>-wert2 = lv_sum4.
-    ENDIF.
-    lv_index4 = lv_index4 + 1.
-    MODIFY lt_table FROM <wa4> TRANSPORTING wert2.
-    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
-  ENDLOOP.
 
-* Build the Total for Level3.
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
-    LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-pspid+0(lv_pspid_len3) = <wa3>-pspid+0(lv_pspid_len3).
-        lv_sum3 = lv_sum3 + <wa4>-wert2.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum3 IS NOT INITIAL.
-      <wa3>-wert2 = lv_sum3.
-    ENDIF.
-    lv_index3 = lv_index3 + 1.
-    MODIFY lt_table FROM <wa3> TRANSPORTING wert2.
-    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
-  ENDLOOP.
-
-* Build the Total for Level2.
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
-    LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-pspid+0(lv_pspid_len2) = <wa2>-pspid+0(lv_pspid_len2).
-        lv_sum2 = lv_sum2 + <wa3>-wert2.
-      ENDIF.
     ENDLOOP.
 
-    IF lv_sum2 IS NOT INITIAL.
-      <wa2>-wert2 = lv_sum2.
-    ENDIF.
-    lv_index2 = lv_index2 + 1.
-    MODIFY lt_table FROM <wa2> TRANSPORTING wert2.
-    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
-  ENDLOOP.
+  ENDDO.
 
-* Build the Total for Level1.
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
-    LOOP AT lt_table2 ASSIGNING <wa2>.
-      IF <wa2>-pspid+0(lv_pspid_len1) = <wa1>-pspid+0(lv_pspid_len1).
-        lv_sum1 = lv_sum1 + <wa2>-wert2.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum1 IS NOT INITIAL.
-      <wa1>-wert2 = lv_sum1.
-    ENDIF.
-    MODIFY lt_table FROM <wa1> TRANSPORTING wert2.
-    CLEAR: lv_sum1.
-  ENDLOOP.
+ENDFORM.
 
-ENDFORM.                              " FCODE_Total_up
+
+
+FORM normalize_pspid CHANGING cv_pspid TYPE string.
+
+  WHILE cv_pspid CP '*0'.
+    cv_pspid = cv_pspid( strlen( cv_pspid ) - 1 ).
+  ENDWHILE.
+
+ENDFORM.
+
+
+
+WHEN 'CHECK'.
+  PERFORM check_data_only.
+  IF sy-subrc = 0.
+    PERFORM total_up_wbs.
+  ENDIF.
