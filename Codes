@@ -1,473 +1,3 @@
-*----------------------------------------------------------------------*
-* Global Variables
-*----------------------------------------------------------------------*
-DATA: gv_bukrs              TYPE bukrs,          " Company Code (auto-populated)
-      gv_werks              TYPE werks_d,        " Plant
-      gv_izwek              TYPE izwek,          " Investment Reason
-      gv_usr008             TYPE usr008,         " CAR Approval Date
-      gv_available_budget   TYPE bpge-wlges,    " Available Budget
-      gv_z_remarks          TYPE ztb_a2r_wbshdr-z_remarks.  " Remarks
-
-*----------------------------------------------------------------------*
-* Display-Only Fields (Screen 2)
-*----------------------------------------------------------------------*
-DATA: gv_requestor_display TYPE char50,      " Full name of requestor
-      gv_reqtype_display   TYPE char20,      " Request type description
-      gv_im_posid_display  TYPE im_posid,    " IM Position ID (external format)
-      gv_posnr_display     TYPE im_posid.    " IM POSNR display
-
-*----------------------------------------------------------------------*
-* Builder Class Instance
-*----------------------------------------------------------------------*
-DATA: go_builder TYPE REF TO zcl_a2r_wbs_builder.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form LOAD_IM_DATA
-*&---------------------------------------------------------------------*
-*& Load IM position data and auto-populate fields
-*&---------------------------------------------------------------------*
-FORM load_im_data.
-
-  DATA: ls_impr TYPE impr.
-
-  CLEAR: p_prnam, p_post1, gv_izwek, gv_bukrs, gv_werks, gv_usr008.
-
-  " Get IM position data
-  SELECT SINGLE * FROM impr INTO ls_impr WHERE posnr = p_posnr.
-
-  IF sy-subrc = 0.
-    " Auto-populate fields
-    p_prnam = ls_impr-prnam.       " IM Program
-    p_post1 = ls_impr-post1.       " Description
-    gv_izwek = ls_impr-izwek.      " Investment Reason
-    gv_usr008 = ls_impr-usr008.    " CAR Approval Date
-    
-    " ★ CRITICAL: Store Company Code from PBUKR
-    gv_bukrs = ls_impr-pbukr.
-    
-    " Get Plant from Cost Center
-    IF ls_impr-kostl IS NOT INITIAL.
-      SELECT SINGLE werks FROM csks INTO gv_werks
-        WHERE kokrs = ls_impr-kokrs
-          AND kostl = ls_impr-kostl
-          AND datbi >= sy-datum
-          AND datab <= sy-datum.
-    ENDIF.
-    
-    " Get Project Profile and Template from configuration
-    SELECT SINGLE profl, pspnr FROM ztb_a2r_conftab1
-      INTO (p_profl, p_pspnr)
-      WHERE izwek = gv_izwek.
-    
-    IF sy-subrc <> 0.
-      MESSAGE e010(zcj00) WITH 'No template for investment reason' gv_izwek.
-      CLEAR: p_profl, p_pspnr.
-    ENDIF.
-    
-  ELSE.
-    MESSAGE e009(zcj00) WITH 'IM Position not found:' p_posnr.
-  ENDIF.
-
-ENDFORM.
-
-
-
-*&---------------------------------------------------------------------*
-*& Form POPULATE_HEADER_STRUCTURE
-*&---------------------------------------------------------------------*
-*& Populate header structure from screen fields
-*&---------------------------------------------------------------------*
-FORM populate_header_structure.
-
-  CLEAR gs_header.
-
-  " ★ CRITICAL: Ensure Company Code is populated
-  IF gv_bukrs IS INITIAL.
-    SELECT SINGLE pbukr FROM impr
-      INTO gv_bukrs
-      WHERE posnr = p_posnr.
-  ENDIF.
-
-  " Validate Company Code exists
-  IF gv_bukrs IS INITIAL.
-    MESSAGE e046(zcj00) WITH 'Company Code not found for IM position' p_posnr.
-    RETURN.
-  ENDIF.
-
-  " Populate header structure
-  gs_header-bukrs = gv_bukrs.          " Company Code (from IMPR-PBUKR)
-  gs_header-posnr = p_posnr.           " IM Position Number
-  gs_header-prnam = p_prnam.           " IM Program
-  gs_header-post1 = p_post1.           " Description
-  gs_header-vernr = p_verna;           " Person Responsible
-  gs_header-plsez = p_plsez.           " Finish Date
-  gs_header-werks = gv_werks.          " Plant
-  gs_header-prctr = p_prctr.           " Profit Center
-  gs_header-kostl = p_kostl.           " Cost Center
-  gs_header-izwek = gv_izwek.          " Investment Reason
-  gs_header-zunifier_proj = p_usr10.   " GE Ariba Flag
-  gs_header-usr008 = gv_usr008.        " CAR Approval Date
-  gs_header-z_reqtype = gc_reqtype_a1. " Request Type (A1)
-  gs_header-z_remarks = gv_z_remarks.  " Remarks
-
-  " Get Project Profile from configuration
-  IF gs_header-profl IS INITIAL.
-    SELECT SINGLE profl FROM ztb_a2r_conftab1
-      INTO gs_header-profl
-      WHERE izwek = gs_header-izwek.
-    
-    IF sy-subrc <> 0.
-      MESSAGE e045(zcj00) WITH 'No project profile for investment reason' gs_header-izwek.
-      RETURN.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form LOAD_TEMPLATE_TO_WBS_ITEMS
-*&---------------------------------------------------------------------*
-FORM load_template_to_wbs_items.
-
-  DATA: ls_wbs TYPE ztb_a2r_wbsitem.
-
-  " ★ Get Company Code from IMPR before loading template
-  IF gv_bukrs IS INITIAL.
-    SELECT SINGLE pbukr FROM impr
-      INTO gv_bukrs
-      WHERE posnr = p_posnr.
-  ENDIF.
-
-  " Clear existing table
-  REFRESH gt_wbs_items.
-
-  " Load template structure
-  CALL METHOD go_builder->copy_template_structure
-    EXPORTING
-      iv_pspid = p_pspnr
-      iv_kostl = p_kostl
-    CHANGING
-      ct_wbs_items = gt_wbs_items.
-
-  " ★ Assign Company Code and Plant to all WBS items
-  LOOP AT gt_wbs_items INTO ls_wbs.
-    ls_wbs-bukrs = gv_bukrs.    " From IMPR-PBUKR
-    ls_wbs-werks = gv_werks.    " From CSKS
-    MODIFY gt_wbs_items FROM ls_wbs.
-  ENDLOOP.
-
-  " Convert and display
-  PERFORM convert_to_display.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_APPROVER_MATRIX
-*&---------------------------------------------------------------------*
-*& Validate that approver configuration exists
-*&---------------------------------------------------------------------*
-FORM validate_approver_matrix USING    iv_bukrs   TYPE bukrs
-                                       iv_profl   TYPE profidproj
-                                       iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
-                              CHANGING cv_error   TYPE abap_bool.
-
-  DATA: lv_appr1         TYPE char8,
-        lv_appr2         TYPE char8,
-        lv_auto          TYPE char1,
-        lv_error_handler TYPE char8,
-        lv_found         TYPE abap_bool,
-        lt_l1_approvers  TYPE hpa_t_bname,
-        lt_l2_approvers  TYPE hpa_t_bname.
-
-  CLEAR cv_error.
-
-  " Use the class method to check approver matrix
-  lv_found = go_builder->check_approver_matrix(
-    EXPORTING
-      iv_bukrs   = iv_bukrs
-      iv_profl   = iv_profl
-      iv_reqtype = iv_reqtype
-    IMPORTING
-      ev_appr1         = lv_appr1
-      ev_appr2         = lv_appr2
-      ev_auto          = lv_auto
-      ev_error_handler = lv_error_handler
-      et_l1_approvers  = lt_l1_approvers
-      et_l2_approvers  = lt_l2_approvers
-  ).
-
-  IF lv_found = abap_false.
-    MESSAGE e023(zcj00) WITH 'No approver config for' iv_bukrs iv_profl iv_reqtype.
-    cv_error = abap_true.
-    RETURN.
-  ENDIF.
-
-  " Check for auto-approval
-  IF lv_auto = 'X'.
-    MESSAGE w042(zcj00) WITH 'No approvers - request will be auto-approved'.
-    CLEAR cv_error.
-    RETURN.
-  ENDIF.
-
-  " Validate that we found actual users
-  IF lt_l1_approvers IS INITIAL AND lt_l2_approvers IS INITIAL.
-    MESSAGE e043(zcj00) WITH 'Approvers configured but no users in HRP1001'.
-    cv_error = abap_true.
-    RETURN.
-  ENDIF.
-
-  " Success
-  MESSAGE s044(zcj00) WITH lines( lt_l1_approvers ) 'L1 and' 
-                           lines( lt_l2_approvers ) 'L2 approvers found'.
-  CLEAR cv_error.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_USER_FULLNAME
-*&---------------------------------------------------------------------*
-*& Convert SAP username to full name
-*&---------------------------------------------------------------------*
-FORM get_user_fullname USING    iv_uname      TYPE xubname
-                       CHANGING cv_fullname   TYPE char50.
-
-  DATA: ls_usr21 TYPE usr21,
-        ls_adrp  TYPE adrp.
-
-  CLEAR cv_fullname.
-
-  " Get person number from username
-  SELECT SINGLE * FROM usr21
-    INTO ls_usr21
-    WHERE bname = iv_uname.
-
-  IF sy-subrc = 0 AND ls_usr21-persnumber IS NOT INITIAL.
-    
-    " Get full name from address data
-    SELECT SINGLE * FROM adrp
-      INTO ls_adrp
-      WHERE persnumber = ls_usr21-persnumber.
-
-    IF sy-subrc = 0.
-      " Build full name: First Name Last Name
-      IF ls_adrp-name_first IS NOT INITIAL OR ls_adrp-name_last IS NOT INITIAL.
-        CONCATENATE ls_adrp-name_first ls_adrp-name_last
-          INTO cv_fullname SEPARATED BY space.
-        CONDENSE cv_fullname.
-      ELSE.
-        cv_fullname = iv_uname.
-      ENDIF.
-    ELSE.
-      cv_fullname = iv_uname.
-    ENDIF.
-    
-  ELSE.
-    cv_fullname = iv_uname.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_IM_POSID_EXTERNAL
-*&---------------------------------------------------------------------*
-*& Convert IM internal POSNR to external POSID
-*&---------------------------------------------------------------------*
-FORM get_im_posid_external USING    iv_posnr         TYPE im_posnr
-                           CHANGING cv_posid_external TYPE im_posid.
-
-  CLEAR cv_posid_external.
-
-  IF iv_posnr IS NOT INITIAL.
-    SELECT SINGLE posid
-      FROM impr
-      INTO cv_posid_external
-      WHERE posnr = iv_posnr.
-
-    IF sy-subrc <> 0.
-      cv_posid_external = iv_posnr.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-*&---------------------------------------------------------------------*
-*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
-*&---------------------------------------------------------------------*
-MODULE set_header_display_values OUTPUT.
-
-  DATA: lv_fullname     TYPE char50,
-        lv_reqtype_text TYPE char20,
-        lv_im_posid     TYPE im_posid.
-
-  " ★ CRITICAL: Get Company Code from IMPR if not already set
-  IF gv_bukrs IS INITIAL.
-    SELECT SINGLE pbukr FROM impr
-      INTO gv_bukrs
-      WHERE posnr = p_posnr.
-    
-    IF sy-subrc <> 0 OR gv_bukrs IS INITIAL.
-      MESSAGE e046(zcj00) WITH 'Cannot determine Company Code for IM' p_posnr.
-    ENDIF.
-  ENDIF.
-
-  " Convert username to full name
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname 
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    gv_requestor_display = sy-uname.
-  ENDIF.
-
-  " Convert request type
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'.
-  ENDIF.
-
-  " Convert IM POSNR to external POSID
-  IF p_posnr IS NOT INITIAL.
-    PERFORM get_im_posid_external
-      USING    p_posnr
-      CHANGING lv_im_posid.
-    gv_im_posid_display = lv_im_posid.
-    gv_posnr_display = lv_im_posid.
-  ENDIF.
-
-ENDMODULE.
-
-
-
-
-class ZCL_A2R_WBS_BUILDER definition
-  public
-  final
-  create public .
-
-public section.
-
-  methods COPY_TEMPLATE_STRUCTURE
-    importing
-      !IV_PSPID type PS_PSPID
-      !IV_KOSTL type KOSTL
-    changing
-      !CT_WBS_ITEMS type STANDARD TABLE .
-  methods TOTAL_UP_BUDGET
-    changing
-      !CT_WBS_ITEMS type STANDARD TABLE .
-  methods SAVE_REQUEST
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_REQNUM) type CHAR10 .
-  methods SUBMIT_REQUEST
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_PROJECT
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CHECK_APPROVER_MATRIX
-    importing
-      !IV_BUKRS type BUKRS
-      !IV_PROFL type PROFIDPROJ
-      !IV_REQTYPE type ZTB_A2R_REQTYPE-Z_REQTYPE
-    exporting
-      !EV_APPR1 type CHAR8
-      !EV_APPR2 type CHAR8
-      !EV_AUTO type CHAR1
-      !EV_ERROR_HANDLER type CHAR8
-      !ET_L1_APPROVERS type HPA_T_BNAME
-      !ET_L2_APPROVERS type HPA_T_BNAME
-    returning
-      value(RV_FOUND) type ABAP_BOOL .
-      
-private section.
-
-  methods GET_NEXT_REQUEST_NUMBER
-    returning
-      value(RV_REQNUM) type CHAR10 .
-  methods TRIGGER_WORKFLOW
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_L1_APPRV type HPA_T_BNAME optional
-      !IT_L2_APPRV type HPA_T_BNAME optional
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_WBS_ELEMENTS
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    exporting
-      !ET_WBS_CREATED type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods ASSIGN_PLAN_VALUES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods DISTRIBUTE_IM_BUDGET
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_SETTLEMENT_RULES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods ACTIVATE_STATUSES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods GET_NEXT_PROJECT_NUMBER
-    importing
-      !IV_PROFL type PROFIDPROJ
-    returning
-      value(RV_PSPID) type PS_PSPID .
-  methods GET_USER_EMAIL
-    importing
-      !IV_UNAME type XUBNAME
-    returning
-      value(RV_EMAIL) type AD_SMTPADR .
-ENDCLASS.
-
-
-
-
-
 METHOD check_approver_matrix.
 
   DATA: ls_config  TYPE ztb_a2r_conftab2,
@@ -478,75 +8,103 @@ METHOD check_approver_matrix.
   CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler, 
          et_l1_approvers, et_l2_approvers.
 
-  " Get approver configuration
+  " ★ Get approver configuration from ZTB_A2R_CONFTAB2
+  " Based on Image 2: CoCode (BUKRS), Proj.Prof. (PROFL), Req Type
   SELECT SINGLE * FROM ztb_a2r_conftab2
     INTO ls_config
-    WHERE bukrs = iv_bukrs
-      AND profl = iv_profl
-      AND z_reqtype = iv_reqtype.
+    WHERE bukrs = iv_bukrs          " Company Code (ZX99 in image)
+      AND profl = iv_profl          " Project Profile (ZPC0001 in image)
+      AND z_reqtype = iv_reqtype.   " Request Type (A1 in image)
 
-  IF sy-subrc = 0.
-    ev_appr1 = ls_config-zaproval_1.
-    ev_appr2 = ls_config-zaproval_2.
-    ev_error_handler = ls_config-zerror_handling.
-
-    " ★ Get Level 1 Approvers - Return as 'US' + BNAME
-    IF ev_appr1 IS NOT INITIAL.
-      SELECT * FROM hrp1001
-        INTO TABLE lt_hrp1001
-        WHERE objid = ev_appr1
-          AND otype = 'S'
-          AND plvar = '01'
-          AND rsign = 'A'
-          AND relat = '008'
-          AND sclas = 'US'
-          AND endda >= sy-datum
-          AND begda <= sy-datum.
-
-      IF sy-subrc = 0.
-        LOOP AT lt_hrp1001 INTO ls_hrp1001.
-          " ★ SOBID already contains 'US' prefix (e.g., 'USEV92123')
-          " Just use it directly
-          lv_uname = ls_hrp1001-sobid.
-          APPEND lv_uname TO et_l1_approvers.
-        ENDLOOP.
-      ENDIF.
-    ENDIF.
-
-    " ★ Get Level 2 Approvers - Return as 'US' + BNAME
-    IF ev_appr2 IS NOT INITIAL.
-      CLEAR lt_hrp1001.
-      SELECT * FROM hrp1001
-        INTO TABLE lt_hrp1001
-        WHERE objid = ev_appr2
-          AND otype = 'S'
-          AND plvar = '01'
-          AND rsign = 'A'
-          AND relat = '008'
-          AND sclas = 'US'
-          AND endda >= sy-datum
-          AND begda <= sy-datum.
-
-      IF sy-subrc = 0.
-        LOOP AT lt_hrp1001 INTO ls_hrp1001.
-          " ★ SOBID already contains 'US' prefix
-          lv_uname = ls_hrp1001-sobid.
-          APPEND lv_uname TO et_l2_approvers.
-        ENDLOOP.
-      ENDIF.
-    ENDIF.
-
-    " Check for auto-approval
-    IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
-      ev_auto = 'X'.
-    ELSE.
-      CLEAR ev_auto.
-    ENDIF.
-
-    rv_found = abap_true.
-  ELSE.
+  IF sy-subrc <> 0.
+    " No configuration found
     rv_found = abap_false.
+    RETURN.
   ENDIF.
+
+  " ★ Store approver positions and error handler
+  " From Image 2: Approval 1 = 30000, Approval 2 = 30001
+  ev_appr1 = ls_config-zaproval_1.          " Level 1 approver position
+  ev_appr2 = ls_config-zaproval_2.          " Level 2 approver position
+  ev_error_handler = ls_config-zerror_handling.  " Error handler position
+
+  " ★★★ LEVEL 1 APPROVERS ★★★
+  " Get users assigned to Level 1 approver position from HRP1001
+  IF ev_appr1 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+    
+    " From Image 1: Query HRP1001 where OBJID = 30000, SCLAS = 'US'
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr1        " Position ID (e.g., 30000)
+        AND otype = 'S'             " Object type = Position/Org unit
+        AND plvar = '01'            " Plan version = Current
+        AND rsign = 'A'             " Relationship sign = A
+        AND relat = '008'           " Relationship = User assignment
+        AND sclas = 'US'            " Object class = User (SOBID contains username)
+        AND endda >= sy-datum       " Valid to date >= today
+        AND begda <= sy-datum.      " Valid from date <= today
+
+    IF sy-subrc = 0.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        " ★ Extract username from SOBID
+        " From Image 1: SOBID format can be:
+        " - 'USRG33000' (with US prefix) → extract 'USRG33000'
+        " - 'EV92123' (without prefix) → use as-is
+        lv_uname = ls_hrp1001-sobid.
+        
+        " Remove 'US' prefix if present (first 2 characters)
+        IF lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.  " Skip first 2 chars
+        ENDIF.
+        
+        " Add to Level 1 approver list
+        APPEND lv_uname TO et_l1_approvers.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  " ★★★ LEVEL 2 APPROVERS ★★★
+  " Get users assigned to Level 2 approver position from HRP1001
+  IF ev_appr2 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+    
+    " From Image 1: Query HRP1001 where OBJID = 30001, SCLAS = 'US'
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr2        " Position ID (e.g., 30001)
+        AND otype = 'S'
+        AND plvar = '01'
+        AND rsign = 'A'
+        AND relat = '008'
+        AND sclas = 'US'
+        AND endda >= sy-datum
+        AND begda <= sy-datum.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        lv_uname = ls_hrp1001-sobid.
+        
+        " Remove 'US' prefix if present
+        IF lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.
+        ENDIF.
+        
+        " Add to Level 2 approver list
+        APPEND lv_uname TO et_l2_approvers.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  " ★★★ AUTO-APPROVAL LOGIC ★★★
+  " If BOTH approver lists are empty, mark as auto-approval
+  IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+    ev_auto = 'X'.
+  ELSE.
+    CLEAR ev_auto.
+  ENDIF.
+
+  rv_found = abap_true.
 
 ENDMETHOD.
 
@@ -562,12 +120,12 @@ METHOD submit_request.
         lv_error_handler TYPE char8,
         lv_found         TYPE abap_bool,
         ls_header        TYPE ztb_a2r_wbshdr,
-        lt_l1_approvers  TYPE hpa_t_bname,
-        lt_l2_approvers  TYPE hpa_t_bname.
+        lt_l1_approvers  TYPE hpa_t_bname,    " ★ Will hold L1 usernames
+        lt_l2_approvers  TYPE hpa_t_bname.    " ★ Will hold L2 usernames
 
   rv_success = abap_false.
 
-  " Step 1: Save the request
+  " ★ Step 1: Save the request (get request number)
   lv_reqnum = save_request(
     is_header    = is_header
     it_wbs_items = it_wbs_items
@@ -578,28 +136,27 @@ METHOD submit_request.
     RETURN.
   ENDIF.
 
-  " Step 2: Get approvers (format: 'USEV92123', 'USHQ75177', etc.)
+  " ★ Step 2: Get approvers from config + HRP1001
   lv_found = check_approver_matrix(
     EXPORTING
-      iv_bukrs   = is_header-bukrs
-      iv_profl   = is_header-profl
-      iv_reqtype = is_header-z_reqtype
+      iv_bukrs   = is_header-bukrs      " ZX99
+      iv_profl   = is_header-profl      " ZPC0001
+      iv_reqtype = is_header-z_reqtype  " A1
     IMPORTING
-      ev_appr1         = lv_appr1
-      ev_appr2         = lv_appr2
-      ev_auto          = lv_auto
+      ev_appr1         = lv_appr1             " Position 30000
+      ev_appr2         = lv_appr2             " Position 30001
+      ev_auto          = lv_auto              " 'X' if no approvers
       ev_error_handler = lv_error_handler
-      et_l1_approvers  = lt_l1_approvers
-      et_l2_approvers  = lt_l2_approvers
+      et_l1_approvers  = lt_l1_approvers      " ★ Usernames from HRP1001
+      et_l2_approvers  = lt_l2_approvers      " ★ Usernames from HRP1001
   ).
 
   IF lv_found = abap_false.
     MESSAGE e008(zcj00) WITH 'No approver configuration found'.
-    rv_success = abap_false.
     RETURN.
   ENDIF.
 
-  " Step 3: Update header
+  " ★ Step 3: Update header with pending status
   ls_header = is_header.
   ls_header-zreq_num = lv_reqnum.
   ls_header-request_status = 'PENDING'.
@@ -608,9 +165,9 @@ METHOD submit_request.
     SET request_status = 'PENDING'
     WHERE zreq_num = lv_reqnum.
 
-  " Step 4: Auto-approval or Workflow
+  " ★ Step 4: Auto-approval or Workflow
   IF lv_auto = 'X'.
-    " Auto-approve
+    " ★ AUTO-APPROVE: No approvers configured
     MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
 
     rv_success = create_project(
@@ -635,11 +192,11 @@ METHOD submit_request.
     ENDIF.
 
   ELSE.
-    " ★ Trigger workflow with 'US' prefixed approvers
+    " ★★★ TRIGGER WORKFLOW WITH APPROVER LISTS ★★★
     rv_success = trigger_workflow(
       is_header   = ls_header
-      it_l1_apprv = lt_l1_approvers
-      it_l2_apprv = lt_l2_approvers
+      it_l1_apprv = lt_l1_approvers    " ★ Pass L1 usernames
+      it_l2_apprv = lt_l2_approvers    " ★ Pass L2 usernames
     ).
 
     IF rv_success = abap_true.
@@ -647,45 +204,12 @@ METHOD submit_request.
       MESSAGE s015(zcj00) WITH 'Request' lv_reqnum 'submitted'.
     ELSE.
       ROLLBACK WORK.
-      MESSAGE e016(zcj00) WITH 'Workflow error' lv_reqnum.
+      MESSAGE e016(zcj00) WITH 'Workflow error for' lv_reqnum.
     ENDIF.
   ENDIF.
 
 ENDMETHOD.
 
-
-
-
-
-METHOD trigger_workflow.
-
-  DATA: lo_instance TYPE REF TO zcl_a2r_wbs_request_flexwf.
-
-  rv_success = abap_false.
-
-  IF is_header-zreq_num IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  TRY.
-      " ★ Pass header and approvers (format: 'USEV92123', 'USHQ75177')
-      lo_instance = NEW zcl_a2r_wbs_request_flexwf(
-        iv_reqnum     = is_header-zreq_num
-        is_header     = is_header
-        it_l1approver = it_l1_apprv
-        it_l2approver = it_l2_apprv
-      ).
-
-      lo_instance->submit( ).
-
-      rv_success = abap_true.
-
-    CATCH cx_root INTO DATA(lx_error).
-      MESSAGE lx_error->get_text( ) TYPE 'E'.
-      rv_success = abap_false.
-  ENDTRY.
-
-ENDMETHOD.
 
 
 
@@ -698,19 +222,20 @@ METHOD copy_template_structure.
         ls_wbs   TYPE ztb_a2r_wbsitem,
         lv_pspnr TYPE ps_pspnr.
 
-  " Get project internal number from template
+  " Get project internal number from template PSPID
   SELECT SINGLE pspnr FROM projs
     INTO lv_pspnr
     WHERE pspid = iv_pspid.
 
   IF sy-subrc <> 0.
+    " Fallback to PROJ
     SELECT SINGLE pspnr FROM proj
       INTO lv_pspnr
       WHERE pspid = iv_pspid.
   ENDIF.
 
   IF sy-subrc = 0.
-    " Get all WBS elements
+    " Get all WBS elements using PRPSS
     SELECT * FROM prpss
       INTO TABLE lt_prpss
       WHERE psphi = lv_pspnr
@@ -723,11 +248,13 @@ METHOD copy_template_structure.
         ls_wbs-stufe = ls_prpss-stufe.
         ls_wbs-posid = ls_prpss-posid.
         ls_wbs-post1 = ls_prpss-post1.
-        ls_wbs-posnr = ls_prpss-pspnr.
-        ls_wbs-kostl = iv_kostl.
+        ls_wbs-posnr = ls_prpss-pspnr.    " PSPNR = internal WBS number
+        ls_wbs-kostl = iv_kostl.          " Inherit from header
         ls_wbs-imprf = ls_prpss-imprf.
         ls_wbs-prart = ls_prpss-prart.
-        ls_wbs-bukrs = ls_prpss-pbukr.    " ★ Get Company Code from PRPSS-PBUKR
+        
+        " ★★★ FIX: Get Company Code from template WBS (PRPSS-PBUKR) ★★★
+        ls_wbs-bukrs = ls_prpss-pbukr.    " PBUKR = Company Code in WBS
 
         APPEND ls_wbs TO ct_wbs_items.
       ENDLOOP.
@@ -735,6 +262,228 @@ METHOD copy_template_structure.
   ENDIF.
 
 ENDMETHOD.
+
+
+
+
+
+FORM load_template_to_wbs_items USING iv_pspid TYPE ps_pspid
+                                       iv_kostl TYPE kostl.
+
+  DATA: lv_pspnr_templ TYPE ps_pspnr,
+        lt_prpss_all   TYPE TABLE OF prpss,
+        lt_prpss_level TYPE TABLE OF prpss,
+        ls_prpss       TYPE prpss,
+        lt_pspnr_list  TYPE TABLE OF ps_pspnr,
+        lv_level       TYPE i,
+        lv_max_levels  TYPE i VALUE 10.
+
+  FIELD-SYMBOLS: <fs_prpss> TYPE prpss.
+
+  REFRESH gt_wbs_items.
+
+  " Get template pspnr
+  SELECT SINGLE pspnr FROM projs
+    INTO lv_pspnr_templ
+    WHERE pspid = iv_pspid.
+
+  IF sy-subrc <> 0.
+    SELECT SINGLE pspnr FROM proj
+      INTO lv_pspnr_templ
+      WHERE pspid = iv_pspid.
+  ENDIF.
+
+  CHECK sy-subrc = 0.
+
+  " Get all WBS elements recursively
+  SELECT * FROM prpss
+    INTO TABLE lt_prpss_all
+    WHERE psphi = lv_pspnr_templ
+    ORDER BY stufe posid.
+
+  CHECK sy-subrc = 0.
+
+  " Recursive fetch for children
+  lv_level = 1.
+  WHILE lv_level < lv_max_levels.
+
+    CLEAR lt_pspnr_list.
+    LOOP AT lt_prpss_all ASSIGNING <fs_prpss>.
+      APPEND <fs_prpss>-pspnr TO lt_pspnr_list.
+    ENDLOOP.
+
+    IF lt_pspnr_list IS INITIAL.
+      EXIT.
+    ENDIF.
+
+    CLEAR lt_prpss_level.
+    SELECT * FROM prpss
+      INTO TABLE lt_prpss_level
+      FOR ALL ENTRIES IN lt_pspnr_list
+      WHERE psphi = lt_pspnr_list-table_line.
+
+    IF sy-subrc <> 0.
+      EXIT.
+    ENDIF.
+
+    APPEND LINES OF lt_prpss_level TO lt_prpss_all.
+    lv_level = lv_level + 1.
+
+  ENDWHILE.
+
+  SORT lt_prpss_all BY stufe posid.
+
+  " Convert prpss to wbs items structure
+  LOOP AT lt_prpss_all INTO ls_prpss.
+    CLEAR gs_wbs_item.
+
+    " Field mappings
+    gs_wbs_item-stufe = ls_prpss-stufe.
+    gs_wbs_item-posid = ls_prpss-posid.
+    gs_wbs_item-post1 = ls_prpss-post1.
+    gs_wbs_item-posnr = ls_prpss-pspnr.        " Internal number
+
+    " ★★★ FIX: Get Company Code from template (PRPSS-PBUKR) ★★★
+    gs_wbs_item-bukrs = ls_prpss-pbukr.        " Company Code from template WBS
+    
+    gs_wbs_item-kostl = iv_kostl.              " Cost Center from header
+    gs_wbs_item-werks = gv_werks.              " Plant from header (IMPR)
+
+    " Template properties
+    gs_wbs_item-imprf = ls_prpss-imprf.
+    gs_wbs_item-prart = ls_prpss-prart.
+
+    " Initialize budget fields
+    gs_wbs_item-wert2 = 0.                     " Budget - user will fill
+    gs_wbs_item-zbudget_check = space.
+
+    APPEND gs_wbs_item TO gt_wbs_items.
+
+  ENDLOOP.
+
+ENDFORM.
+
+
+
+
+FORM get_im_data USING iv_posnr TYPE im_posnr.
+
+  DATA: ls_impr TYPE impr.
+
+  " Validate posnr exists and get data
+  SELECT SINGLE * FROM impr
+    INTO ls_impr
+    WHERE posnr = iv_posnr.
+
+  IF sy-subrc = 0.
+
+    " FDS Table 4.1 Row 5: Get IM Program (PRNAM)
+    p_prnam = ls_impr-prnam.
+
+    " FDS Table 4.1 Row 6: Get Approval Year (GJAHR)
+    p_gjahr = ls_impr-gjahr.
+
+    " FDS Table 4.1 Row 10: Get Profit Center (PRCTR)
+    p_prctr = ls_impr-prctr.
+
+    " FDS Table 4.1 Row 11: Get Cost Center (KOSTL)
+    p_kostl = ls_impr-kostl.
+
+    " ★★★ CHANGE: Store BUKRS for validation ONLY, not for WBS ★★★
+    " WBS BUKRS will come from template (PRPSS-PBUKR)
+    gv_bukrs = ls_impr-bukrs.        " Used for validation/approver matrix
+    gv_werks = ls_impr-werks.        " Plant
+    gv_izwek = ls_impr-izwek.        " Investment Reason
+    gv_usr008 = ls_impr-usr08.       " CAR Approval Date
+
+    " Get Project Profile and Template from config
+    PERFORM get_profile_template USING ls_impr-izwek
+                                 CHANGING p_profl p_pspid.
+
+    " Check GE Ariba flag
+    PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
+
+    " Set finish date for lumpsum
+    IF ls_impr-izwek = 'LS'.
+      p_plsez = sy-datum.
+      p_plsez+4(4) = '1231'.
+    ENDIF.
+
+  ELSE.
+    MESSAGE e002 WITH iv_posnr.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+
+FORM prepare_screen2.
+
+  " Get additional IM data (for validation and header only)
+  PERFORM get_additional_im_data USING p_posnr.
+
+  " ★★★ IMPORTANT: Copy template structure FIRST ★★★
+  " This will populate BUKRS from PRPSS-PBUKR
+  CALL METHOD go_builder->copy_template_structure
+    EXPORTING
+      iv_pspid     = p_pspid
+      iv_kostl     = p_kostl
+    CHANGING
+      ct_wbs_items = gt_wbs_items.
+
+  " Alternative: Use the form instead
+  " PERFORM load_template_to_wbs_items USING p_pspid p_kostl.
+
+  " Convert to display format
+  PERFORM convert_to_display.
+
+  " Set default values
+  PERFORM set_wbs_default_values.
+
+  " Populate header (BUKRS in header still comes from IMPR for validation)
+  PERFORM populate_header_structure.
+
+ENDFORM.
+
+
+
+
+
+FORM populate_header_structure.
+
+  CLEAR gs_header.
+
+  " IM Data
+  gs_header-posnr = p_posnr.
+  gs_header-prnam = p_prnam.
+  gs_header-post1 = p_post1.
+  gs_header-vernr = p_verna.
+  gs_header-plsez = p_plsez.
+  gs_header-erdat = sy-datum.
+
+  " ★★★ IMPORTANT: Header BUKRS vs WBS BUKRS ★★★
+  " Header BUKRS: From IMPR (for approver matrix and validation)
+  gs_header-bukrs = gv_bukrs.        " IMPR-BUKRS
+  
+  " ★★★ NOTE: Individual WBS items may have DIFFERENT BUKRS ★★★
+  " Each WBS item's BUKRS comes from PRPSS-PBUKR (template)
+  " This allows multi-company projects if needed
+
+  gs_header-werks = gv_werks.
+  gs_header-prctr = p_prctr.
+  gs_header-kostl = p_kostl.
+  gs_header-izwek = gv_izwek.
+  gs_header-profl = p_profl.
+  gs_header-zunifier_proj = p_usr10.
+  gs_header-usr008 = gv_usr008.
+  gs_header-ernam = sy-uname.
+  gs_header-z_reqtype = gv_request_type.
+  gs_header-z_remarks = gv_z_remarks.
+
+ENDFORM.
+
 
 
 
