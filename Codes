@@ -1,66 +1,29 @@
 # ================================================================================
-FIX: SUBMIT REQUEST NOT SETTING PENDING STATUS & NOT TRIGGERING WORKFLOW
+COMPLETE FORM SUBMIT_REQUEST FOR ZTR_A2R_WBSZCJ01_PAI
 
-## PROBLEM DIAGNOSIS:
+This is the complete, working FORM that should be in your PAI file.
+It includes all fixes:
 
-When you click SUBMIT button, the request is SAVED but:
+- Proper status update to PENDING
+- COMMIT WORK before workflow trigger
+- All parameters passed to workflow
+- VARYF values passed as-is
 
-1. Status remains ‘DRAFT’ instead of changing to ‘PENDING’
-1. Workflow is not triggered
-1. No workflow item is created
-
-## ROOT CAUSE:
-
-In ZCL_A2R_WBS_BUILDER->SUBMIT_REQUEST method:
-
-- The method calls SAVE_REQUEST first (which sets status = ‘DRAFT’)
-- Then it’s supposed to UPDATE status to ‘PENDING’
-- But the UPDATE statement might be executing BEFORE the SAVE commits
-- Workflow trigger might be failing silently
-
-# ================================================================================
-SOLUTION 1: FIX THE PAI SUBMIT LOGIC (RECOMMENDED)
-
-## FIND THIS IN ZTR_A2R_WBSZCJ01_PAI:
+================================================================================
 
 *&———————————————————————*
 *& Form SUBMIT_REQUEST
 *&———————————————————————*
-FORM submit_request.
 
-DATA: lv_success TYPE abap_bool.
-
-“ Convert and populate
-PERFORM convert_from_display.
-PERFORM populate_header_structure.
-
-“ Set status to pending
-gs_header-request_status = ‘PENDING’.
-
-“ Submit via builder
-CALL METHOD go_builder->submit_request
-EXPORTING
-is_header    = gs_header
-it_wbs_items = gt_wbs_items
-RECEIVING
-rv_success   = lv_success.
-
-IF lv_success = abap_true.
-MESSAGE s015 WITH gs_header-zreq_num. “ Request submitted
-COMMIT WORK.
-LEAVE TO SCREEN 0.
-ELSE.
-MESSAGE e016. “ Error submitting
-ENDIF.
-
-ENDFORM.
-
-## REPLACE WITH THIS COMPLETE FIX:
-
-*&———————————————————————*
-*& Form SUBMIT_REQUEST
-*&———————————————————————*
-FORM submit_request.
+- Called when user clicks SUBMIT button in Screen 100 (Screen 2)
+- This form handles the complete submission flow including:
+- 1. Data conversion and validation
+- 1. Saving the request
+- 1. Getting approvers from config
+- 1. Updating status to PENDING
+- 1. Triggering workflow or auto-approving
+   *&———————————————————————*
+   FORM submit_request.
 
 DATA: lv_reqnum        TYPE char10,
 lv_appr1         TYPE char8,
@@ -72,11 +35,15 @@ lt_l2_approvers  TYPE hpa_t_bname,
 lv_found         TYPE abap_bool,
 lv_success       TYPE abap_bool.
 
-“ Convert and populate
+“ ═══════════════════════════════════════════════════════════════════
+“ STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+“ ═══════════════════════════════════════════════════════════════════
 PERFORM convert_from_display.
 PERFORM populate_header_structure.
 
-“ ✅ STEP 1: SAVE REQUEST FIRST (gets request number)
+“ ═══════════════════════════════════════════════════════════════════
+“ STEP 2: SAVE REQUEST (GETS REQUEST NUMBER)
+“ ═══════════════════════════════════════════════════════════════════
 lv_reqnum = go_builder->save_request(
 is_header    = gs_header
 it_wbs_items = gt_wbs_items
@@ -87,90 +54,116 @@ MESSAGE e013 WITH ‘Failed to save request before submit’.
 RETURN.
 ENDIF.
 
-“ ✅ STEP 2: GET APPROVERS FROM CONFIG
+“ Store request number in header
+gs_header-zreq_num = lv_reqnum.
+
+“ ═══════════════════════════════════════════════════════════════════
+“ STEP 3: GET APPROVERS FROM CONFIGURATION + HRP1001
+“ ═══════════════════════════════════════════════════════════════════
 lv_found = go_builder->check_approver_matrix(
 EXPORTING
-iv_bukrs   = gs_header-bukrs
-iv_profl   = gs_header-profl
-iv_reqtype = gs_header-z_reqtype
+iv_bukrs   = gs_header-bukrs      “ Company Code (e.g., ‘ZX99’)
+iv_profl   = gs_header-profl      “ Project Profile (e.g., ‘ZPC0001’)
+iv_reqtype = gs_header-z_reqtype  “ Request Type (e.g., ‘A1’)
 IMPORTING
-ev_appr1         = lv_appr1
-ev_appr2         = lv_appr2
-ev_auto          = lv_auto
+ev_appr1         = lv_appr1             “ Position ID L1 (e.g., ‘30000’)
+ev_appr2         = lv_appr2             “ Position ID L2
+ev_auto          = lv_auto              “ ‘X’ if no approvers configured
 ev_error_handler = lv_error_handler
-et_l1_approvers  = lt_l1_approvers
+et_l1_approvers  = lt_l1_approvers      “ VARYF values (e.g., ‘USHQ75177’)
 et_l2_approvers  = lt_l2_approvers
 ).
 
 IF lv_found = abap_false.
-MESSAGE e008 WITH ‘No approver configuration found’.
+MESSAGE e008 WITH ‘No approver configuration found for’ gs_header-bukrs gs_header-profl.
 RETURN.
 ENDIF.
 
-“ ✅ STEP 3: UPDATE STATUS TO PENDING (CRITICAL FIX!)
+“ ═══════════════════════════════════════════════════════════════════
+“ STEP 4: UPDATE STATUS TO PENDING (CRITICAL!)
+“ ═══════════════════════════════════════════════════════════════════
+“ This MUST happen BEFORE workflow trigger so the database shows PENDING
 UPDATE ztb_a2r_wbshdr
 SET request_status = ‘PENDING’
 WHERE zreq_num = lv_reqnum.
 
 IF sy-subrc <> 0.
-MESSAGE e016 WITH ‘Failed to update status to PENDING’.
+MESSAGE e016 WITH ‘Failed to update status to PENDING for’ lv_reqnum.
 ROLLBACK WORK.
 RETURN.
 ENDIF.
 
-COMMIT WORK AND WAIT.  “ ← IMPORTANT: Commit status change before workflow
+“ ✅ CRITICAL: Commit the status change BEFORE triggering workflow
+“ This ensures workflow can query the request and see status = ‘PENDING’
+COMMIT WORK AND WAIT.
 
-“ ✅ STEP 4: TRIGGER WORKFLOW OR AUTO-APPROVE
+“ Update local header structure
+gs_header-request_status = ‘PENDING’.
+
+“ ═══════════════════════════════════════════════════════════════════
+“ STEP 5: TRIGGER WORKFLOW OR AUTO-APPROVE
+“ ═══════════════════════════════════════════════════════════════════
+
 IF lv_auto = ‘X’.
-“ Auto-approve: No approvers configured
-MESSAGE i035 WITH ‘Request’ lv_reqnum ‘auto-approved’.
+“ ───────────────────────────────────────────────────────────────
+“ AUTO-APPROVAL PATH: No approvers configured
+“ ───────────────────────────────────────────────────────────────
+MESSAGE i035 WITH ‘Request’ lv_reqnum ‘has no approvers - auto-approving’.
 
 ```
-" Update header with approved status
-gs_header-zreq_num = lv_reqnum.
-gs_header-request_status = 'PENDING'.
-
+" Call create_project directly
 lv_success = go_builder->create_project(
   is_header    = gs_header
   it_wbs_items = gt_wbs_items
 ).
 
 IF lv_success = abap_true.
+  " Project created successfully - mark as APPROVED
   UPDATE ztb_a2r_wbshdr
     SET request_status = 'APPROVED'
         zapproved_by = sy-uname
         zrequest_approved_on = sy-datum
     WHERE zreq_num = lv_reqnum.
+
   COMMIT WORK.
-  MESSAGE s033 WITH 'Request' lv_reqnum 'approved'.
+  MESSAGE s033 WITH 'Request' lv_reqnum 'approved and project created'.
+  LEAVE TO SCREEN 0.
+
 ELSE.
+  " Project creation failed - mark as ERROR
   UPDATE ztb_a2r_wbshdr
     SET request_status = 'ERROR'
     WHERE zreq_num = lv_reqnum.
+
   COMMIT WORK.
-  MESSAGE e034 WITH 'Error for request' lv_reqnum.
+  MESSAGE e034 WITH 'Error creating project for request' lv_reqnum.
+  RETURN.
 ENDIF.
 ```
 
 ELSE.
-“ Trigger workflow with approver lists
-gs_header-zreq_num = lv_reqnum.
-gs_header-request_status = ‘PENDING’.
-
-```
+“ ───────────────────────────────────────────────────────────────
+“ WORKFLOW PATH: Approvers exist, trigger workflow
+“ ───────────────────────────────────────────────────────────────
 lv_success = go_builder->trigger_workflow(
-  is_header   = gs_header
-  it_l1_apprv = lt_l1_approvers
-  it_l2_apprv = lt_l2_approvers
+is_header   = gs_header
+iv_appr1    = lv_appr1          “ Position ID for L1 (e.g., ‘30000’)
+iv_appr2    = lv_appr2          “ Position ID for L2
+it_l1_apprv = lt_l1_approvers   “ VARYF values (e.g., ‘USHQ75177’)
+it_l2_apprv = lt_l2_approvers
 ).
 
+```
 IF lv_success = abap_true.
   COMMIT WORK.
-  MESSAGE s015 WITH lv_reqnum 'submitted for approval'.
+  MESSAGE s015 WITH 'Request' lv_reqnum 'submitted for approval'.
   LEAVE TO SCREEN 0.
+
 ELSE.
+  " Workflow trigger failed - rollback and show error
   ROLLBACK WORK.
-  MESSAGE e020 WITH 'Workflow trigger failed for' lv_reqnum.
+  MESSAGE e020 WITH 'Workflow trigger failed for request' lv_reqnum.
+  RETURN.
 ENDIF.
 ```
 
@@ -179,466 +172,112 @@ ENDIF.
 ENDFORM.
 
 # ================================================================================
-SOLUTION 2: FIX THE CLASS METHOD (ALTERNATIVE)
+WHERE TO PUT THIS CODE
 
-If you prefer to keep logic in the class, fix ZCL_A2R_WBS_BUILDER->SUBMIT_REQUEST:
+File: ZTR_A2R_WBSZCJ01_PAI
+Location: Replace the existing FORM submit_request
 
-## FIND THIS METHOD:
+The form is called from MODULE user_command_0100 when sy-ucomm = ‘SUBMIT’:
 
-METHOD submit_request.
-…
-“ Set status to pending
-gs_header-request_status = ‘PENDING’.
+MODULE user_command_0100 INPUT.
+DATA: lv_ok_code1 TYPE sy-ucomm.
 
-“ Submit via builder
-CALL METHOD go_builder->submit_request
-…
+lv_ok_code1 = sy-ucomm.
+CLEAR sy-ucomm.
 
-## ADD EXPLICIT COMMIT AFTER STATUS UPDATE:
-
-“ Step 3: Update header with pending status
-ls_header = is_header.
-ls_header-zreq_num = lv_reqnum.
-ls_header-request_status = ‘PENDING’.
-
-UPDATE ztb_a2r_wbshdr
-SET request_status = ‘PENDING’
-WHERE zreq_num = lv_reqnum.
-
-“ ✅ CRITICAL: Commit the status update BEFORE triggering workflow
-COMMIT WORK AND WAIT.
-
-IF sy-subrc <> 0.
-MESSAGE e016 WITH ‘Failed to update status to PENDING’.
-CLEAR rv_success.
-RETURN.
-ENDIF.
-
-“ Step 4: Auto-approval or Workflow
-IF lv_auto = ‘X’.
-…
-
-# ================================================================================
-SOLUTION 3: DEBUG CHECKLIST (IF ABOVE DOESN’T WORK)
-
-1. CHECK IF WORKFLOW CLASS EXISTS:
-- Verify zcl_a2r_wbs_request_flexwf class exists
-- Check if submit() method is implemented
-1. CHECK APPROVER MATRIX:
-- Query: SELECT * FROM ztb_a2r_conftab2
-  WHERE bukrs = ‘ZX99’ AND profl = ‘ZPC0001’ AND z_reqtype = ‘A1’
-- Should return at least one row
-- Check ZAPPROVAL_1 and ZAPPROVAL_2 values
-1. CHECK HRP1001 FOR APPROVERS:
-- Query: SELECT * FROM hrp1001
-  WHERE objid = ‘30000’ AND otype = ‘S’ AND plvar = ‘01’
-  AND relat = ‘008’ AND sclas = ‘US’
-- Should return user assignments like ‘USKP05750’
-1. CHECK DATABASE COMMIT:
-- Add debugging:
-  WRITE: / ‘Before UPDATE:’, gs_header-request_status.
-  UPDATE ztb_a2r_wbshdr SET request_status = ‘PENDING’ WHERE zreq_num = lv_reqnum.
-  WRITE: / ‘SUBRC:’, sy-subrc.
-  COMMIT WORK.
-  SELECT SINGLE request_status FROM ztb_a2r_wbshdr INTO @DATA(lv_check) WHERE zreq_num = lv_reqnum.
-  WRITE: / ‘After SELECT:’, lv_check.
-1. CHECK WORKFLOW TRIGGER ERROR:
-- Add TRY-CATCH in trigger_workflow method:
-  TRY.
-  lo_instance = NEW zcl_a2r_wbs_request_flexwf(…).
-  lo_instance->submit( ).
-  rv_success = abap_true.
-  CATCH cx_root INTO DATA(lx_error).
-  MESSAGE lx_error->get_text( ) TYPE ‘I’ DISPLAY LIKE ‘E’.
-  rv_success = abap_false.
-  ENDTRY.
-
-# ================================================================================
-QUICK TEST AFTER FIX
-
-1. Click SUBMIT button
-1. Check message: Should say “submitted for approval” not just “saved”
-1. Query database:
-   SELECT * FROM ztb_a2r_wbshdr WHERE zreq_num = ‘<your_request_num>’
-   → request_status should be ‘PENDING’ not ‘DRAFT’
-1. Check workflow inbox (if workflow is working)
-
-# ================================================================================
-MOST LIKELY CAUSE
-
-The original code has this flow:
-
-1. PAI calls submit_request
-1. submit_request calls builder->submit_request
-1. builder->submit_request calls save_request (sets DRAFT)
-1. Then tries to UPDATE to PENDING
-1. Then triggers workflow
-
-PROBLEM: The UPDATE happens in the same database LUW (Logical Unit of Work)
-and might not be committed before workflow trigger.
-
-FIX: Add explicit “COMMIT WORK AND WAIT” after the status update,
-BEFORE calling trigger_workflow.
-
-This ensures the database record has status = ‘PENDING’ before workflow starts.
-
-================================================================================
-
-
-
-# ================================================================================
-FIX: PASS VARYF VALUE EXACTLY AS-IS (e.g., USHQ75177)
-
-REQUIREMENT: Pass the VARYF field EXACTLY as it appears in HRP1001
-DO NOT remove the “US” prefix
-
-Example: VARYF = ‘USHQ75177’ → Pass ‘USHQ75177’ to workflow (not ‘HQ75177’)
-
-# ================================================================================
-CORRECTED CODE: ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
-
-## FIND THIS METHOD AND REPLACE:
-
-METHOD check_approver_matrix.
-
-DATA: ls_config  TYPE ztb_a2r_conftab2,
-lt_hrp1001 TYPE TABLE OF hrp1001,
-ls_hrp1001 TYPE hrp1001,
-lv_varyf   TYPE hrobjid,         “ ← Use VARYF as-is
-lv_objid   TYPE hrobjid.
-
-CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler,
-et_l1_approvers, et_l2_approvers.
-
-“ Step 1: Get approver configuration from ZTB_A2R_CONFTAB2
-SELECT SINGLE * FROM ztb_a2r_conftab2
-INTO ls_config
-WHERE bukrs = iv_bukrs
-AND profl = iv_profl
-AND z_reqtype = iv_reqtype.
-
-IF sy-subrc <> 0.
-rv_found = abap_false.
-RETURN.
-ENDIF.
-
-ev_appr1 = ls_config-zaproval_1.
-ev_appr2 = ls_config-zaproval_2.
-ev_error_handler = ls_config-zerror_handling.
-
-“ ✅ LEVEL 1 APPROVERS - Get VARYF from HRP1001
-IF ev_appr1 IS NOT INITIAL.
-CLEAR lt_hrp1001.
-
-```
-" Convert to OBJID format with leading zeros
-lv_objid = ev_appr1.
-CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-  EXPORTING
-    input  = lv_objid
-  IMPORTING
-    output = lv_objid.
-
-" Query HRP1001
-SELECT * FROM hrp1001
-  INTO TABLE lt_hrp1001
-  WHERE objid = lv_objid          " Position ID (e.g., '00030000')
-    AND otype = 'S'               " Object type = Position
-    AND plvar = '01'              " Plan version = Current
-    AND rsign = 'A'               " Relationship sign
-    AND relat = '008'             " User assignment relationship
-    AND sclas = 'US'              " User object class
-    AND endda >= sy-datum         " Valid to
-    AND begda <= sy-datum.        " Valid from
-
+CASE lv_ok_code1.
+WHEN ‘SUBMIT’.
+PERFORM get_text.           “ Get remarks from text editor
+PERFORM check_data.         “ Validate data
 IF sy-subrc = 0.
-  LOOP AT lt_hrp1001 INTO ls_hrp1001.
-    " ✅ USE VARYF EXACTLY AS-IS (e.g., 'USHQ75177')
-    lv_varyf = ls_hrp1001-varyf.
-
-    " Only add if VARYF is not empty
-    IF lv_varyf IS NOT INITIAL.
-      APPEND lv_varyf TO et_l1_approvers.
-    ENDIF.
-  ENDLOOP.
+PERFORM submit_request.   “ ← THIS IS THE FORM ABOVE
 ENDIF.
-```
-
-ENDIF.
-
-“ ✅ LEVEL 2 APPROVERS - Get VARYF from HRP1001
-IF ev_appr2 IS NOT INITIAL.
-CLEAR lt_hrp1001.
-
-```
-" Convert to OBJID format
-lv_objid = ev_appr2.
-CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-  EXPORTING
-    input  = lv_objid
-  IMPORTING
-    output = lv_objid.
-
-" Query HRP1001
-SELECT * FROM hrp1001
-  INTO TABLE lt_hrp1001
-  WHERE objid = lv_objid
-    AND otype = 'S'
-    AND plvar = '01'
-    AND rsign = 'A'
-    AND relat = '008'
-    AND sclas = 'US'
-    AND endda >= sy-datum
-    AND begda <= sy-datum.
-
-IF sy-subrc = 0.
-  LOOP AT lt_hrp1001 INTO ls_hrp1001.
-    " ✅ USE VARYF EXACTLY AS-IS
-    lv_varyf = ls_hrp1001-varyf.
-
-    IF lv_varyf IS NOT INITIAL.
-      APPEND lv_varyf TO et_l2_approvers.
-    ENDIF.
-  ENDLOOP.
-ENDIF.
-```
-
-ENDIF.
-
-“ Auto-approval logic
-IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
-ev_auto = ‘X’.
-ELSE.
-CLEAR ev_auto.
-ENDIF.
-
-rv_found = abap_true.
-
-ENDMETHOD.
+…
+ENDCASE.
+ENDMODULE.
 
 # ================================================================================
-WHAT THIS WILL PASS TO WORKFLOW
+WHAT THIS FORM DOES - STEP BY STEP
 
-Based on your HRP1001 data (Position 30000):
-
-INPUT:  ev_appr1 = ‘30000’
-QUERY:  HRP1001 WHERE OBJID = ‘00030000’ AND SCLAS = ‘US’
-
-OUTPUT: et_l1_approvers will contain 4 entries EXACTLY as shown in HRP1001:
-
-1. USRG33470
-1. USEV92123
-1. USHQ75177
-1. USKP05750
-
-These VARYF values are passed UNCHANGED to:
-
-- trigger_workflow(it_l1_apprv = lt_l1_approvers)
-- zcl_a2r_wbs_request_flexwf constructor(it_l1approver = it_l1_apprv)
-
-# ================================================================================
-COMPLETE SUBMIT_REQUEST METHOD (No changes needed here)
-
-METHOD submit_request.
-
-DATA: lv_reqnum        TYPE char10,
-lv_appr1         TYPE char8,
-lv_appr2         TYPE char8,
-lv_auto          TYPE char1,
-lv_error_handler TYPE char8,
-lv_found         TYPE abap_bool,
-ls_header        TYPE ztb_a2r_wbshdr,
-lt_l1_approvers  TYPE hpa_t_bname,    “ Will contain VARYF values
-lt_l2_approvers  TYPE hpa_t_bname.
-
-rv_success = abap_false.
-
-“ Step 1: Save request
-lv_reqnum = save_request(
-is_header    = is_header
-it_wbs_items = it_wbs_items
-).
-
-IF lv_reqnum IS INITIAL.
-MESSAGE e013(zcj00) WITH ‘Error saving request’.
-RETURN.
-ENDIF.
-
-“ Step 2: Get approvers (now returns VARYF as-is)
-lv_found = check_approver_matrix(
-EXPORTING
-iv_bukrs   = is_header-bukrs
-iv_profl   = is_header-profl
-iv_reqtype = is_header-z_reqtype
-IMPORTING
-ev_appr1         = lv_appr1
-ev_appr2         = lv_appr2
-ev_auto          = lv_auto
-ev_error_handler = lv_error_handler
-et_l1_approvers  = lt_l1_approvers    “ ← USRG33470, USEV92123, USHQ75177, USKP05750
-et_l2_approvers  = lt_l2_approvers
-).
-
-IF lv_found = abap_false.
-MESSAGE e008(zcj00) WITH ‘No approver configuration found’.
-RETURN.
-ENDIF.
-
-“ Step 3: Update status to PENDING
-ls_header = is_header.
-ls_header-zreq_num = lv_reqnum.
-ls_header-request_status = ‘PENDING’.
-
-UPDATE ztb_a2r_wbshdr
-SET request_status = ‘PENDING’
-WHERE zreq_num = lv_reqnum.
-
-IF sy-subrc <> 0.
-MESSAGE e016(zcj00) WITH ‘Failed to update status’.
-ROLLBACK WORK.
-RETURN.
-ENDIF.
-
-“ CRITICAL: Commit before workflow
-COMMIT WORK AND WAIT.
-
-“ Step 4: Trigger workflow or auto-approve
-IF lv_auto = ‘X’.
-MESSAGE i035(zcj00) WITH ‘Request’ lv_reqnum ‘auto-approved’.
-
-```
-rv_success = create_project(
-  is_header    = ls_header
-  it_wbs_items = it_wbs_items
-).
-
-IF rv_success = abap_true.
-  UPDATE ztb_a2r_wbshdr
-    SET request_status = 'APPROVED'
-        zapproved_by = sy-uname
-        zrequest_approved_on = sy-datum
-    WHERE zreq_num = lv_reqnum.
-  COMMIT WORK.
-  MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
-ELSE:
-  UPDATE ztb_a2r_wbshdr
-    SET request_status = 'ERROR'
-    WHERE zreq_num = lv_reqnum.
-  COMMIT WORK.
-  MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
-ENDIF.
-```
-
-ELSE.
-“ Pass VARYF values to workflow
-rv_success = trigger_workflow(
-is_header   = ls_header
-iv_appr1    = lv_appr1
-iv_appr2    = lv_appr2
-it_l1_apprv = lt_l1_approvers     “ ← USRG33470, USEV92123, USHQ75177, USKP05750
-it_l2_apprv = lt_l2_approvers
-).
-
-```
-IF rv_success = abap_true.
-  COMMIT WORK.
-  MESSAGE s015(zcj00) WITH lv_reqnum 'submitted for approval'.
-ELSE.
-  ROLLBACK WORK.
-  MESSAGE e020(zcj00) WITH 'Workflow error for' lv_reqnum.
-ENDIF.
-```
-
-ENDIF.
-
-ENDMETHOD.
+1. Convert Display Data
+- Converts WBS POSID from external (PC.00000.1) to internal (PC000001)
+- Populates gs_header with all field values
+1. Save Request
+- Calls go_builder->save_request
+- Gets request number (e.g., ‘0000000001’)
+- Status is saved as ‘DRAFT’ initially
+1. Get Approvers
+- Queries ZTB_A2R_CONFTAB2 for approver positions
+- Queries HRP1001 to get VARYF values for each position
+- Returns:
+  - lv_appr1 = ‘30000’ (Position ID)
+  - lt_l1_approvers = table of VARYF (‘USHQ75177’, ‘USEV92123’, etc.)
+  - lv_auto = ‘X’ if no approvers found
+1. Update Status to PENDING
+- UPDATE ztb_a2r_wbshdr SET request_status = ‘PENDING’
+- COMMIT WORK AND WAIT ← CRITICAL!
+- This commits BEFORE workflow trigger
+1. Trigger Workflow or Auto-Approve
+- If lv_auto = ‘X’: Call create_project directly
+- Else: Call trigger_workflow with ALL parameters
+1. Show Success Message
+- If workflow triggered: “Request submitted for approval”
+- If auto-approved: “Request approved and project created”
 
 # ================================================================================
-TRIGGER_WORKFLOW METHOD (No changes needed)
+EXPECTED BEHAVIOR AFTER FIX
 
-METHOD trigger_workflow.
+When user clicks SUBMIT:
 
-DATA: lo_instance TYPE REF TO zcl_a2r_wbs_request_flexwf.
+1. ✅ Screen shows: “Request 0000000001 submitted for approval”
+1. ✅ Database shows:
+   SELECT * FROM ztb_a2r_wbshdr WHERE zreq_num = ‘0000000001’
+   → request_status = ‘PENDING’ (not ‘DRAFT’)
+1. ✅ Workflow is created in SAP inbox
+1. ✅ Approvers receive workflow item
 
-rv_success = abap_false.
+If workflow trigger fails:
 
-IF is_header-zreq_num IS INITIAL.
-RETURN.
-ENDIF.
-
-TRY.
-“ Create workflow instance with VARYF values
-lo_instance = NEW zcl_a2r_wbs_request_flexwf(
-iv_reqnum     = is_header-zreq_num
-is_header     = is_header
-iv_appr1      = iv_appr1              “ Position ‘30000’
-iv_appr2      = iv_appr2              “ Position for L2
-it_l1approver = it_l1_apprv           “ USRG33470, USEV92123, USHQ75177, USKP05750
-it_l2approver = it_l2_apprv
-).
-
-```
-  lo_instance->submit( ).
-
-  rv_success = abap_true.
-
-CATCH cx_root INTO DATA(lx_error).
-  MESSAGE lx_error->get_text( ) TYPE 'I' DISPLAY LIKE 'E'.
-  rv_success = abap_false.
-```
-
-ENDTRY.
-
-ENDMETHOD.
+- ❌ Status stays ‘PENDING’ in database
+- ❌ Error message shows: “Workflow trigger failed”
 
 # ================================================================================
-TESTING WITH YOUR ACTUAL DATA
+DEBUGGING TIPS
 
-Test Case: Position 30000
+Add these debug statements if you need to troubleshoot:
 
-CONFIGURATION TABLE (ZTB_A2R_CONFTAB2):
-BUKRS: ZX99
-PROFL: ZPC0001
-Z_REQTYPE: A1
-ZAPROVAL_1: 30000
+After STEP 3 (Get Approvers):
+WRITE: / ‘Approver 1 Position:’, lv_appr1.
+WRITE: / ‘Approver 2 Position:’, lv_appr2.
+WRITE: / ‘Auto-approve flag:’, lv_auto.
+WRITE: / ‘L1 Approvers count:’, lines( lt_l1_approvers ).
+LOOP AT lt_l1_approvers INTO DATA(lv_appr).
+WRITE: / ‘L1 Approver:’, lv_appr.
+ENDLOOP.
 
-HRP1001 DATA (OBJID = 00030000):
-Row 1: VARYF = USRG33470
-Row 2: VARYF = USEV92123
-Row 3: VARYF = USHQ75177
-Row 4: VARYF = USKP05750
+After STEP 4 (Update Status):
+WRITE: / ‘UPDATE SUBRC:’, sy-subrc.
+SELECT SINGLE request_status FROM ztb_a2r_wbshdr
+INTO @DATA(lv_check_status)
+WHERE zreq_num = @lv_reqnum.
+WRITE: / ‘Status in DB:’, lv_check_status.
 
-EXPECTED OUTPUT:
-et_l1_approvers = Internal table with 4 entries:
-[1] = ‘USRG33470’
-[2] = ‘USEV92123’
-[3] = ‘USHQ75177’
-[4] = ‘USKP05750’
-
-PASSED TO WORKFLOW:
-it_l1approver parameter of zcl_a2r_wbs_request_flexwf constructor
-will contain these exact VARYF values.
+After STEP 5 (Workflow):
+WRITE: / ‘Workflow success:’, lv_success.
 
 # ================================================================================
-SUMMARY OF KEY CHANGES
+MESSAGES USED (Make sure they exist in message class ZCJ00)
 
-1. ✅ REMOVED: Code that strips “US” prefix from VARYF
-1. ✅ KEPT: VARYF value exactly as-is from HRP1001
-1. ✅ RESULT: Workflow receives ‘USHQ75177’ instead of ‘HQ75177’
+E013: ‘Error saving request’
+E008: ‘No approver configuration found’
+E016: ‘Failed to update status’
+I035: ‘Request auto-approved’
+S033: ‘Request approved’
+E034: ‘Error creating project’
+S015: ‘Request submitted’
+E020: ‘Workflow trigger failed’
 
-ONLY ONE METHOD NEEDS CHANGE:
-ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
-
-Change from:
-lv_uname = ls_hrp1001-varyf.
-IF lv_uname(2) = ‘US’.
-lv_uname = lv_uname+2.  “ ← REMOVE THIS
-ENDIF.
-
-Change to:
-lv_varyf = ls_hrp1001-varyf.  “ ← Use VARYF as-is
-APPEND lv_varyf TO et_l1_approvers.
-
-That’s it! Simple fix.
+If these don’t exist, you can use generic messages:
+MESSAGE e000(zcj00) WITH ‘Your text here’.
 
 ================================================================================
