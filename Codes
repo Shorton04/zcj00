@@ -487,3 +487,109 @@ ENDFORM.
 
 
 
+METHOD check_approver_matrix.
+
+  DATA: ls_config  TYPE ztb_a2r_conftab2,
+        lt_hrp1001 TYPE TABLE OF hrp1001,
+        ls_hrp1001 TYPE hrp1001,
+        lv_uname   TYPE xubname.
+
+  CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler, 
+         et_l1_approvers, et_l2_approvers.
+
+  " Get approver configuration from ZTB_A2R_CONFTAB2
+  SELECT SINGLE * FROM ztb_a2r_conftab2
+    INTO ls_config
+    WHERE bukrs = iv_bukrs          " Company Code
+      AND profl = iv_profl          " Project Profile
+      AND z_reqtype = iv_reqtype.   " Request Type
+
+  IF sy-subrc <> 0.
+    rv_found = abap_false.
+    RETURN.
+  ENDIF.
+
+  " Store approver positions and error handler
+  ev_appr1 = ls_config-zaproval_1.          " Level 1 approver position
+  ev_appr2 = ls_config-zaproval_2.          " Level 2 approver position
+  ev_error_handler = ls_config-zerror_handling.
+
+  " ★★★ LEVEL 1 APPROVERS ★★★
+  " Get users assigned to Level 1 approver position from HRP1001
+  IF ev_appr1 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+    
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr1        " Position ID (e.g., 30000)
+        AND otype = 'S'             " Object type = Position
+        AND plvar = '01'            " Plan version = Current
+        AND rsign = 'A'             " Relationship sign = A
+        AND relat = '008'           " Relationship = User assignment
+        AND sclas = 'US'            " Object class = User
+        AND endda >= sy-datum       " Valid to date >= today
+        AND begda <= sy-datum.      " Valid from date <= today
+
+    IF sy-subrc = 0.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        " ★★★ FIX: Use VARYF field which contains 'US' + username ★★★
+        " From image: VARYF = 'USKP05750' (Technical Field Name shown)
+        lv_uname = ls_hrp1001-varyf.
+        
+        " Remove 'US' prefix (first 2 characters)
+        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.  " Extract username: 'USKP05750' → 'KP05750'
+        ENDIF.
+        
+        " Only add if username is not empty
+        IF lv_uname IS NOT INITIAL.
+          APPEND lv_uname TO et_l1_approvers.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  " ★★★ LEVEL 2 APPROVERS ★★★
+  " Get users assigned to Level 2 approver position from HRP1001
+  IF ev_appr2 IS NOT INITIAL.
+    CLEAR lt_hrp1001.
+    
+    SELECT * FROM hrp1001
+      INTO TABLE lt_hrp1001
+      WHERE objid = ev_appr2        " Position ID (e.g., 30001)
+        AND otype = 'S'
+        AND plvar = '01'
+        AND rsign = 'A'
+        AND relat = '008'
+        AND sclas = 'US'
+        AND endda >= sy-datum
+        AND begda <= sy-datum.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_hrp1001 INTO ls_hrp1001.
+        " ★★★ Use VARYF field ★★★
+        lv_uname = ls_hrp1001-varyf.
+        
+        " Remove 'US' prefix
+        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
+          lv_uname = lv_uname+2.
+        ENDIF.
+        
+        IF lv_uname IS NOT INITIAL.
+          APPEND lv_uname TO et_l2_approvers.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  " ★★★ AUTO-APPROVAL LOGIC ★★★
+  " If BOTH approver lists are empty, mark as auto-approval
+  IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+    ev_auto = 'X'.
+  ELSE.
+    CLEAR ev_auto.
+  ENDIF.
+
+  rv_found = abap_true.
+
+ENDMETHOD.
