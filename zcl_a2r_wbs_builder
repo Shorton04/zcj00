@@ -1,103 +1,106 @@
-class ZCL_A2R_WBS_BUILDER definition
-  public
-  final
-  create public .
+CLASS zcl_a2r_wbs_builder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
 
-public section.
+  PUBLIC SECTION.
 
-  methods COPY_TEMPLATE_STRUCTURE
-    importing
-      !IV_PSPID type PS_PSPID
-      !IV_KOSTL type KOSTL
-    changing
-      !CT_WBS_ITEMS type STANDARD TABLE .
-  methods TOTAL_UP_BUDGET
-    changing
-      !CT_WBS_ITEMS type STANDARD TABLE .
-  methods SAVE_REQUEST
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_REQNUM) type CHAR10 .
-  methods SUBMIT_REQUEST
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_PROJECT
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-private section.
+    METHODS copy_template_structure
+      IMPORTING
+        !iv_pspid     TYPE ps_pspid
+        !iv_kostl     TYPE kostl
+      CHANGING
+        !ct_wbs_items TYPE STANDARD TABLE .
+    METHODS total_up_budget
+      CHANGING
+        !ct_wbs_items TYPE STANDARD TABLE .
+    METHODS save_request
+      IMPORTING
+        !is_header       TYPE ztb_a2r_wbshdr
+        !it_wbs_items    TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_reqnum) TYPE char10 .
+    METHODS submit_request
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS create_project
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS check_approver_matrix
+      IMPORTING
+        !iv_bukrs         TYPE bukrs
+        !iv_profl         TYPE profidproj
+        !iv_reqtype       TYPE ztb_a2r_reqtype-z_reqtype
+      EXPORTING
+        !ev_appr1         TYPE char8
+        !ev_appr2         TYPE char8
+        !ev_auto          TYPE char1
+        !ev_error_handler TYPE char8
+        !et_l1_approvers  TYPE hpa_t_bname
+        !et_l2_approvers  TYPE hpa_t_bname
+      RETURNING
+        VALUE(rv_found)   TYPE abap_bool .
 
-  methods GET_NEXT_REQUEST_NUMBER
-    returning
-      value(RV_REQNUM) type CHAR10 .
+  PRIVATE SECTION.
+
+    METHODS get_next_request_number
+      RETURNING
+        VALUE(rv_reqnum) TYPE char10 .
     " NO ZAUTO_APPROVAL parameter - uses blank approver logic
-  methods CHECK_APPROVER_MATRIX
-    importing
-      !IV_BUKRS type BUKRS
-      !IV_PROFL type PROFIDPROJ
-      !IV_REQTYPE type ZTB_A2R_REQTYPE-Z_REQTYPE
-    exporting
-      !EV_APPR1 type CHAR8
-      !EV_APPR2 type CHAR8
-      !EV_AUTO type CHAR1                                          " 'X' if both approvers blank
-      !EV_ERROR_HANDLER type CHAR8
-    returning
-      value(RV_FOUND) type ABAP_BOOL .
-  methods TRIGGER_WORKFLOW
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IV_APPR1 type CHAR8 optional
-      !IV_APPR2 type CHAR8 optional
-      !IT_L1_APPRV type HPA_T_BNAME optional
-      !IT_L2_APPRV type HPA_T_BNAME optional
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_WBS_ELEMENTS
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    exporting
-      !ET_WBS_CREATED type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods ASSIGN_PLAN_VALUES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods DISTRIBUTE_IM_BUDGET
-    importing
-      !IS_HEADER type ZTB_A2R_WBSHDR
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods CREATE_SETTLEMENT_RULES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods ACTIVATE_STATUSES
-    importing
-      !IT_WBS_ITEMS type STANDARD TABLE
-    returning
-      value(RV_SUCCESS) type ABAP_BOOL .
-  methods GET_NEXT_PROJECT_NUMBER
-    importing
-      !IV_PROFL type PROFIDPROJ
-    returning
-      value(RV_PSPID) type PS_PSPID .
-  methods GET_USER_EMAIL
-    importing
-      !IV_UNAME type XUBNAME
-    returning
-      value(RV_EMAIL) type AD_SMTPADR .
+    METHODS trigger_workflow
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !iv_appr1         TYPE char8 OPTIONAL
+        !iv_appr2         TYPE char8 OPTIONAL
+        !it_l1_apprv      TYPE hpa_t_bname OPTIONAL
+        !it_l2_apprv      TYPE hpa_t_bname OPTIONAL
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS create_wbs_elements
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !it_wbs_items     TYPE STANDARD TABLE
+      EXPORTING
+        !et_wbs_created   TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS assign_plan_values
+      IMPORTING
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS distribute_im_budget
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS create_settlement_rules
+      IMPORTING
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS activate_statuses
+      IMPORTING
+        !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS get_next_project_number
+      IMPORTING
+        !iv_profl       TYPE profidproj
+      RETURNING
+        VALUE(rv_pspid) TYPE ps_pspid .
+    METHODS get_user_email
+      IMPORTING
+        !iv_uname       TYPE xubname
+      RETURNING
+        VALUE(rv_email) TYPE ad_smtpadr .
 ENDCLASS.
 
 
@@ -260,7 +263,7 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->CHECK_APPROVER_MATRIX
 * +-------------------------------------------------------------------------------------------------+
 * | [--->] IV_BUKRS                       TYPE        BUKRS
 * | [--->] IV_PROFL                       TYPE        PROFIDPROJ
@@ -269,25 +272,82 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * | [<---] EV_APPR2                       TYPE        CHAR8
 * | [<---] EV_AUTO                        TYPE        CHAR1
 * | [<---] EV_ERROR_HANDLER               TYPE        CHAR8
+* | [<---] ET_L1_APPROVERS                TYPE        HPA_T_BNAME
+* | [<---] ET_L2_APPROVERS                TYPE        HPA_T_BNAME
 * | [<-()] RV_FOUND                       TYPE        ABAP_BOOL
 * +--------------------------------------------------------------------------------------</SIGNATURE>
   METHOD check_approver_matrix.
 
-    DATA: ls_config TYPE ztb_a2r_conftab2.
+    DATA: ls_config  TYPE ztb_a2r_conftab2,
+          lt_hrp1001 TYPE TABLE OF hrp1001,
+          ls_hrp1001 TYPE hrp1001,
+          lv_uname   TYPE xubname.
 
+    CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler, et_l1_approvers, et_l2_approvers.
+
+    " Get approver configuration from config table
     SELECT SINGLE * FROM ztb_a2r_conftab2
       INTO ls_config
-      WHERE bukrs = iv_bukrs
-        AND profl = iv_profl
+      WHERE profl = iv_profl
         AND z_reqtype = iv_reqtype.
 
     IF sy-subrc = 0.
-      ev_appr1 = ls_config-zaproval_1.    " Correct field name
-      ev_appr2 = ls_config-zaproval_2.    " Correct field name
+      ev_appr1 = ls_config-zaproval_1.
+      ev_appr2 = ls_config-zaproval_2.
       ev_error_handler = ls_config-zerror_handling.
 
-      IF ls_config-zaproval_1 IS INITIAL AND
-         ls_config-zaproval_2 IS INITIAL.
+      " ★ Get Level 1 Approvers from HRP1001
+      IF ev_appr1 IS NOT INITIAL.
+        SELECT * FROM hrp1001
+          INTO TABLE lt_hrp1001
+          WHERE objid = ev_appr1
+            AND otype = 'S'           " Position/Org unit
+            AND plvar = '01'          " Plan version
+            AND rsign = 'A'           " A-Relationship
+            AND relat = '008'         " User assignment
+            AND sclas = 'US'          " User class
+            AND endda >= sy-datum     " Valid to date
+            AND begda <= sy-datum.    " Valid from date
+
+        IF sy-subrc = 0.
+          LOOP AT lt_hrp1001 INTO ls_hrp1001.
+            " Remove 'US' prefix if present (SOBID might be 'USEV92123')
+            lv_uname = ls_hrp1001-sobid.
+            IF lv_uname(2) = 'US'.
+              lv_uname = lv_uname+2.  " Remove 'US' prefix
+            ENDIF.
+            APPEND lv_uname TO et_l1_approvers.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+      " ★ Get Level 2 Approvers from HRP1001
+      IF ev_appr2 IS NOT INITIAL.
+        CLEAR lt_hrp1001.
+        SELECT * FROM hrp1001
+          INTO TABLE lt_hrp1001
+          WHERE objid = ev_appr2
+            AND otype = 'S'
+            AND plvar = '01'
+            AND rsign = 'A'
+            AND relat = '008'
+            AND sclas = 'US'
+            AND endda >= sy-datum
+            AND begda <= sy-datum.
+
+        IF sy-subrc = 0.
+          LOOP AT lt_hrp1001 INTO ls_hrp1001.
+            lv_uname = ls_hrp1001-sobid.
+            IF lv_uname(2) = 'US'.
+              lv_uname = lv_uname+2.  " Remove 'US' prefix
+            ENDIF.
+            APPEND lv_uname TO et_l2_approvers.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+      " Check for auto-approval (both approver lists empty)
+      IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
         ev_auto = 'X'.
       ELSE.
         CLEAR ev_auto.
@@ -308,55 +368,55 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * | [--->] IV_KOSTL                       TYPE        KOSTL
 * | [<-->] CT_WBS_ITEMS                   TYPE        STANDARD TABLE
 * +--------------------------------------------------------------------------------------</SIGNATURE>
- METHOD copy_template_structure.
+  METHOD copy_template_structure.
 
-   DATA: lt_prpss TYPE TABLE OF prpss,
-         ls_prpss TYPE prpss,
-         ls_wbs   TYPE ztb_a2r_wbsitem,
-         lv_pspnr TYPE ps_pspnr.
+    DATA: lt_prpss TYPE TABLE OF prpss,
+          ls_prpss TYPE prpss,
+          ls_wbs   TYPE ztb_a2r_wbsitem,
+          lv_pspnr TYPE ps_pspnr.
 
-   " CORRECTED: Get project internal number from template PSPID
-   " Use PROJS table (screenshot 4 shows standard structure)
-   SELECT SINGLE pspnr FROM projs
-   INTO lv_pspnr
-   WHERE pspid = iv_pspid.
+    " CORRECTED: Get project internal number from template PSPID
+    " Use PROJS table (screenshot 4 shows standard structure)
+    SELECT SINGLE pspnr FROM projs
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
 
-   IF sy-subrc <> 0.
-     " Fallback to PROJ
-     SELECT SINGLE pspnr FROM proj
-     INTO lv_pspnr
-     WHERE pspid = iv_pspid.
-   ENDIF.
+    IF sy-subrc <> 0.
+      " Fallback to PROJ
+      SELECT SINGLE pspnr FROM proj
+      INTO lv_pspnr
+      WHERE pspid = iv_pspid.
+    ENDIF.
 
-   IF sy-subrc = 0.
-     " Get all WBS elements using PRPSS (screenshot 5 confirms this)
-     SELECT * FROM prpss
-     INTO TABLE lt_prpss
-     WHERE psphi = lv_pspnr
-     ORDER BY stufe posid.
-
-
-     IF sy-subrc = 0.
-       LOOP AT lt_prpss INTO ls_prpss.
-         CLEAR ls_wbs.
-
-         ls_wbs-stufe = ls_prpss-stufe.
-         ls_wbs-posid = ls_prpss-posid.
-         ls_wbs-post1 = ls_prpss-post1.
-         ls_wbs-posnr = ls_prpss-pspnr.    " PSPNR = internal WBS number
-         ls_wbs-kostl = iv_kostl.          " Inherit from header
-         ls_wbs-imprf = ls_prpss-imprf.
-         ls_wbs-prart = ls_prpss-prart.
-         ls_wbs-bukrs = ls_prpss-pbukr.
-
-         APPEND ls_wbs TO ct_wbs_items.
-       ENDLOOP.
-     ENDIF.
+    IF sy-subrc = 0.
+      " Get all WBS elements using PRPSS (screenshot 5 confirms this)
+      SELECT * FROM prpss
+      INTO TABLE lt_prpss
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
 
 
-   ENDIF.
+      IF sy-subrc = 0.
+        LOOP AT lt_prpss INTO ls_prpss.
+          CLEAR ls_wbs.
 
- ENDMETHOD.
+          ls_wbs-stufe = ls_prpss-stufe.
+          ls_wbs-posid = ls_prpss-posid.
+          ls_wbs-post1 = ls_prpss-post1.
+          ls_wbs-posnr = ls_prpss-pspnr.    " PSPNR = internal WBS number
+          ls_wbs-kostl = iv_kostl.          " Inherit from header
+          ls_wbs-imprf = ls_prpss-imprf.
+          ls_wbs-prart = ls_prpss-prart.
+          ls_wbs-bukrs = ls_prpss-pbukr.
+
+          APPEND ls_wbs TO ct_wbs_items.
+        ENDLOOP.
+      ENDIF.
+
+
+    ENDIF.
+
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -790,49 +850,49 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * +-------------------------------------------------------------------------------------------------+
 * | [<-()] RV_REQNUM                      TYPE        CHAR10
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-METHOD get_next_request_number.
+  METHOD get_next_request_number.
 
-  DATA: lv_request TYPE char10.
+    DATA: lv_request TYPE char10.
 
-  CLEAR rv_reqnum.
-
-  " Get next request number from number range
-  CALL FUNCTION 'NUMBER_GET_NEXT'
-    EXPORTING
-      nr_range_nr             = '01'
-      object                  = 'ZCJ00_REQN'    " Use FDS object name
-      quantity                = '1'
-      toyear                  = '0000'          " Important: same as old system
-    IMPORTING
-      number                  = lv_request
-    EXCEPTIONS
-      interval_not_found      = 1
-      number_range_not_intern = 2
-      object_not_found        = 3
-      quantity_is_0           = 4
-      quantity_is_not_1       = 5
-      interval_overflow       = 6
-      buffer_overflow         = 7
-      OTHERS                  = 8.
-
-  IF sy-subrc = 0.
-    rv_reqnum = lv_request.
-  ELSE.
-    " Enhanced error handling
-    CASE sy-subrc.
-      WHEN 1.
-        MESSAGE 'Number range interval not found' TYPE 'I' DISPLAY LIKE 'E'.
-      WHEN 2.
-        MESSAGE 'Number range is not internal' TYPE 'I' DISPLAY LIKE 'E'.
-      WHEN 3.
-        MESSAGE 'Number range object ZCJ00_REQN not found. Create in SNRO' TYPE 'I' DISPLAY LIKE 'E'.
-      WHEN OTHERS.
-        MESSAGE 'Error getting request number' TYPE 'I' DISPLAY LIKE 'E'.
-    ENDCASE.
     CLEAR rv_reqnum.
-  ENDIF.
 
-ENDMETHOD.
+    " Get next request number from number range
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr             = '01'
+        object                  = 'ZCJ00_REQN'    " Use FDS object name
+        quantity                = '1'
+        toyear                  = '0000'          " Important: same as old system
+      IMPORTING
+        number                  = lv_request
+      EXCEPTIONS
+        interval_not_found      = 1
+        number_range_not_intern = 2
+        object_not_found        = 3
+        quantity_is_0           = 4
+        quantity_is_not_1       = 5
+        interval_overflow       = 6
+        buffer_overflow         = 7
+        OTHERS                  = 8.
+
+    IF sy-subrc = 0.
+      rv_reqnum = lv_request.
+    ELSE.
+      " Enhanced error handling
+      CASE sy-subrc.
+        WHEN 1.
+          MESSAGE 'Number range interval not found' TYPE 'I' DISPLAY LIKE 'E'.
+        WHEN 2.
+          MESSAGE 'Number range is not internal' TYPE 'I' DISPLAY LIKE 'E'.
+        WHEN 3.
+          MESSAGE 'Number range object ZCJ00_REQN not found. Create in SNRO' TYPE 'I' DISPLAY LIKE 'E'.
+        WHEN OTHERS.
+          MESSAGE 'Error getting request number' TYPE 'I' DISPLAY LIKE 'E'.
+      ENDCASE.
+      CLEAR rv_reqnum.
+    ENDIF.
+
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -881,76 +941,76 @@ ENDMETHOD.
 * | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
 * | [<-()] RV_REQNUM                      TYPE        CHAR10
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-METHOD save_request.
+  METHOD save_request.
 
-  DATA: ls_header TYPE ztb_a2r_wbshdr,
-        ls_item   TYPE ztb_a2r_wbsitem,
-        ls_wbs    TYPE ztb_a2r_wbsitem,
-        lv_error  TYPE abap_bool.
+    DATA: ls_header TYPE ztb_a2r_wbshdr,
+          ls_item   TYPE ztb_a2r_wbsitem,
+          ls_wbs    TYPE ztb_a2r_wbsitem,
+          lv_error  TYPE abap_bool.
 
-  CLEAR: rv_reqnum, lv_error.
+    CLEAR: rv_reqnum, lv_error.
 
-  " Get request number ONLY if not already assigned
-  IF is_header-zreq_num IS INITIAL.
-    rv_reqnum = get_next_request_number( ).
+    " Get request number ONLY if not already assigned
+    IF is_header-zreq_num IS INITIAL.
+      rv_reqnum = get_next_request_number( ).
 
-    IF rv_reqnum IS INITIAL.
-      " Error message already displayed by get_next_request_number
+      IF rv_reqnum IS INITIAL.
+        " Error message already displayed by get_next_request_number
+        RETURN.
+      ENDIF.
+    ELSE.
+      " Re-saving existing request (update scenario)
+      rv_reqnum = is_header-zreq_num.
+    ENDIF.
+
+    " Prepare header with correct field mapping
+    CLEAR ls_header.
+    ls_header-mandt = sy-mandt.
+    ls_header-zreq_num = rv_reqnum.
+
+    " FDS Table 4.1.7 field mapping
+    ls_header-posnr = is_header-posnr.              " IM Program Position
+    ls_header-prnam = is_header-prnam.              " IM Program
+    ls_header-pspnr = is_header-pspnr.              " Project ID (populated after creation)
+    ls_header-post1 = is_header-post1.              " Description
+    ls_header-vernr = is_header-vernr.              " Person Responsible
+    ls_header-plsez = is_header-plsez.              " Finish Date
+    ls_header-bukrs = is_header-bukrs.              " Company Code
+    ls_header-werks = is_header-werks.              " Plant
+    ls_header-prctr = is_header-prctr.              " Profit Center
+    ls_header-kostl = is_header-kostl.              " Cost Center
+    ls_header-izwek = is_header-izwek.              " Investment Reason
+    ls_header-zunifier_proj = is_header-zunifier_proj.  " GE Ariba Flag
+    ls_header-usr008 = is_header-usr008.            " CAR Approval Date
+    ls_header-profl = is_header-profl.              " Project Profile
+    ls_header-z_reqtype = is_header-z_reqtype.      " Request Type
+
+    " Status and audit fields (similar to old system pattern)
+    IF is_header-zreq_num IS INITIAL.
+      " New request
+      ls_header-ernam = sy-uname.                   " Created by
+      ls_header-erdat = sy-datum.                   " Created on
+      ls_header-request_status = 'DRAFT'.           " Draft status
+    ELSE.
+      " Existing request being updated
+      ls_header-ernam = is_header-ernam.            " Keep original creator
+      ls_header-erdat = is_header-erdat.            " Keep original date
+      " Add change tracking if fields exist:
+      " ls_header-changed_by = sy-uname.
+      " ls_header-changed_on = sy-datum.
+    ENDIF.
+
+    " Optional fields
+    IF is_header-z_remarks IS NOT INITIAL.
+      ls_header-z_remarks = is_header-z_remarks.
+    ENDIF.
+
+    " Validate mandatory fields
+    IF ls_header-posnr IS INITIAL.
+      MESSAGE 'IM Program Position is mandatory' TYPE 'E'.
+      CLEAR rv_reqnum.
       RETURN.
     ENDIF.
-  ELSE.
-    " Re-saving existing request (update scenario)
-    rv_reqnum = is_header-zreq_num.
-  ENDIF.
-
-  " Prepare header with correct field mapping
-  CLEAR ls_header.
-  ls_header-mandt = sy-mandt.
-  ls_header-zreq_num = rv_reqnum.
-
-  " FDS Table 4.1.7 field mapping
-  ls_header-posnr = is_header-posnr.              " IM Program Position
-  ls_header-prnam = is_header-prnam.              " IM Program
-  ls_header-pspnr = is_header-pspnr.              " Project ID (populated after creation)
-  ls_header-post1 = is_header-post1.              " Description
-  ls_header-vernr = is_header-vernr.              " Person Responsible
-  ls_header-plsez = is_header-plsez.              " Finish Date
-  ls_header-bukrs = is_header-bukrs.              " Company Code
-  ls_header-werks = is_header-werks.              " Plant
-  ls_header-prctr = is_header-prctr.              " Profit Center
-  ls_header-kostl = is_header-kostl.              " Cost Center
-  ls_header-izwek = is_header-izwek.              " Investment Reason
-  ls_header-zunifier_proj = is_header-zunifier_proj.  " GE Ariba Flag
-  ls_header-usr008 = is_header-usr008.            " CAR Approval Date
-  ls_header-profl = is_header-profl.              " Project Profile
-  ls_header-z_reqtype = is_header-z_reqtype.      " Request Type
-
-  " Status and audit fields (similar to old system pattern)
-  IF is_header-zreq_num IS INITIAL.
-    " New request
-    ls_header-ernam = sy-uname.                   " Created by
-    ls_header-erdat = sy-datum.                   " Created on
-    ls_header-request_status = 'DRAFT'.           " Draft status
-  ELSE.
-    " Existing request being updated
-    ls_header-ernam = is_header-ernam.            " Keep original creator
-    ls_header-erdat = is_header-erdat.            " Keep original date
-    " Add change tracking if fields exist:
-    " ls_header-changed_by = sy-uname.
-    " ls_header-changed_on = sy-datum.
-  ENDIF.
-
-  " Optional fields
-  IF is_header-z_remarks IS NOT INITIAL.
-    ls_header-z_remarks = is_header-z_remarks.
-  ENDIF.
-
-  " Validate mandatory fields
-  IF ls_header-posnr IS INITIAL.
-    MESSAGE 'IM Program Position is mandatory' TYPE 'E'.
-    CLEAR rv_reqnum.
-    RETURN.
-  ENDIF.
 
 *  IF ls_header-bukrs IS INITIAL.
 *    MESSAGE 'Company Code is mandatory' TYPE 'E'.
@@ -970,85 +1030,85 @@ METHOD save_request.
 *    RETURN.
 *  ENDIF.
 
-  " Save with error handling
-  TRY.
-      " Check if updating or creating new
-      IF is_header-zreq_num IS INITIAL.
-        " Insert new header
-        INSERT ztb_a2r_wbshdr FROM ls_header.
-      ELSE.
-        " Update existing header
-        UPDATE ztb_a2r_wbshdr FROM ls_header.
-        IF sy-subrc <> 0.
-          " If update failed, try insert (might be new after all)
+    " Save with error handling
+    TRY.
+        " Check if updating or creating new
+        IF is_header-zreq_num IS INITIAL.
+          " Insert new header
           INSERT ztb_a2r_wbshdr FROM ls_header.
-        ENDIF.
-      ENDIF.
-
-      IF sy-subrc = 0.
-        " Delete old items if updating
-        IF is_header-zreq_num IS NOT INITIAL.
-          DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
-        ENDIF.
-
-        " Insert/update WBS items
-        LOOP AT it_wbs_items INTO ls_wbs.
-          CLEAR ls_item.
-
-          " FDS Table 4.1.8 field mapping
-          ls_item-mandt = sy-mandt.
-          ls_item-zreq_num = rv_reqnum.           " Request Number (Primary Key)
-          ls_item-bukrs = ls_header-bukrs.        " Company Code (Primary Key)
-          ls_item-posid = ls_wbs-posid.           " WBS Element Code (Primary Key)
-          ls_item-stufe = ls_wbs-stufe.           " WBS Level
-          ls_item-post1 = ls_wbs-post1.           " Description
-          ls_item-kostl = ls_wbs-kostl.           " Cost Center
-          ls_item-wert2 = ls_wbs-wert2.           " Approved Budget
-          ls_item-zbudget_check = ls_wbs-zbudget_check.  " Budget Check
-          ls_item-imprf = ls_wbs-imprf.           " Investment Profile
-          ls_item-prart = ls_wbs-prart.           " Project Type
-
-          IF ls_wbs-posnr IS NOT INITIAL.
-            ls_item-posnr = ls_wbs-posnr.         " WBS Internal Number
-          ENDIF.
-
-          INSERT ztb_a2r_wbsitem FROM ls_item.
-
-          IF sy-subrc <> 0.
-            lv_error = abap_true.
-            MESSAGE 'Error saving WBS item' && ls_item-posid TYPE 'I' DISPLAY LIKE 'E'.
-            EXIT.
-          ENDIF.
-        ENDLOOP.
-
-        " Commit or rollback
-        IF lv_error = abap_false.
-          COMMIT WORK AND WAIT.
-          MESSAGE s024(zcj00) WITH rv_reqnum DISPLAY LIKE 'S'.
-          CALL TRANSACTION 'ZA2R_ZCJ00'.
         ELSE.
-          ROLLBACK WORK.
-          CLEAR rv_reqnum.
+          " Update existing header
+          UPDATE ztb_a2r_wbshdr FROM ls_header.
+          IF sy-subrc <> 0.
+            " If update failed, try insert (might be new after all)
+            INSERT ztb_a2r_wbshdr FROM ls_header.
+          ENDIF.
         ENDIF.
 
-      ELSE.
-        MESSAGE 'Error saving header. Check table structure.' TYPE 'E'.
+        IF sy-subrc = 0.
+          " Delete old items if updating
+          IF is_header-zreq_num IS NOT INITIAL.
+            DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
+          ENDIF.
+
+          " Insert/update WBS items
+          LOOP AT it_wbs_items INTO ls_wbs.
+            CLEAR ls_item.
+
+            " FDS Table 4.1.8 field mapping
+            ls_item-mandt = sy-mandt.
+            ls_item-zreq_num = rv_reqnum.           " Request Number (Primary Key)
+            ls_item-bukrs = ls_header-bukrs.        " Company Code (Primary Key)
+            ls_item-posid = ls_wbs-posid.           " WBS Element Code (Primary Key)
+            ls_item-stufe = ls_wbs-stufe.           " WBS Level
+            ls_item-post1 = ls_wbs-post1.           " Description
+            ls_item-kostl = ls_wbs-kostl.           " Cost Center
+            ls_item-wert2 = ls_wbs-wert2.           " Approved Budget
+            ls_item-zbudget_check = ls_wbs-zbudget_check.  " Budget Check
+            ls_item-imprf = ls_wbs-imprf.           " Investment Profile
+            ls_item-prart = ls_wbs-prart.           " Project Type
+
+            IF ls_wbs-posnr IS NOT INITIAL.
+              ls_item-posnr = ls_wbs-posnr.         " WBS Internal Number
+            ENDIF.
+
+            INSERT ztb_a2r_wbsitem FROM ls_item.
+
+            IF sy-subrc <> 0.
+              lv_error = abap_true.
+              MESSAGE 'Error saving WBS item' && ls_item-posid TYPE 'I' DISPLAY LIKE 'E'.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+
+          " Commit or rollback
+          IF lv_error = abap_false.
+            COMMIT WORK AND WAIT.
+            MESSAGE s024(zcj00) WITH rv_reqnum DISPLAY LIKE 'S'.
+            CALL TRANSACTION 'ZA2R_ZCJ00'.
+          ELSE.
+            ROLLBACK WORK.
+            CLEAR rv_reqnum.
+          ENDIF.
+
+        ELSE.
+          MESSAGE 'Error saving header. Check table structure.' TYPE 'E'.
+          CLEAR rv_reqnum.
+          ROLLBACK WORK.
+        ENDIF.
+
+      CATCH cx_sy_sql_error INTO DATA(lx_sql).
+        MESSAGE lx_sql->get_text( ) TYPE 'E'.
         CLEAR rv_reqnum.
         ROLLBACK WORK.
-      ENDIF.
 
-    CATCH cx_sy_sql_error INTO DATA(lx_sql).
-      MESSAGE lx_sql->get_text( ) TYPE 'E'.
-      CLEAR rv_reqnum.
-      ROLLBACK WORK.
+      CATCH cx_root INTO DATA(lx_error).
+        MESSAGE lx_error->get_text( ) TYPE 'E'.
+        CLEAR rv_reqnum.
+        ROLLBACK WORK.
+    ENDTRY.
 
-    CATCH cx_root INTO DATA(lx_error).
-      MESSAGE lx_error->get_text( ) TYPE 'E'.
-      CLEAR rv_reqnum.
-      ROLLBACK WORK.
-  ENDTRY.
-
-ENDMETHOD.
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -1066,39 +1126,45 @@ ENDMETHOD.
           lv_auto          TYPE char1,
           lv_error_handler TYPE char8,
           lv_found         TYPE abap_bool,
-          ls_header        TYPE ztb_a2r_wbshdr.
+          ls_header        TYPE ztb_a2r_wbshdr,
+          lt_l1_approvers  TYPE hpa_t_bname,
+          lt_l2_approvers  TYPE hpa_t_bname.
 
-    " Save the request
+    rv_success = abap_false.
+
+    " Step 1: Save the request
     lv_reqnum = save_request(
       is_header    = is_header
       it_wbs_items = it_wbs_items
     ).
 
     IF lv_reqnum IS INITIAL.
-      rv_success = abap_false.
+      MESSAGE e013(zcj00) WITH 'Error saving request'.
       RETURN.
     ENDIF.
 
-    " Check approver matrix
+    " Step 2: Get approvers from configuration and HRP1001
     lv_found = check_approver_matrix(
       EXPORTING
         iv_bukrs   = is_header-bukrs
         iv_profl   = is_header-profl
         iv_reqtype = is_header-z_reqtype
       IMPORTING
-        ev_appr1   = lv_appr1
-        ev_appr2   = lv_appr2
-        ev_auto    = lv_auto
+        ev_appr1         = lv_appr1
+        ev_appr2         = lv_appr2
+        ev_auto          = lv_auto
         ev_error_handler = lv_error_handler
+        et_l1_approvers  = lt_l1_approvers
+        et_l2_approvers  = lt_l2_approvers
     ).
 
     IF lv_found = abap_false.
-      MESSAGE e008(zcj00).
+      MESSAGE e008(zcj00) WITH 'No approver configuration found'.
       rv_success = abap_false.
       RETURN.
     ENDIF.
 
-    " Update status to PENDING
+    " Step 3: Update header
     ls_header = is_header.
     ls_header-zreq_num = lv_reqnum.
     ls_header-request_status = 'PENDING'.
@@ -1107,9 +1173,10 @@ ENDMETHOD.
       SET request_status = 'PENDING'
       WHERE zreq_num = lv_reqnum.
 
-    " Check for auto-approval
+    " Step 4: Auto-approval or Workflow
     IF lv_auto = 'X'.
-      MESSAGE i035(zcj00) WITH lv_reqnum.
+      " Auto-approve if no approvers configured
+      MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
 
       rv_success = create_project(
         is_header    = ls_header
@@ -1119,32 +1186,33 @@ ENDMETHOD.
       IF rv_success = abap_true.
         UPDATE ztb_a2r_wbshdr
           SET request_status = 'APPROVED'
+              zapproved_by = sy-uname
+              zrequest_approved_on = sy-datum
           WHERE zreq_num = lv_reqnum.
         COMMIT WORK.
-        MESSAGE s033(zcj00) WITH lv_reqnum.
+        MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
       ELSE.
         UPDATE ztb_a2r_wbshdr
           SET request_status = 'ERROR'
           WHERE zreq_num = lv_reqnum.
         COMMIT WORK.
-        MESSAGE e034(zcj00) WITH lv_reqnum.
+        MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
       ENDIF.
 
     ELSE.
+      " Trigger workflow with approver lists
       rv_success = trigger_workflow(
-        is_header = ls_header
-*        iv_appr1  = lv_appr1
-*        iv_appr2  = lv_appr2
-
-      " should be approver table
+        is_header   = ls_header
+        it_l1_apprv = lt_l1_approvers
+        it_l2_apprv = lt_l2_approvers
       ).
 
       IF rv_success = abap_true.
         COMMIT WORK.
-        MESSAGE s015(zcj00) WITH lv_reqnum.
+        MESSAGE s015(zcj00) WITH 'Request' lv_reqnum 'submitted'.
       ELSE.
         ROLLBACK WORK.
-        MESSAGE e016(zcj00) WITH lv_reqnum.
+        MESSAGE e016(zcj00) WITH 'Workflow error for' lv_reqnum.
       ENDIF.
     ENDIF.
 
