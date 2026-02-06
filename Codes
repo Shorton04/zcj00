@@ -62,8 +62,6 @@ FORM wbs_request_create USING iv_simulation TYPE char1.
           EXIT.
         ENDLOOP.
         IF lv_error IS INITIAL.
-          "Overwrite only if Successful
-*      ct_return = lt_return.
         ENDIF.
       ENDIF.
     ENDIF.
@@ -102,12 +100,6 @@ FORM wbs_request_create USING iv_simulation TYPE char1.
           SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
                    WHERE zprj_code_pv <> '0'
                      AND zprj_code_pv = ls_head-zprj_code_pv.
-
-*          SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
-*            FOR ALL ENTRIES IN lt_wbs_item
-*                   WHERE zprj_code_pv <> '0'
-*                     AND zprj_code_pv = ls_head-zprj_code_pv
-*                     AND zstage_code_pv = lt_wbs_item-zstate_code_pv.
 
           IF NOT lt_conn_itm IS INITIAL.
             LOOP AT lt_conn_itm ASSIGNING <fs_conn_itm>.
@@ -272,8 +264,6 @@ FORM check_proj_create CHANGING cs_project_new TYPE bapi_bus2001_new.
   cs_project_new-applicant_no         = ls_head-astnr_n.
   cs_project_new-responsible_no       = ls_head-vernr_n.
   cs_project_new-grouping_indicator   = ls_head-grtop.
-  "cs_project_new-FCST_START           = ls_head-estrt.
-  "cs_project_new-FCST_finish          = ls_head-eende.
 
 ENDFORM.                    " CHECK_PROJ_CREATE
 
@@ -370,8 +360,6 @@ FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
       ls_te_wbs-zprodcat          = ls_item-zprodcat.
       ls_te_wbs-zlifecycle_module = ls_item-zlifecycle_module.
       ls_te_wbs-zbusiness_case    = ls_item-zbusiness_case.
-* End of Change by LCHENNA for CR 797199
-*    ls_te_wbs-zstage_code_pv    = ls_item-zstate_code_pv.
 *Non Resourced Project field sent from Planview
       ls_te_wbs-zibp_res_proj     = ls_item-zibp_res_proj.
 *Customer PO and Item
@@ -420,8 +408,6 @@ FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
       ls_extensionin-valuepart2+114(8) = ls_te_wbs-zrev_rec_dt.
       ls_extensionin-valuepart2+122(35) = ls_te_wbs-zbusiness_case.
       ls_extensionin-valuepart2+157(35) = ls_te_wbs-zlifecycle_module.
-*      ls_extensionin-valuepart2+212(12) = ls_te_wbs-zstage_code_pv.
-*   End of changes by LCHENNA for CR 797199
       ls_extensionin-valuepart2+212(1) = ls_te_wbs-zibp_res_proj.
 *Customer PO and Item
       ls_extensionin-valuepart2+213(27) = ls_te_wbs-zbstkd.
