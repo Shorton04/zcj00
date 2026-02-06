@@ -239,3 +239,196 @@ FORM wbs_request_create USING iv_simulation TYPE char1.
   ENDIF.
 
 ENDFORM.                    " WBS_REQUEST_CREATE
+
+
+
+FORM check_proj_create CHANGING cs_project_new TYPE bapi_bus2001_new.
+
+  cs_project_new-project_definition   = ls_head-pspid.
+  cs_project_new-description          = ls_head-post1.
+  cs_project_new-wbs_status_profile   = ls_head-stspr.
+  cs_project_new-company_code         = ls_head-vbukr.
+  cs_project_new-business_area        = ls_head-vgsbr.
+  cs_project_new-controlling_area     = ls_head-vkokr.
+  cs_project_new-profit_ctr           = ls_head-prctr.
+  cs_project_new-project_currency     = ls_head-pwhie.
+  cs_project_new-start                = ls_head-plfaz.
+  cs_project_new-finish               = ls_head-plsez.
+  cs_project_new-plant                = ls_head-werks.
+  cs_project_new-calendar             = ls_head-kalid.
+  cs_project_new-plan_basic           = ls_head-vgplf.
+  cs_project_new-plan_fcst            = ls_head-ewplf.
+  cs_project_new-time_unit            = ls_head-zteht.
+  cs_project_new-network_profile      = ls_head-vprof.
+  cs_project_new-project_profile      = ls_head-profl.
+  cs_project_new-budget_profile       = ls_head-bprof.
+  cs_project_new-project_stock        = ls_head-besta.
+  cs_project_new-wbs_sched_profile    = ls_head-scprf.
+  cs_project_new-plan_profile         = ls_head-pprof.
+  cs_project_new-planintegrated       = ls_head-plint.
+  cs_project_new-valuation_spec_stock = ls_head-kzbws.
+  cs_project_new-func_area            = ls_head-func_area.
+  cs_project_new-sched_scenario       = ls_head-schtyp.
+  cs_project_new-applicant_no         = ls_head-astnr_n.
+  cs_project_new-responsible_no       = ls_head-vernr_n.
+  cs_project_new-grouping_indicator   = ls_head-grtop.
+  "cs_project_new-FCST_START           = ls_head-estrt.
+  "cs_project_new-FCST_finish          = ls_head-eende.
+
+ENDFORM.                    " CHECK_PROJ_CREATE
+
+
+FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
+                                ct_extensionin TYPE STANDARD TABLE.
+
+  DATA:lt_item      TYPE STANDARD TABLE OF zwbs_item,
+       ls_item_temp TYPE zwbs_item,
+       ls_te_wbs    TYPE bapi_te_wbs_element.
+
+  DATA:lv_upper_level TYPE ps_posid,
+       lv_left_level  TYPE ps_posid,
+       lv_up          TYPE ps_stufe,
+       lv_left        TYPE ps_stufe,
+       lv_index       TYPE i,
+       lv_request     TYPE zwbsrequest.
+  lv_request = zwbs_header-request.
+  EXPORT lv_request = lv_request TO MEMORY ID 'ZCOMPLETION_DATE'.
+*Capture New Entries
+  CLEAR:lt_item,ls_item_temp.
+  APPEND LINES OF lt_wbs_item TO lt_item.
+
+  SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
+  LOOP AT lt_item INTO ls_item.
+    CLEAR:ls_wbs_celement,ls_te_wbs,lv_index,lv_left_level,
+    lv_upper_level.
+
+    lv_index = sy-tabix + 1.
+
+    ls_wbs_celement-wbs_element      = ls_item-pspid_new.
+    ls_wbs_celement-description      = ls_item-post1.
+    ls_wbs_celement-company_code     = ls_item-pbukr.
+    ls_wbs_celement-business_area    = ls_item-pgsbr.
+    ls_wbs_celement-controlling_area = zwbs_header-vkokr.
+    ls_wbs_celement-profit_ctr       = ls_item-prctr.
+    ls_wbs_celement-plant            = ls_item-werks.
+
+    ls_wbs_celement-res_anal_key     = ls_item-abgsl.
+    IF gv_capex IS NOT INITIAL.
+      ls_wbs_celement-wbs_planning_element    = ls_item-plakz.
+      ls_wbs_celement-inv_reason              = ls_head-izwek.
+      ls_wbs_celement-invest_profile          = ls_item-imprf.
+      ls_wbs_celement-respsbl_cctr            = ls_item-akstl.
+      ls_wbs_celement-wbs_basic_start_date    = ls_item-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date   = ls_item-plsez.
+      ls_wbs_celement-applicant_no            = ls_item-astnr_n.
+      ls_wbs_celement-responsible_no          = ls_item-vernr_n.
+      ls_wbs_celement-wbs_forecast_start_date = ls_item-estrt.
+      ls_wbs_celement-wbs_forecast_finish_date = ls_item-eende.
+
+      IF ls_item-stufe = 1.
+        SELECT SINGLE * FROM zwbs_proj_tem_tc INTO @DATA(ls_proj) WHERE project = @ls_item-zproj_template.
+        IF sy-subrc = 0 AND ls_proj-unifier = 'X'.
+          ls_te_wbs-zunifier_proj = 'X'.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      ls_wbs_celement-wbs_planning_element  = abap_true.
+      ls_wbs_celement-wbs_billing_element   = ls_item-fakkz.
+      ls_wbs_celement-request_cctr          = ls_item-akstl.
+* Begin of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_basic_start_date  = ls_item-zstage_st_dt.
+      ls_wbs_celement-wbs_basic_finish_date = ls_item-zstage_end_dt.
+* End of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_mrp_element = ls_item-grpkz.
+*Extensions
+      ls_te_wbs-zprgman         = ls_head-zprgman.
+      ls_te_wbs-zprodcod        = ls_head-zprodcod.
+      ls_te_wbs-zasset          = ls_item-zasset.
+      ls_te_wbs-zrevstr         = ls_item-zrevstr.
+      ls_te_wbs-zarea           = ls_item-zarea.
+      ls_te_wbs-zscopcha        = ls_item-zscopcha.
+      ls_te_wbs-zopportunity_id = ls_item-zopportunity_id.
+      ls_te_wbs-zsynergy_id     = ls_item-zsynergy_id.
+      ls_te_wbs-zcustom         = ls_item-zcustom.
+      ls_te_wbs-z_material      = ls_item-z_material.
+* CR 626062 - Additional fields added
+      ls_te_wbs-zipm_pr_code    = ls_item-zipm_pr_code.
+      ls_te_wbs-zzfcst_status   = ls_item-zzfcst_status.
+      ls_te_wbs-zzserv_bund     = ls_item-zzserv_bund.
+      ls_te_wbs-zzfree_text     = ls_item-zzfree_text.
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_te_wbs-zibpaufnr       = ls_item-zibpaufnr.
+      ls_te_wbs-zibpebeln       = ls_item-zibpebeln.
+      ls_te_wbs-zfcw            = ls_item-zfcw.
+      ls_te_wbs-zibpflag        = ls_item-zibpflag.
+      ls_te_wbs-zibpflgmc       = ls_item-zibpflgmc.
+      ""* End of changes by AKOTA for CR 668561
+* Begin of Change by LCHENNA for CR 797199
+      ls_te_wbs-zmaint_sys        = ls_item-zmaint_sys.
+      ls_te_wbs-zrev_rec_dt       = ls_item-zrev_rec_dt.
+      ls_te_wbs-zprodcat          = ls_item-zprodcat.
+      ls_te_wbs-zlifecycle_module = ls_item-zlifecycle_module.
+      ls_te_wbs-zbusiness_case    = ls_item-zbusiness_case.
+* End of Change by LCHENNA for CR 797199
+*    ls_te_wbs-zstage_code_pv    = ls_item-zstate_code_pv.
+*Non Resourced Project field sent from Planview
+      ls_te_wbs-zibp_res_proj     = ls_item-zibp_res_proj.
+*Customer PO and Item
+      ls_te_wbs-zbstkd            = ls_item-zbstkd.
+      ls_te_wbs-zposex            = ls_item-zposex.
+    ENDIF.
+
+    ls_wbs_celement-wbs_account_assignment_element = ls_item-belkz.
+
+*Add Levels to WBS based on Hierarchy
+    LOOP AT lt_item INTO ls_item_temp FROM lv_index.
+*Left Level
+      IF lv_left_level IS INITIAL AND
+         ls_item_temp-stufe = ls_item-stufe.
+        lv_left_level = ls_item_temp-pspid_new.
+      ENDIF.
+*Upper Level
+      IF ls_item_temp-stufe < ls_item-stufe.
+        lv_upper_level = ls_item_temp-pspid_new.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+    ls_wbs_celement-wbs_up   = lv_upper_level.
+    ls_wbs_celement-wbs_left = lv_left_level.
+
+    APPEND ls_wbs_celement TO ct_wbs_element.
+
+    IF NOT ls_te_wbs IS INITIAL.
+      ls_te_wbs-wbs_element     = ls_item-pspid_new.
+      ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+      ls_extensionin-valuepart1 = ls_te_wbs.
+* CR 626062 - Added
+      ls_extensionin-valuepart2 = ls_te_wbs-zzfree_text+37(23).
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+23(2) = ls_te_wbs-zfcw.
+      ls_extensionin-valuepart2+25(1) = ls_te_wbs-zibpflag.
+      ls_extensionin-valuepart2+26(1) = ls_te_wbs-zibpflgmc.
+      ls_extensionin-valuepart2+27(12) = ls_te_wbs-zibpaufnr.
+      ls_extensionin-valuepart2+39(10) = ls_te_wbs-zibpebeln.
+      ""* End of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+
+*   Begin of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+110(4) = ls_te_wbs-zprodcat."PRDCAT
+      ls_extensionin-valuepart2+114(8) = ls_te_wbs-zrev_rec_dt.
+      ls_extensionin-valuepart2+122(35) = ls_te_wbs-zbusiness_case.
+      ls_extensionin-valuepart2+157(35) = ls_te_wbs-zlifecycle_module.
+*      ls_extensionin-valuepart2+212(12) = ls_te_wbs-zstage_code_pv.
+*   End of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+212(1) = ls_te_wbs-zibp_res_proj.
+*Customer PO and Item
+      ls_extensionin-valuepart2+213(27) = ls_te_wbs-zbstkd.
+      ls_extensionin-valuepart3         = ls_te_wbs-zbstkd+27(8).
+      ls_extensionin-valuepart3+8(6)    = ls_te_wbs-zposex.
+      APPEND ls_extensionin TO ct_extensionin.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " CHECK_PRPS_CREATE
