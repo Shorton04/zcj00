@@ -1,54 +1,241 @@
-FORM total_up_wbs_tc.
+*&---------------------------------------------------------------------*
+*&      Form  WBS_REQUEST_CREATE
+*&---------------------------------------------------------------------*
+FORM wbs_request_create USING iv_simulation TYPE char1.
 
-  DATA: lv_parent_len TYPE i,
-        lv_sum        TYPE ty_wbs_display-wert2,
-        lv_pspid_p    TYPE prps-posid,
-        lv_pspid_c    TYPE prps-posid.
+  CLEAR:lt_return,lt_wbs_celement,lt_extensionin,ls_project_new,
+  lv_wbs_app_call.
 
-  FIELD-SYMBOLS:
-    <fs_parent> TYPE ty_wbs_display,
-    <fs_child>  TYPE ty_wbs_display.
+*Export Identifier to control Template copy during Project creation
+  FREE MEMORY ID 'ZWBS_APPL_CALL'.
+  lv_wbs_app_call = abap_true.
+  EXPORT lv_wbs_app_call = lv_wbs_app_call TO MEMORY ID 'ZWBS_APPL_CALL'.
 
-  DO 4 TIMES.
-    DATA(lv_level) = 5 - sy-index.
+  PERFORM check_proj_create CHANGING ls_project_new.
 
-    LOOP AT gt_wbs_display ASSIGNING <fs_parent>
-      WHERE stufe = lv_level.
+  PERFORM check_prps_create CHANGING lt_wbs_celement
+                                     lt_extensionin.
+  SORT:lt_wbs_celement,lt_extensionin.
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-      CLEAR lv_sum.
+  CALL FUNCTION 'BAPI_BUS2001_CREATE'
+    EXPORTING
+      i_project_definition = ls_project_new
+    TABLES
+      et_return            = lt_return.
 
-      lv_pspid_p = <fs_parent>-pspid.
+  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+    lv_error = 'X'.
+    EXIT.
+  ENDLOOP.
 
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_p.
+  IF lv_error IS INITIAL.
+    CLEAR lt_return.
+*Create New WBS
+    IF NOT lt_wbs_celement IS INITIAL OR
+       NOT lt_extensionin  IS INITIAL.
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = ls_head-pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          et_return            = lt_return
+          extensionin          = lt_extensionin.
+    ENDIF.
 
-      lv_parent_len = strlen( lv_pspid_p ).
-
-      LOOP AT gt_wbs_display ASSIGNING <fs_child>
-        WHERE stufe = lv_level + 1.
-
-        lv_pspid_c = <fs_child>-pspid.
-
-        CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-          CHANGING
-            c_value = lv_pspid_c.
-
-        IF lv_pspid_c+0(lv_parent_len) = lv_pspid_p.
-          lv_sum = lv_sum + <fs_child>-wert2.
-        ENDIF.
-
-      ENDLOOP.
-
-      IF lv_sum IS NOT INITIAL.
-        <fs_parent>-wert2 = lv_sum.
-      ENDIF.
-
+*Check lt_return for Success
+    CLEAR lv_error.
+    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+      lv_error = 'X'.
+      EXIT.
     ENDLOOP.
-  ENDDO.
 
-ENDFORM.
+    IF lv_error IS INITIAL.
+      IF iv_simulation IS INITIAL.
+        CLEAR:lt_return.
+        CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+          TABLES
+            et_return = lt_return.
 
+        LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+          lv_error = 'X'.
+          EXIT.
+        ENDLOOP.
+        IF lv_error IS INITIAL.
+          "Overwrite only if Successful
+*      ct_return = lt_return.
+        ENDIF.
+      ENDIF.
+    ENDIF.
 
+    IF lv_error IS INITIAL.
+      IF iv_simulation IS INITIAL.
+        CLEAR ls_return.
+*  Begin of changes by LCHENNA for CR 797199
+**  Capture the SAP project number and WBS elements under it
+*   to stagging table
+        DATA ls_conn_hdr TYPE zvconn_pv_hdr_in.
+        DATA lt_conn_itm TYPE STANDARD TABLE OF zvconn_pv_itm_in.
+        DATA ls_wbs_item TYPE zwbs_item.
+        FIELD-SYMBOLS <fs_conn_itm> TYPE zvconn_pv_itm_in.
+        SELECT SINGLE * FROM zvconn_pv_hdr_in INTO ls_conn_hdr
+                        WHERE zprj_code_pv <> '0'
+                          AND zprj_code_pv = ls_head-zprj_code_pv.
+        IF sy-subrc EQ 0.
+          CALL FUNCTION 'CONVERSION_EXIT_KONPD_INPUT'
+            EXPORTING
+              input     = ls_head-pspid
+            IMPORTING
+              output    = ls_conn_hdr-pspnr
+            EXCEPTIONS
+              not_found = 1
+              OTHERS    = 2.
+          IF sy-subrc <> 0.
+*         Implement suitable error handling here
+          ENDIF.
+*Add Timestamp to Staging Header
+          ls_conn_hdr-zprj_def_pv = ls_head-pspid.
+          ls_conn_hdr-changed_by  = sy-uname.
+          ls_conn_hdr-change_date = sy-datum.
+          ls_conn_hdr-change_time = sy-uzeit.
 
+          SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
+                   WHERE zprj_code_pv <> '0'
+                     AND zprj_code_pv = ls_head-zprj_code_pv.
 
+*          SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
+*            FOR ALL ENTRIES IN lt_wbs_item
+*                   WHERE zprj_code_pv <> '0'
+*                     AND zprj_code_pv = ls_head-zprj_code_pv
+*                     AND zstage_code_pv = lt_wbs_item-zstate_code_pv.
+
+          IF NOT lt_conn_itm IS INITIAL.
+            LOOP AT lt_conn_itm ASSIGNING <fs_conn_itm>.
+              READ TABLE lt_wbs_item INTO ls_wbs_item
+             WITH KEY zstate_code_pv = <fs_conn_itm>-zstage_code_pv.
+              IF sy-subrc = 0.
+                CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+                  EXPORTING
+                    input     = ls_wbs_item-pspid_new
+                  IMPORTING
+                    output    = <fs_conn_itm>-pspnr
+                  EXCEPTIONS
+                    not_found = 1
+                    OTHERS    = 2.
+
+                IF NOT <fs_conn_itm>-pspnr IS INITIAL.
+                  CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
+                    EXPORTING
+                      input  = <fs_conn_itm>-pspnr
+                    IMPORTING
+                      output = <fs_conn_itm>-zwbs_number.
+                  <fs_conn_itm>-zstatus     = '04'.
+                  <fs_conn_itm>-error_txt   = ' '.
+                ENDIF.
+              ELSE.
+                IF     <fs_conn_itm>-loevm = 'X'
+                   AND <fs_conn_itm>-zwbs_number+3(5) = '00000'
+                   AND <fs_conn_itm>-pspnr IS INITIAL.
+                  <fs_conn_itm>-zstatus     = '81'.
+                ELSEIF <fs_conn_itm>-zstatus+0(1)     = '9'.
+                ELSE.
+                  <fs_conn_itm>-zstatus     = '80'.
+                ENDIF.
+              ENDIF.
+              <fs_conn_itm>-psphi       = ls_conn_hdr-pspnr.
+              <fs_conn_itm>-changed_by  = ls_conn_hdr-changed_by.
+              <fs_conn_itm>-change_date = ls_conn_hdr-change_date.
+              <fs_conn_itm>-change_time = ls_conn_hdr-change_time.
+            ENDLOOP.
+* update sap project and wbs value to stagging table
+* check to add row lock before modifying the entry
+            MODIFY zvconn_pv_hdr_in FROM ls_conn_hdr.
+            MODIFY zvconn_pv_itm_in FROM TABLE lt_conn_itm.
+          ENDIF.
+        ENDIF.
+*   End of changes by LCHENNA for CR 797199
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait   = 'X'
+          IMPORTING
+            return = ls_return.
+** approval log
+        gs_appr_log-text = 'Project and WBS Created Successfully'.
+        APPEND gs_appr_log TO gt_appr_log.
+        CLEAR: gs_appr_log.
+*Project Status
+        CLEAR lv_objnr.
+        SELECT SINGLE objnr FROM proj INTO lv_objnr
+                            WHERE pspid = ls_head-pspid.
+        IF NOT lv_objnr IS INITIAL.
+          IF gv_capex IS NOT INITIAL.
+            PERFORM settlement_rule.
+
+            PERFORM auc_creation.
+          ENDIF.
+          CALL METHOD zcl_sleep=>seconds
+            EXPORTING
+              iv_second = 1.
+          PERFORM set_release IN PROGRAM saplzwbs_req IF FOUND
+                              USING    'P'
+                                       ls_head-pspid
+                                       lv_objnr
+                              CHANGING lt_return.
+
+          IF gv_capex IS NOT INITIAL.
+            LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+              gv_error_email = 'X'.
+              EXIT.
+            ENDLOOP.
+            IF sy-subrc NE 0.
+              "approval log
+              gs_appr_log-text = 'WBS elements have been released Successfully'.
+              APPEND gs_appr_log TO gt_appr_log.
+              CLEAR: gs_appr_log.
+            ELSE.
+              " approval log
+              gv_error_email = 'X'.
+              gs_appr_log-text = 'WBS elements have not released'.
+              APPEND gs_appr_log TO gt_appr_log.
+              CLEAR: gs_appr_log.
+            ENDIF.
+            CALL METHOD zcl_sleep=>seconds
+              EXPORTING
+                iv_second = 1.
+            PERFORM budget.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ELSE.
+*   Begin of changes by LCHENNA for CR 797199
+* Stagging table wbs to be updated with error status
+*   End of changes by LCHENNA for CR 797199
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+** approval log
+      gv_error_email = 'X'.
+      gs_appr_log-text = 'Project and WBS Created not Successfull'.
+      APPEND gs_appr_log TO gt_appr_log.
+      CLEAR: gs_appr_log.
+    ENDIF.
+  ELSE.
+*   Begin of changes by LCHENNA for CR 797199
+* Stagging table wbs to be updated with error status
+*   End of changes by LCHENNA for CR 797199
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+** approval log
+    gv_error_email = 'X'.
+    gs_appr_log-text = 'Project and WBS Created not Successfull'.
+    APPEND gs_appr_log TO gt_appr_log.
+    CLEAR: gs_appr_log.
+  ENDIF.
+
+  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+    DELETE lt_return WHERE type NA 'EA'. "Delete all other information
+    EXIT.
+  ENDLOOP.
+  IF sy-subrc <> 0.
+    CLEAR lt_return.
+  ENDIF.
+
+ENDFORM.                    " WBS_REQUEST_CREATE
