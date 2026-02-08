@@ -1,275 +1,556 @@
-METHOD create_wbs_elements.
+*&---------------------------------------------------------------------*
+*&      Form  WBS_REQUEST_CREATE
+*&---------------------------------------------------------------------*
+FORM wbs_request_create USING iv_simulation TYPE char1.
 
-  "-------------------------
-  "  Declarations
-  "-------------------------
-  DATA: lv_pspid         TYPE ps_pspid,
-        lv_currency      TYPE waers,
-        lt_return        TYPE TABLE OF bapiret2,
-        ls_return        TYPE bapiret2,
-        lv_counter       TYPE i,
-        lt_wbs_element   TYPE TABLE OF bapi_wbs_element,
-        ls_wbs_element   TYPE bapi_wbs_element,
-        lt_items_sorted  TYPE TABLE OF ztb_a2r_wbsitem,
-        ls_item          TYPE ztb_a2r_wbsitem,
-        ls_created       TYPE ztb_a2r_wbsitem.
+  CLEAR:lt_return,lt_wbs_celement,lt_extensionin,ls_project_new,
+  lv_wbs_app_call.
 
-  DATA: ls_proj_new TYPE bapi_bus2001_new.
+*Export Identifier to control Template copy during Project creation
+  FREE MEMORY ID 'ZWBS_APPL_CALL'.
+  lv_wbs_app_call = abap_true.
+  EXPORT lv_wbs_app_call = lv_wbs_app_call TO MEMORY ID 'ZWBS_APPL_CALL'.
 
-  " Stack (by level) to remember last-created external POSID per level
-  TYPES: BEGIN OF ty_level_anchor,
-           level TYPE ps_stufe,
-           posid TYPE ps_posid,
-         END OF ty_level_anchor.
-  DATA: lt_level_anchor TYPE SORTED TABLE OF ty_level_anchor
-                         WITH UNIQUE KEY level,
-        ls_level_anchor TYPE ty_level_anchor.
+  PERFORM check_proj_create CHANGING ls_project_new.
 
-  rv_success = abap_false.
-  CLEAR et_wbs_created.
-
-  "-------------------------
-  "  Determine project number & currency
-  "-------------------------
-  lv_pspid = get_next_project_number( is_header-profl ).
-  IF lv_pspid IS INITIAL.
-    MESSAGE e029(zcj00).
-    RETURN.
-  ENDIF.
-
-  lv_currency = COND waers(
-                   WHEN is_header-pwhie IS NOT INITIAL THEN is_header-pwhie
-                   ELSE 'USD' ).
-
-  "-------------------------
-  "  Initialize PS buffers
-  "-------------------------
+  PERFORM check_prps_create CHANGING lt_wbs_celement
+                                     lt_extensionin.
+  SORT:lt_wbs_celement,lt_extensionin.
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-  "-------------------------
-  "  Build Project Definition structure
-  "-------------------------
-  CLEAR ls_proj_new.
-  ls_proj_new-project_definition   = lv_pspid.
-  ls_proj_new-description          = is_header-post1.
-  ls_proj_new-start                = sy-datum.
-  ls_proj_new-finish               = is_header-plsez.
-  ls_proj_new-company_code         = is_header-bukrs.
-  ls_proj_new-plant                = is_header-werks.
-  ls_proj_new-profit_ctr           = is_header-prctr.
-  ls_proj_new-responsible_no       = is_header-vernr.
-  ls_proj_new-project_currency     = lv_currency.
-  ls_proj_new-project_profile      = is_header-profl.
-
-  CLEAR lt_return.
   CALL FUNCTION 'BAPI_BUS2001_CREATE'
     EXPORTING
-      i_project_definition = ls_proj_new
+      i_project_definition = ls_project_new
     TABLES
       et_return            = lt_return.
 
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
+  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+    lv_error = 'X'.
+    EXIT.
+  ENDLOOP.
 
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
-
-  "-------------------------
-  "  Prepare WBS items (bulk)
-  "  Strategy:
-  "   - Sort by level ascending
-  "   - Level=1 → external POSID = project id
-  "   - Level>1 → POSID = <project>-<counter>, parent via last anchor of (level-1)
-  "   - Skip items with WERT2 initial (as per your original logic)
-  "-------------------------
-  lt_items_sorted = it_wbs_items.
-  SORT lt_items_sorted BY stufe ASCENDING.
-
-  CLEAR: lt_wbs_element, lt_level_anchor.
-  lv_counter = 1.
-
-  LOOP AT lt_items_sorted INTO ls_item.
-
-    IF ls_item-wert2 IS INITIAL.
-      CONTINUE.
+  IF lv_error IS INITIAL.
+    CLEAR lt_return.
+*Create New WBS
+    IF NOT lt_wbs_celement IS INITIAL OR
+       NOT lt_extensionin  IS INITIAL.
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = ls_head-pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          et_return            = lt_return
+          extensionin          = lt_extensionin.
     ENDIF.
 
-    CLEAR ls_wbs_element.
+*Check lt_return for Success
+    CLEAR lv_error.
+    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+      lv_error = 'X'.
+      EXIT.
+    ENDLOOP.
 
-    " External WBS ID
-    IF ls_item-stufe = 1.
-      ls_wbs_element-wbs_element = lv_pspid.   " top-level WBS id == project id
-    ELSE.
-      ls_wbs_element-wbs_element = |{ lv_pspid }-{ lv_counter }|.
-      lv_counter += 1.
-    ENDIF.
+    IF lv_error IS INITIAL.
+      IF iv_simulation IS INITIAL.
+        CLEAR:lt_return.
+        CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+          TABLES
+            et_return = lt_return.
 
-    " Text & org/costing basics
-    ls_wbs_element-description                 = ls_item-post1.
-    ls_wbs_element-company_code                = is_header-bukrs.
-    ls_wbs_element-plant                       = is_header-werks.
-    ls_wbs_element-profit_ctr                  = is_header-prctr.
-    ls_wbs_element-respsbl_cctr                = ls_item-kostl.
-    ls_wbs_element-wbs_planning_element        = abap_true.
-
-    " Parent linkage (WBS_UP)
-    IF ls_item-stufe > 1.
-      READ TABLE lt_level_anchor INTO ls_level_anchor
-           WITH KEY level = ls_item-stufe - 1.
-      IF sy-subrc = 0 AND ls_level_anchor-posid IS NOT INITIAL.
-        ls_wbs_element-wbs_up = ls_level_anchor-posid.
+        LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+          lv_error = 'X'.
+          EXIT.
+        ENDLOOP.
+        IF lv_error IS INITIAL.
+          "Overwrite only if Successful
+*      ct_return = lt_return.
+        ENDIF.
       ENDIF.
     ENDIF.
 
-    APPEND ls_wbs_element TO lt_wbs_element.
+    IF lv_error IS INITIAL.
+      IF iv_simulation IS INITIAL.
+        CLEAR ls_return.
+*  Begin of changes by LCHENNA for CR 797199
+**  Capture the SAP project number and WBS elements under it
+*   to stagging table
+        DATA ls_conn_hdr TYPE zvconn_pv_hdr_in.
+        DATA lt_conn_itm TYPE STANDARD TABLE OF zvconn_pv_itm_in.
+        DATA ls_wbs_item TYPE zwbs_item.
+        FIELD-SYMBOLS <fs_conn_itm> TYPE zvconn_pv_itm_in.
+        SELECT SINGLE * FROM zvconn_pv_hdr_in INTO ls_conn_hdr
+                        WHERE zprj_code_pv <> '0'
+                          AND zprj_code_pv = ls_head-zprj_code_pv.
+        IF sy-subrc EQ 0.
+          CALL FUNCTION 'CONVERSION_EXIT_KONPD_INPUT'
+            EXPORTING
+              input     = ls_head-pspid
+            IMPORTING
+              output    = ls_conn_hdr-pspnr
+            EXCEPTIONS
+              not_found = 1
+              OTHERS    = 2.
+          IF sy-subrc <> 0.
+*         Implement suitable error handling here
+          ENDIF.
+*Add Timestamp to Staging Header
+          ls_conn_hdr-zprj_def_pv = ls_head-pspid.
+          ls_conn_hdr-changed_by  = sy-uname.
+          ls_conn_hdr-change_date = sy-datum.
+          ls_conn_hdr-change_time = sy-uzeit.
 
-    " Maintain/refresh current anchor at this level
-    ls_level_anchor-level = ls_item-stufe.
-    ls_level_anchor-posid = ls_wbs_element-wbs_element.
-    DELETE lt_level_anchor WHERE level = ls_level_anchor-level.
-    INSERT ls_level_anchor INTO TABLE lt_level_anchor.
+          SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
+                   WHERE zprj_code_pv <> '0'
+                     AND zprj_code_pv = ls_head-zprj_code_pv.
 
-  ENDLOOP.
+*          SELECT * FROM zvconn_pv_itm_in INTO TABLE lt_conn_itm
+*            FOR ALL ENTRIES IN lt_wbs_item
+*                   WHERE zprj_code_pv <> '0'
+*                     AND zprj_code_pv = ls_head-zprj_code_pv
+*                     AND zstage_code_pv = lt_wbs_item-zstate_code_pv.
 
-  " If nothing to create, just commit the project and exit
-  IF lt_wbs_element IS INITIAL.
-    " Precommit & commit the project
-    CLEAR lt_return.
-    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-      TABLES
-        et_return = lt_return.
+          IF NOT lt_conn_itm IS INITIAL.
+            LOOP AT lt_conn_itm ASSIGNING <fs_conn_itm>.
+              READ TABLE lt_wbs_item INTO ls_wbs_item
+             WITH KEY zstate_code_pv = <fs_conn_itm>-zstage_code_pv.
+              IF sy-subrc = 0.
+                CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+                  EXPORTING
+                    input     = ls_wbs_item-pspid_new
+                  IMPORTING
+                    output    = <fs_conn_itm>-pspnr
+                  EXCEPTIONS
+                    not_found = 1
+                    OTHERS    = 2.
 
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-    IF sy-subrc = 0.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-        WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-      RETURN.
-    ENDIF.
-
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-    IF sy-subrc = 0.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-        WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-      RETURN.
-    ENDIF.
-
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
-
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-  "-------------------------
-  "  Create all WBS (bulk)
-  "-------------------------
-  CLEAR lt_return.
-  CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-    EXPORTING
-      i_project_definition = lv_pspid
-    TABLES
-      it_wbs_element       = lt_wbs_element
-      et_return            = lt_return.
-
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
-
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
-
-  "-------------------------
-  "  Precommit (PS) then Commit
-  "-------------------------
-  CLEAR lt_return.
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
-
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
-
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-  IF sy-subrc = 0.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2 ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  "-------------------------
-  "  Build et_wbs_created with internal numbers (PRPS-PSPNR)
-  "  Recompute the external POSID used during creation to read back PRPS
-  "-------------------------
-  LOOP AT lt_items_sorted INTO ls_item WHERE wert2 IS NOT INITIAL.
-
-    CLEAR ls_created.
-    ls_created-stufe          = ls_item-stufe.
-    ls_created-post1          = ls_item-post1.
-    ls_created-kostl          = ls_item-kostl.
-    ls_created-wert2          = ls_item-wert2.
-    ls_created-zbudget_check  = ls_item-zbudget_check.
-    ls_created-imprf          = ls_item-imprf.
-    ls_created-prart          = ls_item-prart.
-    ls_created-bukrs          = is_header-bukrs.
-
-    " External POSID reconstruction
-    IF ls_item-stufe = 1.
-      ls_created-posid = lv_pspid.
-    ELSE.
-      " Sequence of eligible (wert2 NOT INITIAL and stufe>1) items up to current
-      DATA(lv_seq) = 0.
-      DATA(ls_item2) = VALUE ztb_a2r_wbsitem( ).
-      LOOP AT lt_items_sorted INTO ls_item2 WHERE wert2 IS NOT INITIAL AND stufe > 1.
-        lv_seq += 1.
-        IF ls_item2 = ls_item.
-          EXIT.
+                IF NOT <fs_conn_itm>-pspnr IS INITIAL.
+                  CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
+                    EXPORTING
+                      input  = <fs_conn_itm>-pspnr
+                    IMPORTING
+                      output = <fs_conn_itm>-zwbs_number.
+                  <fs_conn_itm>-zstatus     = '04'.
+                  <fs_conn_itm>-error_txt   = ' '.
+                ENDIF.
+              ELSE.
+                IF     <fs_conn_itm>-loevm = 'X'
+                   AND <fs_conn_itm>-zwbs_number+3(5) = '00000'
+                   AND <fs_conn_itm>-pspnr IS INITIAL.
+                  <fs_conn_itm>-zstatus     = '81'.
+                ELSEIF <fs_conn_itm>-zstatus+0(1)     = '9'.
+                ELSE.
+                  <fs_conn_itm>-zstatus     = '80'.
+                ENDIF.
+              ENDIF.
+              <fs_conn_itm>-psphi       = ls_conn_hdr-pspnr.
+              <fs_conn_itm>-changed_by  = ls_conn_hdr-changed_by.
+              <fs_conn_itm>-change_date = ls_conn_hdr-change_date.
+              <fs_conn_itm>-change_time = ls_conn_hdr-change_time.
+            ENDLOOP.
+* update sap project and wbs value to stagging table
+* check to add row lock before modifying the entry
+            MODIFY zvconn_pv_hdr_in FROM ls_conn_hdr.
+            MODIFY zvconn_pv_itm_in FROM TABLE lt_conn_itm.
+          ENDIF.
         ENDIF.
-      ENDLOOP.
-      ls_created-posid = |{ lv_pspid }-{ lv_seq }|.
+*   End of changes by LCHENNA for CR 797199
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait   = 'X'
+          IMPORTING
+            return = ls_return.
+** approval log
+        gs_appr_log-text = 'Project and WBS Created Successfully'.
+        APPEND gs_appr_log TO gt_appr_log.
+        CLEAR: gs_appr_log.
+*Project Status
+        CLEAR lv_objnr.
+        SELECT SINGLE objnr FROM proj INTO lv_objnr
+                            WHERE pspid = ls_head-pspid.
+        IF NOT lv_objnr IS INITIAL.
+          IF gv_capex IS NOT INITIAL.
+            PERFORM settlement_rule.
+
+            PERFORM auc_creation.
+          ENDIF.
+          CALL METHOD zcl_sleep=>seconds
+            EXPORTING
+              iv_second = 1.
+          PERFORM set_release IN PROGRAM saplzwbs_req IF FOUND
+                              USING    'P'
+                                       ls_head-pspid
+                                       lv_objnr
+                              CHANGING lt_return.
+
+          IF gv_capex IS NOT INITIAL.
+            LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+              gv_error_email = 'X'.
+              EXIT.
+            ENDLOOP.
+            IF sy-subrc NE 0.
+              "approval log
+              gs_appr_log-text = 'WBS elements have been released Successfully'.
+              APPEND gs_appr_log TO gt_appr_log.
+              CLEAR: gs_appr_log.
+            ELSE.
+              " approval log
+              gv_error_email = 'X'.
+              gs_appr_log-text = 'WBS elements have not released'.
+              APPEND gs_appr_log TO gt_appr_log.
+              CLEAR: gs_appr_log.
+            ENDIF.
+            CALL METHOD zcl_sleep=>seconds
+              EXPORTING
+                iv_second = 1.
+            PERFORM budget.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ELSE.
+*   Begin of changes by LCHENNA for CR 797199
+* Stagging table wbs to be updated with error status
+*   End of changes by LCHENNA for CR 797199
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+** approval log
+      gv_error_email = 'X'.
+      gs_appr_log-text = 'Project and WBS Created not Successfull'.
+      APPEND gs_appr_log TO gt_appr_log.
+      CLEAR: gs_appr_log.
+    ENDIF.
+  ELSE.
+*   Begin of changes by LCHENNA for CR 797199
+* Stagging table wbs to be updated with error status
+*   End of changes by LCHENNA for CR 797199
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+** approval log
+    gv_error_email = 'X'.
+    gs_appr_log-text = 'Project and WBS Created not Successfull'.
+    APPEND gs_appr_log TO gt_appr_log.
+    CLEAR: gs_appr_log.
+  ENDIF.
+
+  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+    DELETE lt_return WHERE type NA 'EA'. "Delete all other information
+    EXIT.
+  ENDLOOP.
+  IF sy-subrc <> 0.
+    CLEAR lt_return.
+  ENDIF.
+
+ENDFORM.                    " WBS_REQUEST_CREATE
+
+
+
+FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
+                                ct_extensionin TYPE STANDARD TABLE.
+
+  DATA:lt_item      TYPE STANDARD TABLE OF zwbs_item,
+       ls_item_temp TYPE zwbs_item,
+       ls_te_wbs    TYPE bapi_te_wbs_element.
+
+  DATA:lv_upper_level TYPE ps_posid,
+       lv_left_level  TYPE ps_posid,
+       lv_up          TYPE ps_stufe,
+       lv_left        TYPE ps_stufe,
+       lv_index       TYPE i,
+       lv_request     TYPE zwbsrequest.
+  lv_request = zwbs_header-request.
+  EXPORT lv_request = lv_request TO MEMORY ID 'ZCOMPLETION_DATE'.
+*Capture New Entries
+  CLEAR:lt_item,ls_item_temp.
+  APPEND LINES OF lt_wbs_item TO lt_item.
+
+  SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
+  LOOP AT lt_item INTO ls_item.
+    CLEAR:ls_wbs_celement,ls_te_wbs,lv_index,lv_left_level,
+    lv_upper_level.
+
+    lv_index = sy-tabix + 1.
+
+    ls_wbs_celement-wbs_element      = ls_item-pspid_new.
+    ls_wbs_celement-description      = ls_item-post1.
+    ls_wbs_celement-company_code     = ls_item-pbukr.
+    ls_wbs_celement-business_area    = ls_item-pgsbr.
+    ls_wbs_celement-controlling_area = zwbs_header-vkokr.
+    ls_wbs_celement-profit_ctr       = ls_item-prctr.
+    ls_wbs_celement-plant            = ls_item-werks.
+
+    ls_wbs_celement-res_anal_key     = ls_item-abgsl.
+    IF gv_capex IS NOT INITIAL.
+      ls_wbs_celement-wbs_planning_element    = ls_item-plakz.
+      ls_wbs_celement-inv_reason              = ls_head-izwek.
+      ls_wbs_celement-invest_profile          = ls_item-imprf.
+      ls_wbs_celement-respsbl_cctr            = ls_item-akstl.
+      ls_wbs_celement-wbs_basic_start_date    = ls_item-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date   = ls_item-plsez.
+      ls_wbs_celement-applicant_no            = ls_item-astnr_n.
+      ls_wbs_celement-responsible_no          = ls_item-vernr_n.
+      ls_wbs_celement-wbs_forecast_start_date = ls_item-estrt.
+      ls_wbs_celement-wbs_forecast_finish_date = ls_item-eende.
+
+      IF ls_item-stufe = 1.
+        SELECT SINGLE * FROM zwbs_proj_tem_tc INTO @DATA(ls_proj) WHERE project = @ls_item-zproj_template.
+        IF sy-subrc = 0 AND ls_proj-unifier = 'X'.
+          ls_te_wbs-zunifier_proj = 'X'.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      ls_wbs_celement-wbs_planning_element  = abap_true.
+      ls_wbs_celement-wbs_billing_element   = ls_item-fakkz.
+      ls_wbs_celement-request_cctr          = ls_item-akstl.
+* Begin of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_basic_start_date  = ls_item-zstage_st_dt.
+      ls_wbs_celement-wbs_basic_finish_date = ls_item-zstage_end_dt.
+* End of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_mrp_element = ls_item-grpkz.
+*Extensions
+      ls_te_wbs-zprgman         = ls_head-zprgman.
+      ls_te_wbs-zprodcod        = ls_head-zprodcod.
+      ls_te_wbs-zasset          = ls_item-zasset.
+      ls_te_wbs-zrevstr         = ls_item-zrevstr.
+      ls_te_wbs-zarea           = ls_item-zarea.
+      ls_te_wbs-zscopcha        = ls_item-zscopcha.
+      ls_te_wbs-zopportunity_id = ls_item-zopportunity_id.
+      ls_te_wbs-zsynergy_id     = ls_item-zsynergy_id.
+      ls_te_wbs-zcustom         = ls_item-zcustom.
+      ls_te_wbs-z_material      = ls_item-z_material.
+* CR 626062 - Additional fields added
+      ls_te_wbs-zipm_pr_code    = ls_item-zipm_pr_code.
+      ls_te_wbs-zzfcst_status   = ls_item-zzfcst_status.
+      ls_te_wbs-zzserv_bund     = ls_item-zzserv_bund.
+      ls_te_wbs-zzfree_text     = ls_item-zzfree_text.
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_te_wbs-zibpaufnr       = ls_item-zibpaufnr.
+      ls_te_wbs-zibpebeln       = ls_item-zibpebeln.
+      ls_te_wbs-zfcw            = ls_item-zfcw.
+      ls_te_wbs-zibpflag        = ls_item-zibpflag.
+      ls_te_wbs-zibpflgmc       = ls_item-zibpflgmc.
+      ""* End of changes by AKOTA for CR 668561
+* Begin of Change by LCHENNA for CR 797199
+      ls_te_wbs-zmaint_sys        = ls_item-zmaint_sys.
+      ls_te_wbs-zrev_rec_dt       = ls_item-zrev_rec_dt.
+      ls_te_wbs-zprodcat          = ls_item-zprodcat.
+      ls_te_wbs-zlifecycle_module = ls_item-zlifecycle_module.
+      ls_te_wbs-zbusiness_case    = ls_item-zbusiness_case.
+* End of Change by LCHENNA for CR 797199
+*    ls_te_wbs-zstage_code_pv    = ls_item-zstate_code_pv.
+*Non Resourced Project field sent from Planview
+      ls_te_wbs-zibp_res_proj     = ls_item-zibp_res_proj.
+*Customer PO and Item
+      ls_te_wbs-zbstkd            = ls_item-zbstkd.
+      ls_te_wbs-zposex            = ls_item-zposex.
     ENDIF.
 
-    " Read internal number (PRPS-PSPNR)
-    SELECT SINGLE pspnr
-      FROM prps
-      INTO ls_created-posnr
-      WHERE posid = ls_created-posid.
+    ls_wbs_celement-wbs_account_assignment_element = ls_item-belkz.
 
-    APPEND ls_created TO et_wbs_created.
+*Add Levels to WBS based on Hierarchy
+    LOOP AT lt_item INTO ls_item_temp FROM lv_index.
+*Left Level
+      IF lv_left_level IS INITIAL AND
+         ls_item_temp-stufe = ls_item-stufe.
+        lv_left_level = ls_item_temp-pspid_new.
+      ENDIF.
+*Upper Level
+      IF ls_item_temp-stufe < ls_item-stufe.
+        lv_upper_level = ls_item_temp-pspid_new.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+    ls_wbs_celement-wbs_up   = lv_upper_level.
+    ls_wbs_celement-wbs_left = lv_left_level.
 
+    APPEND ls_wbs_celement TO ct_wbs_element.
+
+    IF NOT ls_te_wbs IS INITIAL.
+      ls_te_wbs-wbs_element     = ls_item-pspid_new.
+      ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+      ls_extensionin-valuepart1 = ls_te_wbs.
+* CR 626062 - Added
+      ls_extensionin-valuepart2 = ls_te_wbs-zzfree_text+37(23).
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+23(2) = ls_te_wbs-zfcw.
+      ls_extensionin-valuepart2+25(1) = ls_te_wbs-zibpflag.
+      ls_extensionin-valuepart2+26(1) = ls_te_wbs-zibpflgmc.
+      ls_extensionin-valuepart2+27(12) = ls_te_wbs-zibpaufnr.
+      ls_extensionin-valuepart2+39(10) = ls_te_wbs-zibpebeln.
+      ""* End of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+
+*   Begin of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+110(4) = ls_te_wbs-zprodcat."PRDCAT
+      ls_extensionin-valuepart2+114(8) = ls_te_wbs-zrev_rec_dt.
+      ls_extensionin-valuepart2+122(35) = ls_te_wbs-zbusiness_case.
+      ls_extensionin-valuepart2+157(35) = ls_te_wbs-zlifecycle_module.
+*      ls_extensionin-valuepart2+212(12) = ls_te_wbs-zstage_code_pv.
+*   End of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+212(1) = ls_te_wbs-zibp_res_proj.
+*Customer PO and Item
+      ls_extensionin-valuepart2+213(27) = ls_te_wbs-zbstkd.
+      ls_extensionin-valuepart3         = ls_te_wbs-zbstkd+27(8).
+      ls_extensionin-valuepart3+8(6)    = ls_te_wbs-zposex.
+      APPEND ls_extensionin TO ct_extensionin.
+    ENDIF.
   ENDLOOP.
 
-  rv_success = abap_true.
+ENDFORM.                    " CHECK_PRPS_CREATE
 
-ENDMETHOD.
+
+
+FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
+                                ct_extensionin TYPE STANDARD TABLE.
+
+  DATA:lt_item      TYPE STANDARD TABLE OF zwbs_item,
+       ls_item_temp TYPE zwbs_item,
+       ls_te_wbs    TYPE bapi_te_wbs_element.
+
+  DATA:lv_upper_level TYPE ps_posid,
+       lv_left_level  TYPE ps_posid,
+       lv_up          TYPE ps_stufe,
+       lv_left        TYPE ps_stufe,
+       lv_index       TYPE i,
+       lv_request     TYPE zwbsrequest.
+  lv_request = zwbs_header-request.
+  EXPORT lv_request = lv_request TO MEMORY ID 'ZCOMPLETION_DATE'.
+*Capture New Entries
+  CLEAR:lt_item,ls_item_temp.
+  APPEND LINES OF lt_wbs_item TO lt_item.
+
+  SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
+  LOOP AT lt_item INTO ls_item.
+    CLEAR:ls_wbs_celement,ls_te_wbs,lv_index,lv_left_level,
+    lv_upper_level.
+
+    lv_index = sy-tabix + 1.
+
+    ls_wbs_celement-wbs_element      = ls_item-pspid_new.
+    ls_wbs_celement-description      = ls_item-post1.
+    ls_wbs_celement-company_code     = ls_item-pbukr.
+    ls_wbs_celement-business_area    = ls_item-pgsbr.
+    ls_wbs_celement-controlling_area = zwbs_header-vkokr.
+    ls_wbs_celement-profit_ctr       = ls_item-prctr.
+    ls_wbs_celement-plant            = ls_item-werks.
+
+    ls_wbs_celement-res_anal_key     = ls_item-abgsl.
+    IF gv_capex IS NOT INITIAL.
+      ls_wbs_celement-wbs_planning_element    = ls_item-plakz.
+      ls_wbs_celement-inv_reason              = ls_head-izwek.
+      ls_wbs_celement-invest_profile          = ls_item-imprf.
+      ls_wbs_celement-respsbl_cctr            = ls_item-akstl.
+      ls_wbs_celement-wbs_basic_start_date    = ls_item-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date   = ls_item-plsez.
+      ls_wbs_celement-applicant_no            = ls_item-astnr_n.
+      ls_wbs_celement-responsible_no          = ls_item-vernr_n.
+      ls_wbs_celement-wbs_forecast_start_date = ls_item-estrt.
+      ls_wbs_celement-wbs_forecast_finish_date = ls_item-eende.
+
+      IF ls_item-stufe = 1.
+        SELECT SINGLE * FROM zwbs_proj_tem_tc INTO @DATA(ls_proj) WHERE project = @ls_item-zproj_template.
+        IF sy-subrc = 0 AND ls_proj-unifier = 'X'.
+          ls_te_wbs-zunifier_proj = 'X'.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      ls_wbs_celement-wbs_planning_element  = abap_true.
+      ls_wbs_celement-wbs_billing_element   = ls_item-fakkz.
+      ls_wbs_celement-request_cctr          = ls_item-akstl.
+* Begin of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_basic_start_date  = ls_item-zstage_st_dt.
+      ls_wbs_celement-wbs_basic_finish_date = ls_item-zstage_end_dt.
+* End of changes by LCHENNA for CR 797199
+      ls_wbs_celement-wbs_mrp_element = ls_item-grpkz.
+*Extensions
+      ls_te_wbs-zprgman         = ls_head-zprgman.
+      ls_te_wbs-zprodcod        = ls_head-zprodcod.
+      ls_te_wbs-zasset          = ls_item-zasset.
+      ls_te_wbs-zrevstr         = ls_item-zrevstr.
+      ls_te_wbs-zarea           = ls_item-zarea.
+      ls_te_wbs-zscopcha        = ls_item-zscopcha.
+      ls_te_wbs-zopportunity_id = ls_item-zopportunity_id.
+      ls_te_wbs-zsynergy_id     = ls_item-zsynergy_id.
+      ls_te_wbs-zcustom         = ls_item-zcustom.
+      ls_te_wbs-z_material      = ls_item-z_material.
+* CR 626062 - Additional fields added
+      ls_te_wbs-zipm_pr_code    = ls_item-zipm_pr_code.
+      ls_te_wbs-zzfcst_status   = ls_item-zzfcst_status.
+      ls_te_wbs-zzserv_bund     = ls_item-zzserv_bund.
+      ls_te_wbs-zzfree_text     = ls_item-zzfree_text.
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_te_wbs-zibpaufnr       = ls_item-zibpaufnr.
+      ls_te_wbs-zibpebeln       = ls_item-zibpebeln.
+      ls_te_wbs-zfcw            = ls_item-zfcw.
+      ls_te_wbs-zibpflag        = ls_item-zibpflag.
+      ls_te_wbs-zibpflgmc       = ls_item-zibpflgmc.
+      ""* End of changes by AKOTA for CR 668561
+* Begin of Change by LCHENNA for CR 797199
+      ls_te_wbs-zmaint_sys        = ls_item-zmaint_sys.
+      ls_te_wbs-zrev_rec_dt       = ls_item-zrev_rec_dt.
+      ls_te_wbs-zprodcat          = ls_item-zprodcat.
+      ls_te_wbs-zlifecycle_module = ls_item-zlifecycle_module.
+      ls_te_wbs-zbusiness_case    = ls_item-zbusiness_case.
+* End of Change by LCHENNA for CR 797199
+*    ls_te_wbs-zstage_code_pv    = ls_item-zstate_code_pv.
+*Non Resourced Project field sent from Planview
+      ls_te_wbs-zibp_res_proj     = ls_item-zibp_res_proj.
+*Customer PO and Item
+      ls_te_wbs-zbstkd            = ls_item-zbstkd.
+      ls_te_wbs-zposex            = ls_item-zposex.
+    ENDIF.
+
+    ls_wbs_celement-wbs_account_assignment_element = ls_item-belkz.
+
+*Add Levels to WBS based on Hierarchy
+    LOOP AT lt_item INTO ls_item_temp FROM lv_index.
+*Left Level
+      IF lv_left_level IS INITIAL AND
+         ls_item_temp-stufe = ls_item-stufe.
+        lv_left_level = ls_item_temp-pspid_new.
+      ENDIF.
+*Upper Level
+      IF ls_item_temp-stufe < ls_item-stufe.
+        lv_upper_level = ls_item_temp-pspid_new.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+    ls_wbs_celement-wbs_up   = lv_upper_level.
+    ls_wbs_celement-wbs_left = lv_left_level.
+
+    APPEND ls_wbs_celement TO ct_wbs_element.
+
+    IF NOT ls_te_wbs IS INITIAL.
+      ls_te_wbs-wbs_element     = ls_item-pspid_new.
+      ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+      ls_extensionin-valuepart1 = ls_te_wbs.
+* CR 626062 - Added
+      ls_extensionin-valuepart2 = ls_te_wbs-zzfree_text+37(23).
+* CR 626062 - Ended
+      ""* Begin of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+23(2) = ls_te_wbs-zfcw.
+      ls_extensionin-valuepart2+25(1) = ls_te_wbs-zibpflag.
+      ls_extensionin-valuepart2+26(1) = ls_te_wbs-zibpflgmc.
+      ls_extensionin-valuepart2+27(12) = ls_te_wbs-zibpaufnr.
+      ls_extensionin-valuepart2+39(10) = ls_te_wbs-zibpebeln.
+      ""* End of changes by AKOTA for CR 668561
+      ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+
+*   Begin of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+110(4) = ls_te_wbs-zprodcat."PRDCAT
+      ls_extensionin-valuepart2+114(8) = ls_te_wbs-zrev_rec_dt.
+      ls_extensionin-valuepart2+122(35) = ls_te_wbs-zbusiness_case.
+      ls_extensionin-valuepart2+157(35) = ls_te_wbs-zlifecycle_module.
+*      ls_extensionin-valuepart2+212(12) = ls_te_wbs-zstage_code_pv.
+*   End of changes by LCHENNA for CR 797199
+      ls_extensionin-valuepart2+212(1) = ls_te_wbs-zibp_res_proj.
+*Customer PO and Item
+      ls_extensionin-valuepart2+213(27) = ls_te_wbs-zbstkd.
+      ls_extensionin-valuepart3         = ls_te_wbs-zbstkd+27(8).
+      ls_extensionin-valuepart3+8(6)    = ls_te_wbs-zposex.
+      APPEND ls_extensionin TO ct_extensionin.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " CHECK_PRPS_CREATE
+
