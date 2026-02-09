@@ -1,94 +1,123 @@
-METHOD get_next_project_number.
-*&---------------------------------------------------------------------*
-*& METHOD: GET_NEXT_PROJECT_NUMBER
-*& FDS: "Incorporate standard functionality to check the next available
-*&       running number (similar to 'Check next open number' in CJ20N)"
-*& CORRECTED: Using exact FM parameter names from SE37
-*&---------------------------------------------------------------------*
+FUNCTION bapi_bus2001_create.
+*"----------------------------------------------------------------------
+*"*"Lokale Schnittstelle:
+*"  IMPORTING
+*"     VALUE(I_PROJECT_DEFINITION) LIKE  BAPI_BUS2001_NEW STRUCTURE
+*"        BAPI_BUS2001_NEW
+*"  TABLES
+*"      ET_RETURN STRUCTURE  BAPIRET2 OPTIONAL
+*"      EXTENSIONIN STRUCTURE  BAPIPAREX OPTIONAL
+*"      EXTENSIONOUT STRUCTURE  BAPIPAREX OPTIONAL
+*"----------------------------------------------------------------------
 
-  DATA: lv_proj_exp        TYPE proj-pspid,   " CORRECT: PROJ_EXP not PROJ_E_IMP
-        lv_proj_s_imp      TYPE proj-pspid,   " Start value for FM
-        lv_template_pspnr  TYPE proj-pspnr,   " Template PSPNR (internal)
-        lv_template_pspid  TYPE proj-pspid.   " Template PSPID (external)
+  DATA: lv_key               TYPE char24,
+        lv_dialog_status_tmp TYPE c,
+        lv_msghand_num       LIKE sy-uzeit,
+        lv_subrc             LIKE sy-subrc,
+        ls_object            TYPE psguid_ts_guid_for_extern.
 
-  CLEAR rv_pspid.
+* Exception 'message_handler_error' is NOT caught by design to force a
+* dump as we deal with a program error in this case
+  CALL FUNCTION 'PS_BAPI_INITIALIZE'
+       IMPORTING
+            e_dialog_status = lv_dialog_status_tmp
+            e_msghand_num   = lv_msghand_num
+       TABLES
+            return          = et_return.
 
-  " ═══════════════════════════════════════════════════════════════
-  " Step 1: Get starting pattern - Priority order:
-  " 1st: Last project from this profile
-  " 2nd: Template project from config table
-  " ═══════════════════════════════════════════════════════════════
-  
-  " Try to get last project from this profile
-  SELECT pspid
-    FROM proj
-    WHERE profl = @iv_profl
-    ORDER BY pspid DESCENDING
-    UP TO 1 ROWS
-    INTO @lv_proj_s_imp.
-  ENDSELECT.
+* prepare BAPI, call early badi
+  CALL FUNCTION 'PS_BAPI_PREPARE'
+       EXPORTING
+            i_project_name    = i_project_definition-project_definition
+            i_project_definition_create = i_project_definition
+            i_method                    = con_pro_create
+       IMPORTING
+            e_project_name    = i_project_definition-project_definition
+       TABLES
+            extensionin                 = extensionin
+            extensionout                = extensionout
+       EXCEPTIONS
+            precommit_already_called    = 1
+            init_missing                = 2
+            one_project_violation       = 3
+            badi_error                  = 4
+            project_read_error          = 5.
+  lv_subrc = sy-subrc.
 
-  " If no existing projects, use template as pattern
-  IF sy-subrc <> 0 OR lv_proj_s_imp IS INITIAL.
-    
-    " Get template project PSPNR from config table
-    SELECT SINGLE pspnr
-      FROM ztb_a2r_conftab1
-      INTO @lv_template_pspnr
-      WHERE profl = @iv_profl.
-    
-    IF sy-subrc = 0 AND lv_template_pspnr IS NOT INITIAL.
-      
-      " Convert internal PSPNR to external PSPID format
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-        EXPORTING
-          input  = lv_template_pspnr
-        IMPORTING
-          output = lv_template_pspid.
-      
-      lv_proj_s_imp = lv_template_pspid.
-      
-    ELSE.
-      MESSAGE e029(zcj00) WITH 'No starting pattern found for profile' iv_profl.
-      RETURN.
-    ENDIF.
+* if prepare was successful, try to create project
+  IF lv_subrc IS INITIAL.
+    CALL FUNCTION 'CJ2001_CREATE'
+         EXPORTING
+              i_project_definition = i_project_definition
+         TABLES
+              extensionin          = extensionin
+         EXCEPTIONS
+              project_not_created  = 1.
+    lv_subrc = sy-subrc.
+  else.
+*   Prepare failed: convert project definition
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+         EXPORTING
+              input         = i_project_definition-project_definition
+         IMPORTING
+              output        = i_project_definition-project_definition
+         EXCEPTIONS
+              error_message = 0.
   ENDIF.
 
-  " ═══════════════════════════════════════════════════════════════
-  " Step 2: Call CN_SUCHE_FREIE_NUMMER with CORRECT parameters
-  " From SE37 screenshot: 
-  "   - Import: PROJ_S_IMP (start value)
-  "   - Export: PROJ_EXP (final value) ← NOT PROJ_E_IMP!
-  " ═══════════════════════════════════════════════════════════════
-  CALL FUNCTION 'CN_SUCHE_FREIE_NUMMER'
-    EXPORTING
-      search_imp = '1'              " Search type: 1 = Project
-      proj_s_imp = lv_proj_s_imp    " Start value - project definition
-      refresh    = abap_true        " Refresh search
-      no_dialog  = abap_true        " No selection popup
-    IMPORTING
-      proj_exp   = lv_proj_exp      " ← CORRECTED: proj_exp not proj_e_imp
-    EXCEPTIONS
-      wrong_search    = 1
-      search_canceled = 2
-      OTHERS          = 3.
-
-  IF sy-subrc <> 0.
-    MESSAGE e029(zcj00) WITH 'CN_SUCHE_FREIE_NUMMER failed' sy-subrc.
-    RETURN.
+  IF lv_subrc <> 0.
+    MESSAGE e007(cnif_pi) WITH text-pro
+            i_project_definition-project_definition INTO null.
+    CALL FUNCTION 'PS_FLAG_SET_GLOBAL_FLAGS'
+         EXPORTING
+              i_error = con_yes.
+  ELSE.
+    MESSAGE s004(cnif_pi) WITH text-pro
+            i_project_definition-project_definition INTO null.
+    CALL FUNCTION 'PS_FLAG_SET_GLOBAL_FLAGS'
+         EXPORTING
+              i_wbs_data = con_yes.
+*   Register object in success buffer table
+    CLEAR ls_object.
+    ls_object-object_type        = con_objtype_project.
+    ls_object-project_definition =
+                              i_project_definition-project_definition.
+    ls_object-vbkz               = con_pro_create.
+    CALL FUNCTION 'PS_BAPI_SUCCESS_BT_APPEND'
+         EXPORTING
+              i_object         = ls_object
+         EXCEPTIONS
+              wrong_parameters = 0.
   ENDIF.
 
-  " ═══════════════════════════════════════════════════════════════
-  " Step 3: Validate result
-  " ═══════════════════════════════════════════════════════════════
-  IF lv_proj_exp IS INITIAL.
-    MESSAGE e029(zcj00) WITH 'No next project number returned'.
-    RETURN.
-  ENDIF.
+* Get last message of current project ('S' vs. 'E') as first one in
+* the log (only 'message ... into null' NOT followed by 'perform
+* put_sy_message(saplco2o)')
+  CALL FUNCTION 'PS_BAPI_MESSAGE_APPEND'
+       TABLES
+            return = et_return.
+* sy-msgv2 contains the converted project definition
+  lv_key = sy-msgv2.
+* Get remaining messages of current method (stored by 'message ...
+* into null' AND 'perform put_sy_message(saplco2o)')
+  CALL FUNCTION 'PS_BAPI_APPL_MESSAGE_APPEND'
+       EXPORTING
+            objectkey     = lv_key
+            i_msghand_num = lv_msghand_num
+       TABLES
+            return        = et_return.
 
-  " ═══════════════════════════════════════════════════════════════
-  " Step 4: Return the generated project number (external format)
-  " ═══════════════════════════════════════════════════════════════
-  rv_pspid = lv_proj_exp.
+* Finish BAPI - call late badi, reset dialog flags
+  CALL FUNCTION 'PS_BAPI_FINISH'
+       EXPORTING
+            i_project_definition_create = i_project_definition
+            i_dialog_status             = lv_dialog_status_tmp
+            i_msghand_num               = lv_msghand_num
+            i_method                    = con_pro_create
+            i_subrc                     = lv_subrc
+       TABLES
+            return                      = et_return
+            extensionin                 = extensionin
+            extensionout                = extensionout.
 
-ENDMETHOD.
+ENDFUNCTION.
