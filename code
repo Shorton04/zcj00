@@ -3,10 +3,10 @@ METHOD get_next_project_number.
 *& METHOD: GET_NEXT_PROJECT_NUMBER
 *& FDS: "Incorporate standard functionality to check the next available
 *&       running number (similar to 'Check next open number' in CJ20N)"
-*& Uses: CN_SUCHE_FREIE_NUMMER with exact parameter names from SE37
+*& CORRECTED: Using exact FM parameter names from SE37
 *&---------------------------------------------------------------------*
 
-  DATA: lv_proj_e_imp      TYPE proj-pspid,   " Final value from FM
+  DATA: lv_proj_exp        TYPE proj-pspid,   " CORRECT: PROJ_EXP not PROJ_E_IMP
         lv_proj_s_imp      TYPE proj-pspid,   " Start value for FM
         lv_template_pspnr  TYPE proj-pspnr,   " Template PSPNR (internal)
         lv_template_pspid  TYPE proj-pspid.   " Template PSPID (external)
@@ -55,17 +55,19 @@ METHOD get_next_project_number.
   ENDIF.
 
   " ═══════════════════════════════════════════════════════════════
-  " Step 2: Call CN_SUCHE_FREIE_NUMMER with exact parameters
-  " Same function used by CJ20N "Check next open number" button
+  " Step 2: Call CN_SUCHE_FREIE_NUMMER with CORRECT parameters
+  " From SE37 screenshot: 
+  "   - Import: PROJ_S_IMP (start value)
+  "   - Export: PROJ_EXP (final value) ← NOT PROJ_E_IMP!
   " ═══════════════════════════════════════════════════════════════
   CALL FUNCTION 'CN_SUCHE_FREIE_NUMMER'
     EXPORTING
-      search_imp      = '1'              " Search type: 1 = Project
-      proj_s_imp      = lv_proj_s_imp    " Start value - project definition
-      refresh         = abap_true        " Refresh search
-      no_dialog       = abap_true        " No selection popup
+      search_imp = '1'              " Search type: 1 = Project
+      proj_s_imp = lv_proj_s_imp    " Start value - project definition
+      refresh    = abap_true        " Refresh search
+      no_dialog  = abap_true        " No selection popup
     IMPORTING
-      proj_e_imp      = lv_proj_e_imp    " Final value - project definition
+      proj_exp   = lv_proj_exp      " ← CORRECTED: proj_exp not proj_e_imp
     EXCEPTIONS
       wrong_search    = 1
       search_canceled = 2
@@ -79,7 +81,7 @@ METHOD get_next_project_number.
   " ═══════════════════════════════════════════════════════════════
   " Step 3: Validate result
   " ═══════════════════════════════════════════════════════════════
-  IF lv_proj_e_imp IS INITIAL.
+  IF lv_proj_exp IS INITIAL.
     MESSAGE e029(zcj00) WITH 'No next project number returned'.
     RETURN.
   ENDIF.
@@ -87,6 +89,6 @@ METHOD get_next_project_number.
   " ═══════════════════════════════════════════════════════════════
   " Step 4: Return the generated project number (external format)
   " ═══════════════════════════════════════════════════════════════
-  rv_pspid = lv_proj_e_imp.
+  rv_pspid = lv_proj_exp.
 
 ENDMETHOD.
