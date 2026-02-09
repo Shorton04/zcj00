@@ -1,3 +1,55 @@
+DATA:ls_project_new     TYPE bapi_bus2001_new,
+     ls_project_def     TYPE bapi_bus2001_chg,
+     ls_project_def_upd TYPE bapi_bus2001_upd,
+     lt_methods         TYPE STANDARD TABLE OF bapi_method_project,
+     ls_methods         TYPE bapi_method_project,
+     lt_wbs_element     TYPE STANDARD TABLE OF bapi_bus2054_chg,
+     lt_wbs_celement    TYPE STANDARD TABLE OF bapi_bus2054_new,
+     lt_wbs_element_upd TYPE STANDARD TABLE OF bapi_bus2054_upd,
+     lt_extensionin     TYPE STANDARD TABLE OF bapiparex,
+     lt_cextensionin    TYPE STANDARD TABLE OF bapiparex,
+     lt_wbs_elements    TYPE STANDARD TABLE OF bapi_wbs_elements,
+     lt_wbs_status      TYPE STANDARD TABLE OF bapi_wbs_system_status,
+     ls_wbs_celement    TYPE bapi_bus2054_new,
+     ls_wbs_element     TYPE bapi_bus2054_chg,
+     ls_wbs_element_upd TYPE bapi_bus2054_upd,
+     ls_extensionin     TYPE bapiparex.
+
+
+FORM check_proj_create CHANGING cs_project_new TYPE bapi_bus2001_new.
+
+  cs_project_new-project_definition   = ls_head-pspid.
+  cs_project_new-description          = ls_head-post1.
+  cs_project_new-wbs_status_profile   = ls_head-stspr.
+  cs_project_new-company_code         = ls_head-vbukr.
+  cs_project_new-business_area        = ls_head-vgsbr.
+  cs_project_new-controlling_area     = ls_head-vkokr.
+  cs_project_new-profit_ctr           = ls_head-prctr.
+  cs_project_new-project_currency     = ls_head-pwhie.
+  cs_project_new-start                = ls_head-plfaz.
+  cs_project_new-finish               = ls_head-plsez.
+  cs_project_new-plant                = ls_head-werks.
+  cs_project_new-calendar             = ls_head-kalid.
+  cs_project_new-plan_basic           = ls_head-vgplf.
+  cs_project_new-plan_fcst            = ls_head-ewplf.
+  cs_project_new-time_unit            = ls_head-zteht.
+  cs_project_new-network_profile      = ls_head-vprof.
+  cs_project_new-project_profile      = ls_head-profl.
+  cs_project_new-budget_profile       = ls_head-bprof.
+  cs_project_new-project_stock        = ls_head-besta.
+  cs_project_new-wbs_sched_profile    = ls_head-scprf.
+  cs_project_new-plan_profile         = ls_head-pprof.
+  cs_project_new-planintegrated       = ls_head-plint.
+  cs_project_new-valuation_spec_stock = ls_head-kzbws.
+  cs_project_new-func_area            = ls_head-func_area.
+  cs_project_new-sched_scenario       = ls_head-schtyp.
+  cs_project_new-applicant_no         = ls_head-astnr_n.
+  cs_project_new-responsible_no       = ls_head-vernr_n.
+  cs_project_new-grouping_indicator   = ls_head-grtop.
+  "cs_project_new-FCST_START           = ls_head-estrt.
+  "cs_project_new-FCST_finish          = ls_head-eende.
+
+ENDFORM.                    " CHECK_PROJ_CREATE
 *&---------------------------------------------------------------------*
 *&      Form  WBS_REQUEST_CREATE
 *&---------------------------------------------------------------------*
