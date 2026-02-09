@@ -1,3 +1,7 @@
+
+
+
+
 CLASS zcl_a2r_wbs_builder DEFINITION
 PUBLIC
 FINAL
@@ -1418,3 +1422,594 @@ ENDMETHOD.
   
   ENDMETHOD.
   ENDCLASS.
+
+
+
+
+
+*&———————————————————————*
+*& Include          ZTR_A2R_WBSZCJ01_PAI (UPDATED - WORKFLOW SKIPPED)
+*&———————————————————————*
+*&———————————————————————*
+*& Module USER_COMMAND_0200 INPUT
+*&———————————————————————*
+MODULE user_command_0200 INPUT.
+DATA: lv_ok_code TYPE sy-ucomm.
+
+lv_ok_code = sy-ucomm.
+CLEAR sy-ucomm.
+
+CASE lv_ok_code.
+WHEN ‘F4_POSNR’.
+PERFORM f4_im_number CHANGING p_posnr.
+
+```
+WHEN 'BACK'.
+  PERFORM free_tree_control.
+  LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+WHEN 'CANCEL'.
+  PERFORM free_tree_control.
+  LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+WHEN 'EXIT'.
+  PERFORM free_tree_control.
+  LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+WHEN 'NEXT' OR 'ENTER'.
+  " Validation
+  IF p_pspid IS INITIAL.
+    MESSAGE e001 WITH 'IM Number'.
+    RETURN.
+  ENDIF.
+
+  IF p_post1 IS INITIAL.
+    MESSAGE e001 WITH 'Project Description'.
+    RETURN.
+  ENDIF.
+
+  IF p_verna IS INITIAL.
+    MESSAGE e001 WITH 'Person Responsible'.
+    RETURN.
+  ENDIF.
+
+  IF p_plsez IS INITIAL.
+    MESSAGE e001 WITH 'Finish Date'.
+    RETURN.
+  ENDIF.
+
+  IF p_prctr IS INITIAL.
+    MESSAGE e001 WITH 'Profit Center'.
+    RETURN.
+  ENDIF.
+
+  IF p_kostl IS INITIAL.
+    MESSAGE e001 WITH 'Cost Center'.
+    RETURN.
+  ENDIF.
+
+  IF p_profl IS INITIAL.
+    MESSAGE e001 WITH 'Project Profile'.
+    RETURN.
+  ENDIF.
+
+  IF p_pspid IS INITIAL.
+    MESSAGE e001 WITH 'Project Template'.
+    RETURN.
+  ENDIF.
+
+  " Validate and go to Screen 100
+  PERFORM validate_screen1.
+  IF sy-subrc = 0.
+    PERFORM free_tree_control.
+    PERFORM prepare_screen2.
+    CALL SCREEN 100.
+  ENDIF.
+```
+
+ENDCASE.
+ENDMODULE.
+
+*&———————————————————————*
+*& Module USER_COMMAND_0100 INPUT (UPDATED - SUBMIT SKIPS WORKFLOW)
+*&———————————————————————*
+MODULE user_command_0100 INPUT.
+DATA: lv_ok_code1 TYPE sy-ucomm.
+
+lv_ok_code1 = sy-ucomm.
+CLEAR sy-ucomm.
+
+CASE lv_ok_code1.
+WHEN ‘SAVE’.
+PERFORM get_text.
+PERFORM save_request.
+
+```
+WHEN 'CHECK'.
+  PERFORM get_text.
+  PERFORM check_data.
+
+WHEN 'SUBMIT'.
+  " ═══════════════════════════════════════════════════════════
+  " SUBMIT WITHOUT WORKFLOW (DIRECT PROJECT CREATION)
+  " ═══════════════════════════════════════════════════════════
+  PERFORM get_text.
+  PERFORM check_data.
+  IF sy-subrc = 0.
+    PERFORM submit_direct_creation.  " ← NEW: Skip workflow
+  ENDIF.
+
+WHEN 'UPLD'.
+  PERFORM upload.
+
+WHEN 'DWNLD'.
+  PERFORM download.
+
+WHEN 'TOTALUP'.
+  PERFORM total_up_budget.
+
+WHEN 'ADDROW'.
+  PERFORM add_wbs_row.
+
+WHEN 'DELROW'.
+  PERFORM delete_wbs_rows.
+
+WHEN 'ATTACH'.
+  PERFORM handle_attachments.
+
+WHEN 'BACK'.
+  LEAVE TO SCREEN 200.
+
+WHEN 'EXIT' OR 'CANCEL'.
+  LEAVE TO SCREEN 0.
+```
+
+ENDCASE.
+ENDMODULE.
+
+*&———————————————————————*
+*& Module VALIDATE_POSNR INPUT
+*&———————————————————————*
+MODULE validate_posnr INPUT.
+
+DATA: lv_posnr_numeric TYPE im_posnr,
+lv_input_char    TYPE char20,
+lv_posid         TYPE im_posid.
+
+IF p_posnr IS NOT INITIAL.
+
+```
+lv_input_char = p_posnr.
+
+CONDENSE lv_input_char NO-GAPS.
+TRANSLATE lv_input_char TO UPPER CASE.
+
+lv_posid = lv_input_char.
+
+SELECT SINGLE posnr FROM impr
+  INTO lv_posnr_numeric
+  WHERE posid = lv_posid.
+
+IF sy-subrc = 0.
+  p_posnr = lv_posnr_numeric.
+ELSE.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_input_char
+    IMPORTING
+      output = lv_posnr_numeric.
+
+  SELECT SINGLE posnr FROM impr
+    INTO @DATA(lv_check)
+    WHERE posnr = @lv_posnr_numeric.
+
+  IF sy-subrc = 0.
+    p_posnr = lv_posnr_numeric.
+  ELSE.
+    MESSAGE e002 WITH lv_input_char.
+    RETURN.
+  ENDIF.
+ENDIF.
+
+IF p_posnr <> gv_posnr_old.
+  PERFORM get_im_data USING p_posnr.
+  gv_posnr_old = p_posnr.
+ENDIF.
+```
+
+ENDIF.
+
+ENDMODULE.
+
+MODULE f4_help_im_number INPUT.
+PERFORM f4_im_number CHANGING p_posnr.
+ENDMODULE.
+
+*&———————————————————————*
+*& Module USER_COMMAND_0400 INPUT
+*&———————————————————————*
+MODULE user_command_0400 INPUT.
+PERFORM get_text.
+ENDMODULE.
+
+*&———————————————————————*
+*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
+*&———————————————————————*
+MODULE set_header_display_values OUTPUT.
+
+DATA: lv_reqtype_text TYPE char20,
+lv_im_posid     TYPE im_posid.
+
+IF gs_header-ernam IS NOT INITIAL.
+PERFORM get_user_fullname
+USING    gs_header-ernam
+CHANGING lv_fullname.
+gv_requestor_display = lv_fullname.
+ELSE.
+PERFORM get_user_fullname
+USING    sy-uname
+CHANGING lv_fullname.
+gv_requestor_display = lv_fullname.
+ENDIF.
+
+IF gs_header-z_reqtype IS NOT INITIAL.
+PERFORM get_request_type_text
+USING    gs_header-z_reqtype
+CHANGING lv_reqtype_text.
+gv_reqtype_display = lv_reqtype_text.
+ELSE.
+gv_reqtype_display = ‘Create’.
+ENDIF.
+
+IF gs_header-posnr IS NOT INITIAL.
+PERFORM get_im_posid_for_display
+USING    gs_header-posnr
+CHANGING gv_im_posid_display.
+ENDIF.
+
+IF gs_header-posnr IS NOT INITIAL.
+PERFORM get_available_budget_display
+USING    gs_header-posnr
+CHANGING gv_avail_budget_text
+gv_available_budget.
+ELSE.
+gv_avail_budget_text = ‘No’.
+CLEAR gv_available_budget.
+ENDIF.
+
+IF gs_header-pspnr IS NOT INITIAL.
+PERFORM get_project_currency
+USING    gs_header-pspnr
+CHANGING gv_project_currency.
+ELSE.
+IF gv_bukrs IS NOT INITIAL.
+SELECT SINGLE waers
+FROM t001
+INTO gv_project_currency
+WHERE bukrs = gv_bukrs.
+ENDIF.
+ENDIF.
+
+ENDMODULE.
+
+
+
+
+*&———————————————————————*
+*& Include          ZTR_A2R_WBSZCJ01_F01 (ADD THIS NEW ROUTINE)
+*&———————————————————————*
+
+*&———————————————————————*
+*& Form SUBMIT_DIRECT_CREATION (NEW - SKIP WORKFLOW)
+*&———————————————————————*
+
+- This routine directly creates the project without triggering workflow
+- Use this for testing or when workflow is not required
+  *–––––––––––––––––––––––––––––––––––*
+  FORM submit_direct_creation.
+
+DATA: lv_reqnum  TYPE char10,
+lv_success TYPE abap_bool.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+“═══════════════════════════════════════════════════════════════════
+PERFORM convert_from_display.
+PERFORM populate_header_structure.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 2: SAVE REQUEST (GET REQUEST NUMBER)
+“═══════════════════════════════════════════════════════════════════
+lv_reqnum = go_builder->save_request(
+is_header    = gs_header
+it_wbs_items = gt_wbs_items
+).
+
+IF lv_reqnum IS INITIAL.
+MESSAGE e013(zcj00) WITH ‘Failed to save request before submit’.
+RETURN.
+ENDIF.
+
+“ Store request number in header
+gs_header-zreq_num = lv_reqnum.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 3: UPDATE STATUS TO PENDING (Required for tracking)
+“═══════════════════════════════════════════════════════════════════
+UPDATE ztb_a2r_wbshdr
+SET request_status = ‘PENDING’
+WHERE zreq_num = lv_reqnum.
+
+IF sy-subrc <> 0.
+MESSAGE e016(zcj00) WITH ‘Failed to update status for’ lv_reqnum.
+ROLLBACK WORK.
+RETURN.
+ENDIF.
+
+“ Commit the status change
+COMMIT WORK AND WAIT.
+
+“ Update local header structure
+gs_header-request_status = ‘PENDING’.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 4: CREATE PROJECT DIRECTLY (SKIP WORKFLOW)
+“═══════════════════════════════════════════════════════════════════
+MESSAGE i036(zcj00) WITH ‘Creating project for request’ lv_reqnum.
+
+lv_success = go_builder->create_project(
+is_header    = gs_header
+it_wbs_items = gt_wbs_items
+).
+
+IF lv_success = abap_true.
+“───────────────────────────────────────────────────────────────
+“ PROJECT CREATED SUCCESSFULLY
+“───────────────────────────────────────────────────────────────
+
+```
+" Update status to APPROVED (since no workflow)
+UPDATE ztb_a2r_wbshdr
+  SET request_status       = 'APPROVED'
+      zapproved_by         = sy-uname
+      zrequest_approved_on = sy-datum
+  WHERE zreq_num = lv_reqnum.
+
+IF sy-subrc = 0.
+  COMMIT WORK.
+  
+  " Success message with project number
+  SELECT SINGLE pspnr FROM ztb_a2r_wbshdr
+    INTO @DATA(lv_pspnr)
+    WHERE zreq_num = @lv_reqnum.
+
+  IF sy-subrc = 0 AND lv_pspnr IS NOT INITIAL.
+    " Get external PSPID for display
+    SELECT SINGLE pspid FROM proj
+      INTO @DATA(lv_pspid)
+      WHERE pspnr = @lv_pspnr.
+
+    IF sy-subrc = 0.
+      MESSAGE s037(zcj00) WITH 'Request' lv_reqnum 
+                               'approved. Project:' lv_pspid.
+    ELSE.
+      MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+    ENDIF.
+  ELSE.
+    MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+  ENDIF.
+
+  " Return to main screen
+  LEAVE TO SCREEN 0.
+
+ELSE
+  MESSAGE e038(zcj00) WITH 'Failed to update approval status'.
+  ROLLBACK WORK.
+ENDIF.
+```
+
+ELSE.
+“───────────────────────────────────────────────────────────────
+“ PROJECT CREATION FAILED
+“───────────────────────────────────────────────────────────────
+
+```
+" Mark as ERROR
+UPDATE ztb_a2r_wbshdr
+  SET request_status = 'ERROR'
+  WHERE zreq_num = lv_reqnum.
+
+COMMIT WORK.
+
+MESSAGE e034(zcj00) WITH 'Error creating project for request' lv_reqnum.
+RETURN.
+```
+
+ENDIF.
+
+ENDFORM.
+
+*&———————————————————————*
+*& Form SUBMIT_REQUEST (ORIGINAL - WITH WORKFLOW)
+*&———————————————————————*
+
+- Keep this for future when workflow is enabled
+- Currently not used - SUBMIT button calls SUBMIT_DIRECT_CREATION
+  *–––––––––––––––––––––––––––––––––––*
+  FORM submit_request.
+
+DATA: lv_reqnum        TYPE char10,
+lv_appr1         TYPE char8,
+lv_appr2         TYPE char8,
+lv_auto          TYPE char1,
+lv_error_handler TYPE char8,
+lt_l1_approvers  TYPE hpa_t_bname,
+lt_l2_approvers  TYPE hpa_t_bname,
+lv_found         TYPE abap_bool,
+lv_success       TYPE abap_bool.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+“═══════════════════════════════════════════════════════════════════
+PERFORM convert_from_display.
+PERFORM populate_header_structure.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 2: SAVE REQUEST (GETS REQUEST NUMBER)
+“═══════════════════════════════════════════════════════════════════
+lv_reqnum = go_builder->save_request(
+is_header    = gs_header
+it_wbs_items = gt_wbs_items
+).
+
+IF lv_reqnum IS INITIAL.
+MESSAGE e013(zcj00) WITH ‘Failed to save request before submit’.
+RETURN.
+ENDIF.
+
+“ Store request number in header
+gs_header-zreq_num = lv_reqnum.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 3: GET APPROVERS FROM CONFIGURATION + HRP1001
+“═══════════════════════════════════════════════════════════════════
+lv_found = go_builder->check_approver_matrix(
+EXPORTING
+iv_bukrs   = gs_header-bukrs
+iv_profl   = gs_header-profl
+iv_reqtype = gs_header-z_reqtype
+IMPORTING
+ev_appr1         = lv_appr1
+ev_appr2         = lv_appr2
+ev_auto          = lv_auto
+ev_error_handler = lv_error_handler
+et_l1_approvers  = lt_l1_approvers
+et_l2_approvers  = lt_l2_approvers
+).
+
+IF lv_found = abap_false.
+MESSAGE e008(zcj00) WITH ‘No approver configuration found for’
+gs_header-bukrs gs_header-profl.
+RETURN.
+ENDIF.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 4: UPDATE STATUS TO PENDING (CRITICAL!)
+“═══════════════════════════════════════════════════════════════════
+UPDATE ztb_a2r_wbshdr
+SET request_status = ‘PENDING’
+WHERE zreq_num = lv_reqnum.
+
+IF sy-subrc <> 0.
+MESSAGE e016(zcj00) WITH ‘Failed to update status to pending for’ lv_reqnum.
+ROLLBACK WORK.
+RETURN.
+ENDIF.
+
+COMMIT WORK AND WAIT.
+
+gs_header-request_status = ‘PENDING’.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 5: TRIGGER WORKFLOW OR AUTO-APPROVE
+“═══════════════════════════════════════════════════════════════════
+
+IF lv_auto = ‘X’.
+“───────────────────────────────────────────────────────────────
+“ AUTO-APPROVAL PATH: No approvers configured
+“───────────────────────────────────────────────────────────────
+MESSAGE i035(zcj00) WITH ‘Request’ lv_reqnum ‘has no approvers - auto-approving’.
+
+```
+lv_success = go_builder->create_project(
+  is_header    = gs_header
+  it_wbs_items = gt_wbs_items
+).
+
+IF lv_success = abap_true.
+  UPDATE ztb_a2r_wbshdr
+    SET request_status       = 'APPROVED'
+        zapproved_by         = sy-uname
+        zrequest_approved_on = sy-datum
+    WHERE zreq_num = lv_reqnum.
+
+  COMMIT WORK.
+  MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved and project created'.
+  LEAVE TO SCREEN 0.
+
+ELSE.
+  UPDATE ztb_a2r_wbshdr
+    SET request_status = 'ERROR'
+    WHERE zreq_num = lv_reqnum.
+
+  COMMIT WORK.
+  MESSAGE e034(zcj00) WITH 'Error creating project for request' lv_reqnum.
+  RETURN.
+ENDIF.
+```
+
+ELSE.
+“───────────────────────────────────────────────────────────────
+“ WORKFLOW PATH: Approvers exist, trigger workflow
+“───────────────────────────────────────────────────────────────
+lv_success = go_builder->trigger_workflow(
+is_header   = gs_header
+iv_appr1    = lv_appr1
+iv_appr2    = lv_appr2
+it_l1_apprv = lt_l1_approvers
+it_l2_apprv = lt_l2_approvers
+).
+
+```
+IF lv_success = abap_true.
+  COMMIT WORK.
+  MESSAGE s015(zcj00) WITH 'Request' lv_reqnum 'submitted for approval'.
+  LEAVE TO SCREEN 0.
+
+ELSE.
+  ROLLBACK WORK.
+  MESSAGE e020(zcj00) WITH 'Workflow trigger failed for request' lv_reqnum.
+  RETURN.
+ENDIF.
+```
+
+ENDIF.
+
+ENDFORM.
+
+
+
+
+═══════════════════════════════════════════════════════════════════
+MESSAGE CLASS ZCJ00 - NEW ENTRIES REQUIRED
+═══════════════════════════════════════════════════════════════════
+
+Transaction: SE91
+Message Class: ZCJ00
+
+Add these new messages:
+
+┌────────┬──────┬────────────────────────────────────────────────────┐
+│ Number │ Type │ Message Text                                       │
+├────────┼──────┼────────────────────────────────────────────────────┤
+│ 036    │ I    │ Creating project for request &                     │
+│ 037    │ S    │ Request & approved. Project: &                     │
+│ 038    │ E    │ Failed to update approval status                   │
+└────────┴──────┴────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════
+EXISTING MESSAGES USED
+═══════════════════════════════════════════════════════════════════
+
+These messages should already exist (verify):
+
+┌────────┬──────┬────────────────────────────────────────────────────┐
+│ Number │ Type │ Usage                                              │
+├────────┼──────┼────────────────────────────────────────────────────┤
+│ 013    │ E    │ Failed to save request before submit               │
+│ 016    │ E    │ Failed to update status for &                      │
+│ 033    │ S    │ Request & approved                                 │
+│ 034    │ E    │ Error creating project for request &               │
+└────────┴──────┴────────────────────────────────────────────────────┘
+
+If these don’t exist, add them in SE91.
