@@ -1,6 +1,6 @@
 *&---------------------------------------------------------------------*
 *& METHOD: CREATE_WBS_ELEMENTS
-*& Reference Approach: Pre-generate WBS codes before BAPI loop
+*& Reference Approach: Pre-generate WBS codes + Use KONPD conversion
 *&---------------------------------------------------------------------*
 
 METHOD create_wbs_elements.
@@ -20,7 +20,7 @@ METHOD create_wbs_elements.
         lt_extensionin    TYPE TABLE OF bapiparex,
         ls_extensionin    TYPE bapiparex,
         ls_te_wbs         TYPE bapi_te_wbs_element,
-        
+
         lv_level1_posid   TYPE ps_posid,
         lv_level1_pspnr   TYPE ps_pspnr,
         lv_counter        TYPE i VALUE 0,
@@ -32,8 +32,7 @@ METHOD create_wbs_elements.
         ls_project_new    TYPE bapi_bus2001_new,
         lv_pspid_internal TYPE ps_pspid,
         lv_pspid_external TYPE ps_pspid,
-        lv_counter_str    TYPE char10,
-        lv_temp_counter   TYPE i.
+        lv_counter_str    TYPE char10.
 
   rv_success = abap_false.
 
@@ -61,38 +60,37 @@ METHOD create_wbs_elements.
 
   "═══════════════════════════════════════════════════════════════════
   " STEP 2: PRE-GENERATE WBS ELEMENT CODES (Like Reference)
-  " This is what the reference does BEFORE calling check_prps_create
   "═══════════════════════════════════════════════════════════════════
   CLEAR: lt_wbs_prepared, lv_counter.
 
   LOOP AT it_wbs_items INTO ls_wbs.
-    
+
     CLEAR ls_wbs_temp.
     MOVE-CORRESPONDING ls_wbs TO ls_wbs_temp.
 
     IF ls_wbs-stufe = 1.
       " Level 1 = Project Definition
       ls_wbs_temp-pspid_new = lv_pspid.
-      
+
     ELSE.
       " Only count items with budget for WBS numbering
       IF ls_wbs-wert2 IS NOT INITIAL.
         lv_counter = lv_counter + 1.
-        
+
         " Generate WBS element code: P-2026-071949-1, P-2026-071949-2, etc.
         CLEAR lv_counter_str.
         lv_counter_str = lv_counter.
         CONDENSE lv_counter_str NO-GAPS.
-        
-        CONCATENATE lv_pspid '-' lv_counter_str 
+
+        CONCATENATE lv_pspid '-' lv_counter_str
           INTO ls_wbs_temp-pspid_new.
         CONDENSE ls_wbs_temp-pspid_new NO-GAPS.
       ENDIF.
-      
+
     ENDIF.
 
     APPEND ls_wbs_temp TO lt_wbs_prepared.
-    
+
   ENDLOOP.
 
   "═══════════════════════════════════════════════════════════════════
@@ -153,8 +151,6 @@ METHOD create_wbs_elements.
 
   "═══════════════════════════════════════════════════════════════════
   " STEP 7: PREPARE WBS ELEMENTS FOR BAPI
-  " NOW uses lt_wbs_prepared which already has pspid_new populated
-  " Exactly like reference: ls_wbs_celement-wbs_element = ls_item-pspid_new
   "═══════════════════════════════════════════════════════════════════
   lt_wbs_sorted = lt_wbs_prepared.
 
@@ -183,8 +179,7 @@ METHOD create_wbs_elements.
     lv_index = sy-tabix + 1.
 
     "═══════════════════════════════════════════════════════════════
-    " POPULATE BAPI_BUS2054_NEW
-    " ★ LIKE REFERENCE: Direct assignment from pspid_new
+    " POPULATE BAPI_BUS2054_NEW - Like reference
     "═══════════════════════════════════════════════════════════════
     ls_wbs_celement-wbs_element      = ls_wbs-pspid_new.
     ls_wbs_celement-description      = ls_wbs-post1.
@@ -213,7 +208,6 @@ METHOD create_wbs_elements.
 
     "═══════════════════════════════════════════════════════════════
     " HIERARCHY CALCULATION (from reference logic)
-    " NOW uses pspid_new from prepared table
     "═══════════════════════════════════════════════════════════════
     LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
 
@@ -318,16 +312,29 @@ METHOD create_wbs_elements.
   ENDIF.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 11: GET CREATED WBS INTERNAL NUMBERS
+  " STEP 11: GET CREATED PROJECT INTERNAL NUMBER
+  " Use CONVERSION_EXIT_KONPD_INPUT like reference
   "═══════════════════════════════════════════════════════════════════
-  SELECT SINGLE pspnr FROM proj
-    INTO lv_level1_pspnr
-    WHERE pspid = lv_pspid_internal.
+  CALL FUNCTION 'CONVERSION_EXIT_KONPD_INPUT'
+    EXPORTING
+      input     = lv_pspid
+    IMPORTING
+      output    = lv_level1_pspnr
+    EXCEPTIONS
+      not_found = 1
+      OTHERS    = 2.
 
-  IF sy-subrc <> 0.
+  IF sy-subrc <> 0 OR lv_level1_pspnr IS INITIAL.
+    " Fallback: Direct DB select
     SELECT SINGLE pspnr FROM proj
       INTO lv_level1_pspnr
-      WHERE pspid = lv_pspid_external.
+      WHERE pspid = lv_pspid_internal.
+
+    IF sy-subrc <> 0.
+      SELECT SINGLE pspnr FROM proj
+        INTO lv_level1_pspnr
+        WHERE pspid = lv_pspid_external.
+    ENDIF.
   ENDIF.
 
   IF lv_level1_pspnr IS INITIAL.
@@ -338,12 +345,16 @@ METHOD create_wbs_elements.
 
   "═══════════════════════════════════════════════════════════════════
   " STEP 12: BUILD OUTPUT TABLE
-  " Use prepared table with pspid_new already populated
   "═══════════════════════════════════════════════════════════════════
   LOOP AT lt_wbs_prepared INTO ls_wbs.
 
-    " Skip items without generated codes or budget
-    IF ls_wbs-pspid_new IS INITIAL OR ls_wbs-wert2 IS INITIAL.
+    " Skip items without generated codes
+    IF ls_wbs-pspid_new IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    " Skip items without budget (except level 1)
+    IF ls_wbs-stufe > 1 AND ls_wbs-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
@@ -357,22 +368,22 @@ METHOD create_wbs_elements.
       " WBS Elements
       ls_wbs_created-posid = ls_wbs-pspid_new.
 
-      " Get internal number
+      " Get internal number using ABPSP conversion
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+        EXPORTING
+          input  = ls_wbs-pspid_new
+        IMPORTING
+          output = lv_posid_internal.
+
       SELECT SINGLE pspnr FROM prps
         INTO ls_wbs_created-posnr
-        WHERE posid = ls_wbs-pspid_new.
+        WHERE posid = lv_posid_internal.
 
       IF sy-subrc <> 0.
-        " Try with conversion
-        CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-          EXPORTING
-            input  = ls_wbs-pspid_new
-          IMPORTING
-            output = lv_posid_internal.
-
+        " Try with external format directly
         SELECT SINGLE pspnr FROM prps
           INTO ls_wbs_created-posnr
-          WHERE posid = lv_posid_internal.
+          WHERE posid = ls_wbs-pspid_new.
       ENDIF.
     ENDIF.
 
