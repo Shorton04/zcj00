@@ -1,40 +1,146 @@
-  METHOD get_next_project_number.
+     IF ls_head-type = 1.
+*Determine Number for Project/WBS
+        IF gv_capex IS NOT INITIAL.
+          CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+            EXPORTING
+              input  = zwbs_header-pspid
+            IMPORTING
+              output = lv_proj3_type.
+          lv_project_st = lv_proj3_type.
+        ELSE.
+*          lv_project_st = ls_head-proj_type.
+          lv_project_st = ls_head-pspid+0(2).
+        ENDIF.
+        CALL FUNCTION 'CN_SUCHE_FREIE_NUMMER'
+          EXPORTING
+            search_imp      = '1'
+            refresh         = abap_true
+            proj_s_imp      = lv_project_st
+          IMPORTING
+            proj_exp        = lv_project_new
+          EXCEPTIONS
+            wrong_search    = 1
+            search_canceled = 2
+            OTHERS          = 3.
+        IF sy-subrc <> 0.
+* Implement suitable error handling here
+        ENDIF.
 
-    DATA: lv_year TYPE gjahr.
+        IF lv_project_new IS INITIAL.
+          MESSAGE ID 'CJ' TYPE 'I' NUMBER '132' DISPLAY LIKE 'E'.
+          EXIT.
+        ENDIF.
 
-    lv_year = sy-datum(4).
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+          EXPORTING
+            input  = lv_project_new
+          IMPORTING
+            output = ls_head-pspid.
 
-    CALL FUNCTION 'NUMBER_RANGE_ENQUEUE'
-      EXPORTING
-        object           = 'PS_PRO'
-      EXCEPTIONS
-        foreign_lock     = 1
-        object_not_found = 2
-        system_failure   = 3
-        OTHERS           = 4.
+*Check if Project Already Exists
+        CALL FUNCTION 'CJDW_PROJ_SELECT_SINGLE'
+          EXPORTING
+            pspid     = ls_head-pspid
+          EXCEPTIONS
+            not_found = 1.
+        IF sy-subrc <> 1.
+          MESSAGE ID 'CJ' TYPE 'I' NUMBER '010' WITH ls_head-pspid
+          DISPLAY LIKE 'E'.
+          EXIT.
+        ENDIF.
 
-    IF sy-subrc = 0.
-      CALL FUNCTION 'NUMBER_GET_NEXT'
-        EXPORTING
-          nr_range_nr             = '01'
-          object                  = 'PS_PRO'
-          quantity                = 1
-          toyear                  = lv_year
-        IMPORTING
-          number                  = rv_pspid
-        EXCEPTIONS
-          interval_not_found      = 1
-          number_range_not_intern = 2
-          object_not_found        = 3
-          OTHERS                  = 4.
+*Lock Project for further Editing
+        CALL FUNCTION 'CJDW_ENQUEUE'
+          EXPORTING
+            object_id         = ls_head-pspid
+          EXCEPTIONS
+            foreign_lock      = 1
+            invalid_type      = 2
+            missing_parameter = 3
+            system_failure    = 4
+            OTHERS            = 5.
+        IF sy-subrc <> 0.
+          EXIT.
+        ENDIF.
 
-      CALL FUNCTION 'NUMBER_RANGE_DEQUEUE'
-        EXPORTING
-          object = 'PS_PRO'.
-    ENDIF.
+        FIND FIRST OCCURRENCE OF '.' IN lv_project_new MATCH OFFSET
+        lv_offset.
+        lv_offset = lv_offset + 1.
+        lv_project_str = lv_project_new+lv_offset.
+        DATA(lv_len) = strlen( lv_project_str ).
+        lv_offset = lv_offset + lv_len - 1.
+      ENDIF.
 
-    IF rv_pspid IS INITIAL.
-      rv_pspid = |P{ lv_year }{ sy-uzeit }|.
-    ENDIF.
+*Request Number
+      PERFORM get_request CHANGING ls_head.
 
-  ENDMETHOD.
+      PERFORM collect_data USING 'A' gv_approver_step .
+
+      PERFORM update_data.
+
+*Simulation for Errors
+      PERFORM simulate_change_data USING ls_head-type.
+
+*Process Request
+      PERFORM process_request_data USING ls_head-type.
+
+*Update Workflow Status
+      PERFORM update_status.
+
+      PERFORM send_mail USING 'A'.
+
+** Trigger the event for Unifier Project to send the Idoc to snaplogic.
+      IF gv_capex = 'X' AND lv_error IS INITIAL.
+        READ TABLE lt_wbs_item INTO DATA(ls_uni_itm) WITH KEY stufe = '1'.
+        IF sy-subrc = 0.
+          SELECT SINGLE * FROM prps INTO @DATA(ls_uni_prps)
+            WHERE posid = @ls_uni_itm-pspid_new.
+          IF sy-subrc = 0 AND ls_uni_prps-zunifier_proj = 'X'.
+            CALL FUNCTION 'CONVERSION_EXIT_ABPRJ_OUTPUT'
+              EXPORTING
+                input  = ls_uni_prps-psphi
+              IMPORTING
+                output = lv_pspid.
+            lv_key    = lv_pspid.
+            lv_key+24 = ls_uni_prps-psphi.
+
+            IF lv_type = 1 AND zwbs_header-status = '2'.
+              lv_event = 'UPCProjectEnabled'.
+            ELSEIF lv_type = 1 AND ls_head-status = '2'.
+              lv_event = 'UPCProjectEnabled'.
+            ELSEIF lv_type = 2 AND zwbs_header-status = '2'.
+              lv_event = 'UPCProjectUpdated'.
+            ELSEIF lv_type = 2 AND ls_head-status = '2'.
+              lv_event = 'UPCProjectUpdated'.
+            ELSEIF lv_type = 2 AND zwbs_header-status = '3'.
+              lv_event = 'UPCProjectRejected'.
+            ELSEIF lv_type = 2 AND ls_head-status = '3'.
+              lv_event = 'UPCProjectRejected'.
+            ENDIF.
+
+            IF lv_event IS NOT INITIAL.
+              CALL FUNCTION 'SWE_EVENT_CREATE'
+                EXPORTING
+                  objtype         = 'ZBUS2001'
+                  objkey          = lv_key
+                  event           = lv_event
+*                 CREATOR         = ' '
+*                 START_WITH_DELAY              = ' '
+*                 TAKE_WORKITEM_REQUESTER       = ' '
+                TABLES
+                  event_container = lt_event_container
+*   EXCEPTIONS
+*                 OBJTYPE_NOT_FOUND             = 1
+*                 OTHERS          = 2
+                .
+              IF sy-subrc <> 0.
+*  Implement suitable error handling here
+              ELSE.
+                COMMIT WORK.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+*      PERFORM status_message.
