@@ -20,6 +20,12 @@ CLASS zcl_a2r_wbs_builder DEFINITION
         !it_wbs_items    TYPE STANDARD TABLE
       RETURNING
         VALUE(rv_reqnum) TYPE char10 .
+    METHODS save_request_for_submit
+      IMPORTING
+        !is_header       TYPE ztb_a2r_wbshdr
+        !it_wbs_items    TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_reqnum) TYPE char10 .
     METHODS submit_request
       IMPORTING
         !is_header        TYPE ztb_a2r_wbshdr
@@ -30,6 +36,15 @@ CLASS zcl_a2r_wbs_builder DEFINITION
       IMPORTING
         !is_header        TYPE ztb_a2r_wbshdr
         !it_wbs_items     TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+    METHODS trigger_workflow
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !iv_appr1         TYPE char8 OPTIONAL
+        !iv_appr2         TYPE char8 OPTIONAL
+        !it_l1_apprv      TYPE hpa_t_bname OPTIONAL
+        !it_l2_apprv      TYPE hpa_t_bname OPTIONAL
       RETURNING
         VALUE(rv_success) TYPE abap_bool .
     METHODS check_approver_matrix
@@ -46,22 +61,6 @@ CLASS zcl_a2r_wbs_builder DEFINITION
         !et_l2_approvers  TYPE hpa_t_bname
       RETURNING
         VALUE(rv_found)   TYPE abap_bool .
-
-  PRIVATE SECTION.
-
-    METHODS get_next_request_number
-      RETURNING
-        VALUE(rv_reqnum) TYPE char10 .
-    " NO ZAUTO_APPROVAL parameter - uses blank approver logic
-    METHODS trigger_workflow
-      IMPORTING
-        !is_header        TYPE ztb_a2r_wbshdr
-        !iv_appr1         TYPE char8 OPTIONAL
-        !iv_appr2         TYPE char8 OPTIONAL
-        !it_l1_apprv      TYPE hpa_t_bname OPTIONAL
-        !it_l2_apprv      TYPE hpa_t_bname OPTIONAL
-      RETURNING
-        VALUE(rv_success) TYPE abap_bool .
     METHODS create_wbs_elements
       IMPORTING
         !is_header        TYPE ztb_a2r_wbshdr
@@ -70,6 +69,19 @@ CLASS zcl_a2r_wbs_builder DEFINITION
         !et_wbs_created   TYPE STANDARD TABLE
       RETURNING
         VALUE(rv_success) TYPE abap_bool .
+        METHODS create_wbs_elementstest
+      IMPORTING
+        !is_header        TYPE ztb_a2r_wbshdr
+        !it_wbs_items     TYPE STANDARD TABLE
+      EXPORTING
+        !et_wbs_created   TYPE STANDARD TABLE
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool .
+  PRIVATE SECTION.
+
+    METHODS get_next_request_number
+      RETURNING
+        VALUE(rv_reqnum) TYPE char10 .
     METHODS assign_plan_values
       IMPORTING
         !it_wbs_items     TYPE STANDARD TABLE
@@ -276,112 +288,122 @@ CLASS ZCL_A2R_WBS_BUILDER IMPLEMENTATION.
 * | [<---] ET_L2_APPROVERS                TYPE        HPA_T_BNAME
 * | [<-()] RV_FOUND                       TYPE        ABAP_BOOL
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-METHOD check_approver_matrix.
+  METHOD check_approver_matrix.
 
-  DATA: ls_config  TYPE ztb_a2r_conftab2,
-        lt_hrp1001 TYPE TABLE OF hrp1001,
-        ls_hrp1001 TYPE hrp1001,
-        lv_uname   TYPE xubname.
+    DATA: ls_config  TYPE ztb_a2r_conftab2,
+          lt_hrp1001 TYPE TABLE OF hrp1001,
+          ls_hrp1001 TYPE hrp1001,
+          lv_varyf   TYPE hrobjid,         " ← Use VARYF as-is
+          lv_objid   TYPE hrobjid.
 
-  CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler,
-         et_l1_approvers, et_l2_approvers.
+    CLEAR: ev_appr1, ev_appr2, ev_auto, ev_error_handler,
+    et_l1_approvers, et_l2_approvers.
 
-  " Get approver configuration from ZTB_A2R_CONFTAB2
-  SELECT SINGLE * FROM ztb_a2r_conftab2
+    " Step 1: Get approver configuration from ZTB_A2R_CONFTAB2
+    SELECT SINGLE * FROM ztb_a2r_conftab2
     INTO ls_config
-    WHERE bukrs = iv_bukrs          " Company Code
-      AND profl = iv_profl          " Project Profile
-      AND z_reqtype = iv_reqtype.   " Request Type
+    WHERE bukrs = iv_bukrs
+    AND profl = iv_profl
+    AND z_reqtype = iv_reqtype.
 
-  IF sy-subrc <> 0.
-    rv_found = abap_false.
-    RETURN.
-  ENDIF.
-
-  " Store approver positions and error handler
-  ev_appr1 = ls_config-zaproval_1.          " Level 1 approver position
-  ev_appr2 = ls_config-zaproval_2.          " Level 2 approver position
-  ev_error_handler = ls_config-zerror_handling.
-
-  "  LEVEL 1 APPROVERS
-  " Get users assigned to Level 1 approver position from HRP1001
-  IF ev_appr1 IS NOT INITIAL.
-    CLEAR lt_hrp1001.
-
-    SELECT * FROM hrp1001
-      INTO TABLE lt_hrp1001
-      WHERE objid = ev_appr1        " Position ID (e.g., 30000)
-        AND otype = 'S'             " Object type = Position
-        AND plvar = '01'            " Plan version = Current
-        AND rsign = 'A'             " Relationship sign = A
-        AND relat = '008'           " Relationship = User assignment
-        AND sclas = 'US'            " Object class = User
-        AND endda >= sy-datum       " Valid to date >= today
-        AND begda <= sy-datum.      " Valid from date <= today
-
-    IF sy-subrc = 0.
-      LOOP AT lt_hrp1001 INTO ls_hrp1001.
-        "  FIX: Use VARYF field which contains 'US' + username
-        " From image: VARYF = 'USKP05750' (Technical Field Name shown)
-        lv_uname = ls_hrp1001-varyf.
-
-        " Remove 'US' prefix (first 2 characters)
-        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
-          lv_uname = lv_uname+2.  " Extract username: 'USKP05750' → 'KP05750'
-        ENDIF.
-
-        " Only add if username is not empty
-        IF lv_uname IS NOT INITIAL.
-          APPEND lv_uname TO et_l1_approvers.
-        ENDIF.
-      ENDLOOP.
+    IF sy-subrc <> 0.
+      rv_found = abap_false.
+      RETURN.
     ENDIF.
-  ENDIF.
 
-  "  LEVEL 2 APPROVERS
-  " Get users assigned to Level 2 approver position from HRP1001
-  IF ev_appr2 IS NOT INITIAL.
-    CLEAR lt_hrp1001.
+    ev_appr1 = ls_config-zaproval_1.
+    ev_appr2 = ls_config-zaproval_2.
+    ev_error_handler = ls_config-zerror_handling.
 
-    SELECT * FROM hrp1001
-      INTO TABLE lt_hrp1001
-      WHERE objid = ev_appr2        " Position ID (e.g., 30001)
-        AND otype = 'S'
-        AND plvar = '01'
-        AND rsign = 'A'
-        AND relat = '008'
-        AND sclas = 'US'
-        AND endda >= sy-datum
-        AND begda <= sy-datum.
+    " LEVEL 1 APPROVERS - Get VARYF from HRP1001
+    IF ev_appr1 IS NOT INITIAL.
+      CLEAR lt_hrp1001.
 
-    IF sy-subrc = 0.
-      LOOP AT lt_hrp1001 INTO ls_hrp1001.
-        "  Use VARYF field
-        lv_uname = ls_hrp1001-varyf.
 
-        " Remove 'US' prefix
-        IF lv_uname IS NOT INITIAL AND lv_uname(2) = 'US'.
-          lv_uname = lv_uname+2.
-        ENDIF.
+      " Convert to OBJID format with leading zeros
+      lv_objid = ev_appr1.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = lv_objid
+        IMPORTING
+          output = lv_objid.
 
-        IF lv_uname IS NOT INITIAL.
-          APPEND lv_uname TO et_l2_approvers.
-        ENDIF.
-      ENDLOOP.
+      " Query HRP1001
+      SELECT * FROM hrp1001
+        INTO TABLE lt_hrp1001
+        WHERE objid = lv_objid          " Position ID (e.g., '00030000')
+          AND otype = 'S'               " Object type = Position
+          AND plvar = '01'              " Plan version = Current
+          AND rsign = 'A'               " Relationship sign
+          AND relat = '008'             " User assignment relationship
+          AND sclas = 'US'              " User object class
+          AND endda >= sy-datum         " Valid to
+          AND begda <= sy-datum.        " Valid from
+
+      IF sy-subrc = 0.
+        LOOP AT lt_hrp1001 INTO ls_hrp1001.
+          " USE VARYF EXACTLY AS-IS (e.g., 'USHQ75177')
+          lv_varyf = ls_hrp1001-varyf.
+
+          " Only add if VARYF is not empty
+          IF lv_varyf IS NOT INITIAL.
+            APPEND lv_varyf TO et_l1_approvers.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+
+
     ENDIF.
-  ENDIF.
 
-  "  AUTO-APPROVAL LOGIC
-  " If BOTH approver lists are empty, mark as auto-approval
-  IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
-    ev_auto = 'X'.
-  ELSE.
-    CLEAR ev_auto.
-  ENDIF.
+    " LEVEL 2 APPROVERS - Get VARYF from HRP1001
+    IF ev_appr2 IS NOT INITIAL.
+      CLEAR lt_hrp1001.
 
-  rv_found = abap_true.
 
-ENDMETHOD.
+      " Convert to OBJID format
+      lv_objid = ev_appr2.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = lv_objid
+        IMPORTING
+          output = lv_objid.
+
+      " Query HRP1001
+      SELECT * FROM hrp1001
+        INTO TABLE lt_hrp1001
+        WHERE objid = lv_objid
+          AND otype = 'S'
+          AND plvar = '01'
+          AND rsign = 'A'
+          AND relat = '008'
+          AND sclas = 'US'
+          AND endda >= sy-datum
+          AND begda <= sy-datum.
+
+      IF sy-subrc = 0.
+        LOOP AT lt_hrp1001 INTO ls_hrp1001.
+          " USE VARYF EXACTLY AS-IS
+          lv_varyf = ls_hrp1001-varyf.
+
+          IF lv_varyf IS NOT INITIAL.
+            APPEND lv_varyf TO et_l2_approvers.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+
+
+    ENDIF.
+
+    " Auto-approval logic
+    IF et_l1_approvers IS INITIAL AND et_l2_approvers IS INITIAL.
+      ev_auto = 'x'.
+    ELSE.
+      CLEAR ev_auto.
+    ENDIF.
+
+    rv_found = abap_true.
+
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -453,14 +475,14 @@ ENDMETHOD.
   METHOD create_project.
 
     DATA: lt_wbs_created TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
-    DATA(lv_dev) = xsdbool( sy-uname = 'HQ75176' ).
+    DATA(lv_dev) = xsdbool( sy-uname = 'HQ75177' ).
 
     rv_success = abap_false.
 
     IF lv_dev = abap_true.
 
       " Step 1: Create WBS elements
-      IF create_wbs_elements(
+      IF create_wbs_elementstest(
         EXPORTING
           is_header      = is_header
           it_wbs_items   = it_wbs_items
@@ -470,40 +492,40 @@ ENDMETHOD.
         MESSAGE e025(zcj00).
         RETURN.
       ENDIF.
-
-      " Step 2: Create settlement rules
-      IF create_settlement_rules(
-        it_wbs_items = lt_wbs_created
-      ) = abap_false.
-        MESSAGE e024(zcj00).
-        RETURN.
-      ENDIF.
-
-      " Step 3: Assign plan values
-      IF assign_plan_values(
-        it_wbs_items = lt_wbs_created
-      ) = abap_false.
-        MESSAGE e026(zcj00).
-        RETURN.
-      ENDIF.
-
-      " Step 4: Distribute IM budget
-      IF distribute_im_budget(
-        is_header    = is_header
-        it_wbs_items = lt_wbs_created
-      ) = abap_false.
-        MESSAGE e027(zcj00).
-        RETURN.
-      ENDIF.
-
-      " Step 5: Activate statuses
-      IF activate_statuses(
-        it_wbs_items = lt_wbs_created
-      ) = abap_false.
-        MESSAGE e028(zcj00).
-        RETURN.
-      ENDIF.
-
+*
+*      " Step 2: Create settlement rules
+*      IF create_settlement_rules(
+*        it_wbs_items = lt_wbs_created
+*      ) = abap_false.
+*        MESSAGE e024(zcj00).
+*        RETURN.
+*      ENDIF.
+*
+*      " Step 3: Assign plan values
+*      IF assign_plan_values(
+*        it_wbs_items = lt_wbs_created
+*      ) = abap_false.
+*        MESSAGE e026(zcj00).
+*        RETURN.
+*      ENDIF.
+*
+*      " Step 4: Distribute IM budget
+*      IF distribute_im_budget(
+*        is_header    = is_header
+*        it_wbs_items = lt_wbs_created
+*      ) = abap_false.
+*        MESSAGE e027(zcj00).
+*        RETURN.
+*      ENDIF.
+*
+*      " Step 5: Activate statuses
+*      IF activate_statuses(
+*        it_wbs_items = lt_wbs_created
+*      ) = abap_false.
+*        MESSAGE e028(zcj00).
+*        RETURN.
+*      ENDIF.
+*    ELSEIF
     ELSE.
       " Step 1: Create WBS elements
       IF create_wbs_elements(
@@ -602,7 +624,7 @@ ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->CREATE_WBS_ELEMENTS
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->CREATE_WBS_ELEMENTS
 * +-------------------------------------------------------------------------------------------------+
 * | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
 * | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
@@ -611,99 +633,355 @@ ENDMETHOD.
 * +--------------------------------------------------------------------------------------</SIGNATURE>
   METHOD create_wbs_elements.
 
-    DATA: lv_pspid        TYPE ps_pspid,
-          ls_wbs          TYPE ztb_a2r_wbsitem,
-          ls_wbs_created  TYPE ztb_a2r_wbsitem,
-          lt_return       TYPE TABLE OF bapiret2,
-          ls_return       TYPE bapiret2,
-          lv_level1_posid TYPE ps_posid,
-          lv_level1_pspnr TYPE ps_pspnr,
-          lv_counter      TYPE i.
+    DATA: lv_pspid          TYPE ztb_a2r_wbshdr-pspid,
+          ls_wbs            TYPE ztb_a2r_wbsitem,
+          ls_wbs_temp       TYPE ztb_a2r_wbsitem,
+          ls_wbs_created    TYPE ztb_a2r_wbsitem,
+          lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          lt_return         TYPE TABLE OF bapiret2,
+          ls_return         TYPE bapiret2,
+          lt_wbs_celement   TYPE TABLE OF bapi_wbs_element,
+          ls_wbs_celement   TYPE bapi_wbs_element,
+          lt_extensionin    TYPE TABLE OF bapiparex,
+          ls_extensionin    TYPE bapiparex,
+          ls_te_wbs         TYPE bapi_te_wbs_element,
+          lv_level1_posid   TYPE ps_posid,
+          lv_level1_pspnr   TYPE ps_pspnr,
+          lv_counter        TYPE i VALUE 1,
+          lv_waers          TYPE waers,
+          lv_parent_posid   TYPE ps_posid,
+          lv_posid_internal TYPE ps_posid,
+          lv_current_index  TYPE i,
+          lv_parent_counter TYPE i,
+          ls_project_new    TYPE bapi_bus2001_new.
 
     rv_success = abap_false.
 
-    " Get next project number
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 1: GET NEXT PROJECT NUMBER
+    "═══════════════════════════════════════════════════════════════════
     lv_pspid = get_next_project_number( is_header-profl ).
 
     IF lv_pspid IS INITIAL.
-      MESSAGE e029(zcj00).
+      MESSAGE e029(zcj00) WITH 'Failed to get project number'.
       RETURN.
     ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 2: GET CURRENCY FROM COMPANY CODE
+    "═══════════════════════════════════════════════════════════════════
+    SELECT SINGLE waers FROM t001
+    INTO lv_waers
+    WHERE bukrs = is_header-bukrs.
+
+    IF sy-subrc <> 0.
+      lv_waers = 'USD'.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 3: INITIALIZE BAPI
+    "═══════════════════════════════════════════════════════════════════
+    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 4: CREATE PROJECT DEFINITION (Level 1)
+    " (Inline version of former FORM CHECK_PROJ_CREATE)
+    "═══════════════════════════════════════════════════════════════════
+
+    CLEAR ls_project_new.
+
+    " Use the generated project number
+    ls_project_new-project_definition = lv_pspid.
+
+    " Map from header
+    ls_project_new-description        = is_header-post1.
+    ls_project_new-company_code       = is_header-bukrs.
+    ls_project_new-controlling_area   = is_header-vkokr. " << Recommend VKOKR instead of BUKRS(4)
+    ls_project_new-profit_ctr         = is_header-prctr.
+    ls_project_new-start              = is_header-plfaz.
+    ls_project_new-finish             = is_header-plsez.
+    ls_project_new-plant              = is_header-werks.
+    ls_project_new-project_profile    = is_header-profl.
+    ls_project_new-responsible_no     = is_header-vernr.
 
     " Create Project Definition
     CALL FUNCTION 'BAPI_BUS2001_CREATE'
       EXPORTING
-        i_project_definition = lv_pspid
-        i_description        = is_header-post1        " Use POST1, not PSPNR
-        i_start_date         = sy-datum
-        i_end_date           = is_header-plsez
-        i_company_code       = is_header-bukrs
-        i_plant              = is_header-werks
-        i_profit_center      = is_header-prctr
-        i_responsible        = is_header-vernr
-        i_currency           = 'USD'
-        i_profile            = is_header-profl
+        i_project_definition = ls_project_new
       TABLES
-        return               = lt_return.
+        et_return            = lt_return.
 
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-    IF sy-subrc = 0.
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
       MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-        WITH ls_return-message_v1 ls_return-message_v2.
+             WITH ls_return-message_v1 ls_return-message_v2
+                  ls_return-message_v3 ls_return-message_v4.
+      rv_success = abap_false.
+      RETURN.
+    ENDLOOP.
+
+*    " Commit project creation
+*    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+*      EXPORTING
+*        wait = 'X'.
+
+    " Store Level 1 POSID (same as project)
+    lv_level1_posid = lv_pspid.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 5: CREATE SUB-WBS ELEMENTS (Level 2+)
+    "═══════════════════════════════════════════════════════════════════
+    " Sort by level (ascending this time for parent tracking)
+    lt_wbs_sorted = it_wbs_items.
+    SORT lt_wbs_sorted BY stufe ASCENDING.
+
+    " Build WBS element table for BAPI
+    CLEAR lv_counter.
+    LOOP AT lt_wbs_sorted INTO ls_wbs.
+
+
+      " Skip items without budget
+      IF ls_wbs-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      " Skip Level 1 (already created as project definition)
+      IF ls_wbs-stufe = 1.
+        CONTINUE.
+      ENDIF.
+
+      lv_counter = lv_counter + 1.
+
+      CLEAR ls_wbs_celement.
+
+      " ───────────────────────────────────────────────────────────────
+      " WBS ELEMENT IDENTIFICATION
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_element = |{ lv_pspid }-{ lv_counter }|.
+
+      " ───────────────────────────────────────────────────────────────
+      " BASIC FIELDS (From Structure Browser - Image 1)
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-description      = ls_wbs-post1.        " PS_POST1
+      ls_wbs_celement-comp_code     = is_header-bukrs.     " BUKRS
+      ls_wbs_celement-bus_area    = is_header-bukrs.     " GSBER (can be different)
+      ls_wbs_celement-request_cctr_controlling_area = is_header-bukrs(4).  " KOKRS
+      ls_wbs_celement-profit_ctr       = is_header-prctr.     " PRCTR
+      ls_wbs_celement-plant            = is_header-werks.     " WERKS_D
+
+      " ───────────────────────────────────────────────────────────────
+      " PLANNING FIELDS
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_planning_element = abap_true.       " PS_PLAKZ
+
+      " ───────────────────────────────────────────────────────────────
+      " INVESTMENT FIELDS
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-inv_reason       = is_header-izwek.     " IZWEK
+      ls_wbs_celement-invest_profile   = ls_wbs-imprf.        " IM_PROFIL
+
+      " ───────────────────────────────────────────────────────────────
+      " DATES (From Structure Browser - Image 4)
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_basic_start_date  = sy-datum.       " PS_PSTRT
+      ls_wbs_celement-wbs_basic_finish_date = is_header-plsez. " PS_PENDE
+
+      " ───────────────────────────────────────────────────────────────
+      " RESPONSIBILITY
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-respsbl_cctr     = ls_wbs-kostl.        " PS_KOSTL
+      ls_wbs_celement-responsible_no   = is_header-vernr.     " PS_VERNR
+
+      " ───────────────────────────────────────────────────────────────
+      " ACCOUNT ASSIGNMENT
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_account_assignment_element = abap_true. " PS_BELKZ
+
+      " ───────────────────────────────────────────────────────────────
+      " HIERARCHY: Determine parent based on STUFE
+      " ───────────────────────────────────────────────────────────────
+      " For Level 2, parent is the project (Level 1)
+      " For Level 3+, find previous element with lower STUFE
+
+      CLEAR lv_parent_posid.
+
+      IF ls_wbs-stufe = 2.
+        " Level 2 parent is always the project
+        lv_parent_posid = lv_pspid.
+      ELSE.
+        " Level 3+ - find parent by looking back in sorted list
+        lv_current_index = sy-tabix.
+
+        LOOP AT lt_wbs_sorted INTO ls_wbs_temp TO lv_current_index - 1.
+          " Find first element with STUFE = current - 1
+          IF ls_wbs_temp-stufe = ls_wbs-stufe - 1.
+            " Calculate parent POSID
+            IF ls_wbs_temp-stufe = 1.
+              lv_parent_posid = lv_pspid.
+            ELSE.
+              " Find counter for this parent
+              LOOP AT lt_wbs_sorted INTO DATA(ls_count) WHERE stufe > 1.
+                IF ls_count-posid = ls_wbs_temp-posid.
+                  EXIT.
+                ENDIF.
+                IF ls_count-wert2 IS NOT INITIAL.
+                  lv_parent_counter = lv_parent_counter + 1.
+                ENDIF.
+              ENDLOOP.
+              lv_parent_posid = |{ lv_pspid }-{ lv_parent_counter }|.
+            ENDIF.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        " Fallback to project if no parent found
+        IF lv_parent_posid IS INITIAL.
+          lv_parent_posid = lv_pspid.
+        ENDIF.
+      ENDIF.
+
+      " ───────────────────────────────────────────────────────────────
+      " CRITICAL: Use correct BAPI field names from Structure Browser
+      " There is NO wbs_up or wbs_left in BAPI_WBS_ELEMENT!
+      " Hierarchy is established through i_project_definition parameter
+      " ───────────────────────────────────────────────────────────────
+      " Parent is specified in separate call or via project structure
+
+      APPEND ls_wbs_celement TO lt_wbs_celement.
+
+      " ───────────────────────────────────────────────────────────────
+      " EXTENSION FIELDS (if needed)
+      " ───────────────────────────────────────────────────────────────
+      IF ls_wbs-stufe = 1 AND is_header-zunifier_proj = 'X'.
+        CLEAR ls_te_wbs.
+        ls_te_wbs-wbs_element = ls_wbs_celement-wbs_element.
+        ls_te_wbs-zunifier_proj = 'X'.
+
+        CLEAR ls_extensionin.
+        ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+        ls_extensionin-valuepart1 = ls_te_wbs.
+        ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+        APPEND ls_extensionin TO lt_extensionin.
+      ENDIF.
+
+
+    ENDLOOP.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 6: CREATE WBS ELEMENTS VIA BAPI (if any Level 2+ exist)
+    "═══════════════════════════════════════════════════════════════════
+    IF lt_wbs_celement IS NOT INITIAL.
+
+
+      CLEAR lt_return.
+
+      " Use BAPI_BUS2054_CREATE_MULTI with project as parent context
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = lv_pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          et_return            = lt_return
+          extensionin          = lt_extensionin.
+
+      LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+        MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+          WITH ls_return-message_v1 ls_return-message_v2
+               ls_return-message_v3 ls_return-message_v4.
+        rv_success = abap_false.
+        RETURN.
+      ENDLOOP.
+
+
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 7: PRE-COMMIT
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR lt_return.
+
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+      TABLES
+        et_return = lt_return.
+
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
+      rv_success = abap_false.
+      RETURN.
+    ENDLOOP.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 8: COMMIT WORK
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR ls_return.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait   = 'X'
+      IMPORTING
+        return = ls_return.
+
+    IF ls_return-type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
       rv_success = abap_false.
       RETURN.
     ENDIF.
 
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 9: GET CREATED WBS INTERNAL NUMBERS
+    "═══════════════════════════════════════════════════════════════════
+    " Get Level 1 (Project) internal number
+    SELECT SINGLE pspnr FROM proj
+    INTO lv_level1_pspnr
+    WHERE pspid = lv_pspid.
 
-    " Get project internal number
-    SELECT SINGLE pspnr FROM projs
-      INTO lv_level1_pspnr
-      WHERE pspid = lv_pspid.
+    IF sy-subrc <> 0.
+      MESSAGE e029(zcj00) WITH 'Project not found after creation'.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
 
-    " Create WBS elements
-    lv_counter = 1.
+    " Build output table with created WBS elements
+    CLEAR lv_counter.
     LOOP AT it_wbs_items INTO ls_wbs.
+
 
       IF ls_wbs-wert2 IS INITIAL.
         CONTINUE.
       ENDIF.
 
-      CLEAR: lt_return, ls_wbs_created.
+      CLEAR ls_wbs_created.
 
       IF ls_wbs-stufe = 1.
-        lv_level1_posid = lv_pspid.
+        " Level 1 = Project
         ls_wbs_created-posid = lv_pspid.
-        ls_wbs_created-posnr = lv_level1_pspnr.    " Use POSNR not PSPNR
+        ls_wbs_created-posnr = lv_level1_pspnr.
       ELSE.
-        ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
+        " Level 2+ = Sub WBS
         lv_counter = lv_counter + 1.
+        ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
 
-        CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-          EXPORTING
-            i_project_definition = lv_pspid
-            i_wbs_element        = ls_wbs_created-posid
-            i_description        = ls_wbs-post1
-            i_wbs_level          = ls_wbs-stufe
-            i_cost_center        = ls_wbs-kostl
-          TABLES
-            return               = lt_return.
-
-        READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-        IF sy-subrc = 0.
-          MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-            WITH ls_return-message_v1 ls_return-message_v2.
-          rv_success = abap_false.
-          RETURN.
-        ENDIF.
-
+        " Get internal number from PRPS
         SELECT SINGLE pspnr FROM prps
-          INTO ls_wbs_created-posnr          " Use POSNR not PSPNR
+          INTO ls_wbs_created-posnr
           WHERE posid = ls_wbs_created-posid.
+
+        IF sy-subrc <> 0.
+          " Try with conversion
+          CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+            EXPORTING
+              input  = ls_wbs_created-posid
+            IMPORTING
+              output = lv_posid_internal.
+
+          SELECT SINGLE pspnr FROM prps
+            INTO ls_wbs_created-posnr
+            WHERE posid = lv_posid_internal.
+        ENDIF.
       ENDIF.
 
+      " Copy other fields
       ls_wbs_created-stufe = ls_wbs-stufe.
       ls_wbs_created-post1 = ls_wbs-post1.
       ls_wbs_created-kostl = ls_wbs-kostl.
@@ -712,21 +990,41 @@ ENDMETHOD.
       ls_wbs_created-imprf = ls_wbs-imprf.
       ls_wbs_created-prart = ls_wbs-prart.
       ls_wbs_created-bukrs = is_header-bukrs.
+      ls_wbs_created-werks = is_header-werks.
 
       APPEND ls_wbs_created TO et_wbs_created.
+
+
     ENDLOOP.
 
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 10: LINK TO IM POSITION (IF POSNR PROVIDED)
+    "═══════════════════════════════════════════════════════════════════
+*    IF is_header-posnr IS NOT INITIAL.
+*
+*
+*      CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
+*        EXPORTING
+*          i_posnr = is_header-posnr
+*          i_posid = lv_level1_posid
+*        EXCEPTIONS
+*          OTHERS  = 1.
+*
+*      IF sy-subrc <> 0.
+*        MESSAGE w031(zcj00) WITH 'Warning: IM assignment failed'.
+*      ENDIF.
+*
+*
+*    ENDIF.
 
-    " Link to IM Position
-    CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
-      EXPORTING
-        i_posnr = is_header-posnr
-        i_posid = lv_level1_posid
-      EXCEPTIONS
-        OTHERS  = 1.
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 11: UPDATE HEADER WITH PROJECT NUMBER
+    "═══════════════════════════════════════════════════════════════════
+    UPDATE ztb_a2r_wbshdr
+    SET pspnr = lv_level1_pspnr
+    WHERE zreq_num = is_header-zreq_num.
+
+    COMMIT WORK.
 
     rv_success = abap_true.
 
@@ -827,46 +1125,103 @@ ENDMETHOD.
 * | [--->] IV_PROFL                       TYPE        PROFIDPROJ
 * | [<-()] RV_PSPID                       TYPE        PS_PSPID
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD get_next_project_number.
+METHOD get_next_project_number.
+*&---------------------------------------------------------------------*
+*& METHOD: GET_NEXT_PROJECT_NUMBER (Fixed - Use CN_SUCHE_FREIE_NUMMER)
+*& Based on old system reference - uses SAP standard PS function
+*&---------------------------------------------------------------------*
 
-    DATA: lv_year TYPE gjahr.
 
-    lv_year = sy-datum(4).
+  DATA: lv_project_st  TYPE ps_posid,
+        ls_wbsitem     TYPE ztb_a2r_wbsitem,
+        lv_project_new TYPE ps_posid.
 
-    CALL FUNCTION 'NUMBER_RANGE_ENQUEUE'
+  " Input(s)
+  DATA: lv_posid_from_tbl TYPE proj-pspid,   " from ZTB_A2R_WBSIETM-POSID (external/masked)
+        lv_start_ext      TYPE proj-pspid,   " start string for CN_SUCHE_FREIE_NUMMER
+        lv_proj_exp       TYPE proj-pspid,   " external PSPID result (e.g., 'PC.000123')
+        lv_pspid_int      TYPE ps_pspid.     " internal PSPID (DB/BAPIs)
+
+    CLEAR: rv_pspid.
+
+  " 0) Get your table value (external)
+  lv_posid_from_tbl = ls_wbsitem-posid.      " e.g., 'PC.000001' (from your screenshot)
+
+  " 1) Normalize the start string to match the OPSJ mask exactly.
+  "    If users sometimes store internal/unmasked 'PC000001', convert it to external first.
+  IF lv_posid_from_tbl NA '.'.
+    " No '.' → likely internal/unmasked → convert to external mask
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
       EXPORTING
-        object           = 'PS_PRO'
-      EXCEPTIONS
-        foreign_lock     = 1
-        object_not_found = 2
-        system_failure   = 3
-        OTHERS           = 4.
+        input  = lv_posid_from_tbl
+      IMPORTING
+        output = lv_start_ext.               " becomes 'PC.000001'
+  ELSE.
+    " Already external/masked
+    lv_start_ext = lv_posid_from_tbl.        " 'PC.000001'
+  ENDIF.
 
-    IF sy-subrc = 0.
-      CALL FUNCTION 'NUMBER_GET_NEXT'
-        EXPORTING
-          nr_range_nr             = '01'
-          object                  = 'PS_PRO'
-          quantity                = 1
-          toyear                  = lv_year
-        IMPORTING
-          number                  = rv_pspid
-        EXCEPTIONS
-          interval_not_found      = 1
-          number_range_not_intern = 2
-          object_not_found        = 3
-          OTHERS                  = 4.
+  " 2) Get next free external PSPID without any popup
+  CALL FUNCTION 'CN_SUCHE_FREIE_NUMMER'
+    EXPORTING
+      search_imp      = '1'              " 1 = Project definition
+      refresh         = abap_true
+      proj_s_imp      = lv_start_ext     " IMPORTANT: external with '.' so mask 'PC.######' is selected
+      no_dialog       = abap_true        " << suppress any UI
+    IMPORTING
+      proj_exp        = lv_proj_exp      " returns external e.g., 'PC.000002'
+    EXCEPTIONS
+      wrong_search    = 1
+      search_canceled = 2
+      OTHERS          = 3.
 
-      CALL FUNCTION 'NUMBER_RANGE_DEQUEUE'
-        EXPORTING
-          object = 'PS_PRO'.
-    ENDIF.
+  IF sy-subrc <> 0.
+    " Error handling
+    MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    RETURN.
+  ENDIF.
 
-    IF rv_pspid IS INITIAL.
-      rv_pspid = |P{ lv_year }{ sy-uzeit }|.
-    ENDIF.
+  " ═══════════════════════════════════════════════════════════════
+  " Check if number was generated
+  " ═══════════════════════════════════════════════════════════════
+  IF lv_project_new IS INITIAL.
+    MESSAGE ID 'CJ' TYPE 'E' NUMBER '132'.
+    RETURN.
+  ENDIF.
 
-  ENDMETHOD.
+  " ═══════════════════════════════════════════════════════════════
+  " Convert to Internal Format (PSPID for database)
+  " Note: Uses ABPSN (Project) not ABPSP (WBS)!
+  " ═══════════════════════════════════════════════════════════════
+  CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+    EXPORTING
+      input  = lv_project_new   " External: P-2026-000123
+    IMPORTING
+      output = lv_pspid_int.    " Internal: stored format
+
+  " ═══════════════════════════════════════════════════════════════
+  " Check if Project Already Exists
+  " ═══════════════════════════════════════════════════════════════
+  CALL FUNCTION 'CJDW_PROJ_SELECT_SINGLE'
+    EXPORTING
+      pspid     = lv_pspid_int
+    EXCEPTIONS
+      not_found = 1.
+
+  IF sy-subrc <> 1.
+    " Project already exists - error
+    MESSAGE ID 'CJ' TYPE 'E' NUMBER '010' WITH lv_project_new.
+    RETURN.
+  ENDIF.
+
+  " ═══════════════════════════════════════════════════════════════
+  " Return the INTERNAL format for storage
+  " The calling method will convert to external for BAPI
+  " ═══════════════════════════════════════════════════════════════
+  rv_pspid = lv_pspid_int.
+
+ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -1014,7 +1369,7 @@ ENDMETHOD.
       " New request
       ls_header-ernam = sy-uname.                   " Created by
       ls_header-erdat = sy-datum.                   " Created on
-      ls_header-request_status = 'DRAFT'.           " Draft status
+      ls_header-request_status = 'DRAFT'.           " DRAFT status
     ELSE.
       " Existing request being updated
       ls_header-ernam = is_header-ernam.            " Keep original creator
@@ -1136,110 +1491,272 @@ ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->SAVE_REQUEST_FOR_SUBMIT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
+* | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
+* | [<-()] RV_REQNUM                      TYPE        CHAR10
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD save_request_for_submit.
+
+    DATA: ls_header TYPE ztb_a2r_wbshdr,
+          ls_item   TYPE ztb_a2r_wbsitem,
+          ls_wbs    TYPE ztb_a2r_wbsitem,
+          lv_error  TYPE abap_bool.
+
+    CLEAR: rv_reqnum, lv_error.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 1: GET REQUEST NUMBER
+    "═══════════════════════════════════════════════════════════════════
+    IF is_header-zreq_num IS INITIAL.
+      rv_reqnum = get_next_request_number( ).
+      IF rv_reqnum IS INITIAL.
+        RETURN.
+      ENDIF.
+    ELSE.
+      rv_reqnum = is_header-zreq_num.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 2: PREPARE HEADER
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR ls_header.
+    ls_header-mandt = sy-mandt.
+    ls_header-zreq_num = rv_reqnum.
+    ls_header-posnr = is_header-posnr.
+    ls_header-prnam = is_header-prnam.
+    ls_header-pspnr = is_header-pspnr.
+    ls_header-post1 = is_header-post1.
+    ls_header-vernr = is_header-vernr.
+    ls_header-plsez = is_header-plsez.
+    ls_header-bukrs = is_header-bukrs.
+    ls_header-werks = is_header-werks.
+    ls_header-prctr = is_header-prctr.
+    ls_header-kostl = is_header-kostl.
+    ls_header-izwek = is_header-izwek.
+    ls_header-zunifier_proj = is_header-zunifier_proj.
+    ls_header-usr008 = is_header-usr008.
+    ls_header-profl = is_header-profl.
+    ls_header-z_reqtype = is_header-z_reqtype.
+
+    IF is_header-zreq_num IS INITIAL.
+      ls_header-ernam = sy-uname.
+      ls_header-erdat = sy-datum.
+      ls_header-request_status = 'DRAFT'.
+    ELSE.
+      ls_header-ernam = is_header-ernam.
+      ls_header-erdat = is_header-erdat.
+      " Preserve existing status if set
+      IF is_header-request_status IS NOT INITIAL.
+        ls_header-request_status = is_header-request_status.
+      ELSE.
+        ls_header-request_status = 'DRAFT'.
+      ENDIF.
+    ENDIF.
+
+    IF is_header-z_remarks IS NOT INITIAL.
+      ls_header-z_remarks = is_header-z_remarks.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 3: SAVE TO DATABASE
+    "═══════════════════════════════════════════════════════════════════
+    TRY.
+        " Insert or update header
+        IF is_header-zreq_num IS INITIAL.
+          INSERT ztb_a2r_wbshdr FROM ls_header.
+        ELSE.
+          UPDATE ztb_a2r_wbshdr FROM ls_header.
+          IF sy-subrc <> 0.
+            INSERT ztb_a2r_wbshdr FROM ls_header.
+          ENDIF.
+        ENDIF.
+
+
+        IF sy-subrc = 0.
+          " Delete old items if updating
+          IF is_header-zreq_num IS NOT INITIAL.
+            DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
+          ENDIF.
+
+          " Insert WBS items
+          LOOP AT it_wbs_items INTO ls_wbs.
+            CLEAR ls_item.
+            ls_item-mandt = sy-mandt.
+            ls_item-zreq_num = rv_reqnum.
+            ls_item-bukrs = ls_header-bukrs.
+            ls_item-posid = ls_wbs-posid.
+            ls_item-stufe = ls_wbs-stufe.
+            ls_item-post1 = ls_wbs-post1.
+            ls_item-kostl = ls_wbs-kostl.
+            ls_item-wert2 = ls_wbs-wert2.
+            ls_item-zbudget_check = ls_wbs-zbudget_check.
+            ls_item-imprf = ls_wbs-imprf.
+            ls_item-prart = ls_wbs-prart.
+            ls_item-werks = ls_header-werks.
+
+            IF ls_wbs-posnr IS NOT INITIAL.
+              ls_item-posnr = ls_wbs-posnr.
+            ENDIF.
+
+            INSERT ztb_a2r_wbsitem FROM ls_item.
+
+            IF sy-subrc <> 0.
+              lv_error = abap_true.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+
+          "═══════════════════════════════════════════════════════════
+          " COMMIT OR ROLLBACK
+          " ✓ NO MESSAGE
+          " ✓ NO TRANSACTION CALL
+          " ✓ Just return the request number so caller can continue
+          "═══════════════════════════════════════════════════════════
+          IF lv_error = abap_false.
+            COMMIT WORK AND WAIT.
+            " Success - just return the request number
+          ELSE.
+            ROLLBACK WORK.
+            CLEAR rv_reqnum.
+          ENDIF.
+
+        ELSE.
+          CLEAR rv_reqnum.
+          ROLLBACK WORK.
+        ENDIF.
+
+
+      CATCH cx_root INTO DATA(lx_error).
+        " Don't show message - just clear request number
+        CLEAR rv_reqnum.
+        ROLLBACK WORK.
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
 * | Instance Public Method ZCL_A2R_WBS_BUILDER->SUBMIT_REQUEST
 * +-------------------------------------------------------------------------------------------------+
 * | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
 * | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
 * | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
 * +--------------------------------------------------------------------------------------</SIGNATURE>
-METHOD submit_request.
+  METHOD submit_request.
 
-  DATA: lv_reqnum        TYPE char10,
-        lv_appr1         TYPE char8,
-        lv_appr2         TYPE char8,
-        lv_auto          TYPE char1,
-        lv_error_handler TYPE char8,
-        lv_found         TYPE abap_bool,
-        ls_header        TYPE ztb_a2r_wbshdr,
-        lt_l1_approvers  TYPE hpa_t_bname,    "  Will hold L1 usernames
-        lt_l2_approvers  TYPE hpa_t_bname.    "  Will hold L2 usernames
+    DATA: lv_reqnum        TYPE char10,
+          lv_appr1         TYPE char8,
+          lv_appr2         TYPE char8,
+          lv_auto          TYPE char1,
+          lv_error_handler TYPE char8,
+          lv_found         TYPE abap_bool,
+          ls_header        TYPE ztb_a2r_wbshdr,
+          lt_l1_approvers  TYPE hpa_t_bname,    " Will contain VARYF values
+          lt_l2_approvers  TYPE hpa_t_bname.
 
-  rv_success = abap_false.
+    rv_success = abap_false.
 
-  "  Step 1: Save the request (get request number)
-  lv_reqnum = save_request(
+    " Step 1: Save request
+    lv_reqnum = save_request(
     is_header    = is_header
     it_wbs_items = it_wbs_items
-  ).
+    ).
 
-  IF lv_reqnum IS INITIAL.
-    MESSAGE e013(zcj00) WITH 'Error saving request'.
-    RETURN.
-  ENDIF.
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e013(zcj00) WITH 'Error saving request'.
+      RETURN.
+    ENDIF.
 
-  "  Step 2: Get approvers from config + HRP1001
-  lv_found = check_approver_matrix(
+    " Step 2: Get approvers (now returns VARYF as-is)
+    lv_found = check_approver_matrix(
     EXPORTING
-      iv_bukrs   = is_header-bukrs      " ZX99
-      iv_profl   = is_header-profl      " ZPC0001
-      iv_reqtype = is_header-z_reqtype  " A1
+    iv_bukrs   = is_header-bukrs
+    iv_profl   = is_header-profl
+    iv_reqtype = is_header-z_reqtype
     IMPORTING
-      ev_appr1         = lv_appr1             " Position 30000
-      ev_appr2         = lv_appr2             " Position 30001
-      ev_auto          = lv_auto              " 'X' if no approvers
-      ev_error_handler = lv_error_handler
-      et_l1_approvers  = lt_l1_approvers      "  Usernames from HRP1001
-      et_l2_approvers  = lt_l2_approvers      "  Usernames from HRP1001
-  ).
+    ev_appr1         = lv_appr1
+    ev_appr2         = lv_appr2
+    ev_auto          = lv_auto
+    ev_error_handler = lv_error_handler
+    et_l1_approvers  = lt_l1_approvers    " ← USRG33470, USEV92123, USHQ75177, USKP05750
+    et_l2_approvers  = lt_l2_approvers
+    ).
 
-  IF lv_found = abap_false.
-    MESSAGE e008(zcj00) WITH 'No approver configuration found'.
-    RETURN.
-  ENDIF.
+    IF lv_found = abap_false.
+      MESSAGE e008(zcj00) WITH 'No approver configuration found'.
+      RETURN.
+    ENDIF.
 
-  "  Step 3: Update header with pending status
-  ls_header = is_header.
-  ls_header-zreq_num = lv_reqnum.
-  ls_header-request_status = 'PENDING'.
+    " Step 3: Update status to PENDING
+    ls_header = is_header.
+    ls_header-zreq_num = lv_reqnum.
+    ls_header-request_status = 'pending'.
 
-  UPDATE ztb_a2r_wbshdr
-    SET request_status = 'PENDING'
+    UPDATE ztb_a2r_wbshdr
+    SET request_status = 'pending'
     WHERE zreq_num = lv_reqnum.
 
-  "  Step 4: Auto-approval or Workflow
-  IF lv_auto = 'X'.
-    "  AUTO-APPROVE: No approvers configured
-    MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
-
-    rv_success = create_project(
-      is_header    = ls_header
-      it_wbs_items = it_wbs_items
-    ).
-
-    IF rv_success = abap_true.
-      UPDATE ztb_a2r_wbshdr
-        SET request_status = 'APPROVED'
-            zapproved_by = sy-uname
-            zrequest_approved_on = sy-datum
-        WHERE zreq_num = lv_reqnum.
-      COMMIT WORK.
-      MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
-    ELSE.
-      UPDATE ztb_a2r_wbshdr
-        SET request_status = 'ERROR'
-        WHERE zreq_num = lv_reqnum.
-      COMMIT WORK.
-      MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
-    ENDIF.
-
-  ELSE.
-    "  TRIGGER WORKFLOW WITH APPROVER LISTS
-    rv_success = trigger_workflow(
-      is_header   = ls_header
-      it_l1_apprv = lt_l1_approvers    "  Pass L1 usernames
-      it_l2_apprv = lt_l2_approvers    "  Pass L2 usernames
-    ).
-
-    IF rv_success = abap_true.
-      COMMIT WORK.
-      MESSAGE s015(zcj00) WITH lv_reqnum.
-    ELSE.
+    IF sy-subrc <> 0.
+      MESSAGE e016(zcj00) WITH 'Failed to update status'.
       ROLLBACK WORK.
-      MESSAGE e020(zcj00) WITH 'Workflow error for' lv_reqnum.
+      RETURN.
     ENDIF.
-  ENDIF.
 
-ENDMETHOD.
+    " CRITICAL: Commit before workflow
+    COMMIT WORK AND WAIT.
+
+    " Step 4: Trigger workflow or auto-approve
+    IF lv_auto = 'x'.
+      MESSAGE i035(zcj00) WITH 'Request' lv_reqnum 'auto-approved'.
+
+
+      rv_success = create_project(
+        is_header    = ls_header
+        it_wbs_items = it_wbs_items
+      ).
+
+      IF rv_success = abap_true.
+        UPDATE ztb_a2r_wbshdr
+          SET request_status = 'APPROVED'
+              zapproved_by = sy-uname
+              zrequest_approved_on = sy-datum
+          WHERE zreq_num = lv_reqnum.
+        COMMIT WORK.
+        MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
+      ELSE.
+        UPDATE ztb_a2r_wbshdr
+          SET request_status = 'ERROR'
+          WHERE zreq_num = lv_reqnum.
+        COMMIT WORK.
+        MESSAGE e034(zcj00) WITH 'Error for request' lv_reqnum.
+      ENDIF.
+
+
+    ELSE.
+      " Pass VARYF values to workflow
+      rv_success = trigger_workflow(
+      is_header   = ls_header
+      iv_appr1    = lv_appr1
+      iv_appr2    = lv_appr2
+      it_l1_apprv = lt_l1_approvers     " ← USRG33470, USEV92123, USHQ75177, USKP05750
+      it_l2_apprv = lt_l2_approvers
+      ).
+
+
+      IF rv_success = abap_true.
+        COMMIT WORK.
+        MESSAGE s015(zcj00) WITH lv_reqnum 'submitted for approval'.
+      ELSE.
+        ROLLBACK WORK.
+        MESSAGE e020(zcj00) WITH 'Workflow error for' lv_reqnum.
+      ENDIF.
+
+
+    ENDIF.
+
+  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -1294,7 +1811,7 @@ ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Private Method ZCL_A2R_WBS_BUILDER->TRIGGER_WORKFLOW
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->TRIGGER_WORKFLOW
 * +-------------------------------------------------------------------------------------------------+
 * | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
 * | [--->] IV_APPR1                       TYPE        CHAR8(optional)
@@ -1331,6 +1848,414 @@ ENDMETHOD.
       CATCH cx_root.
         rv_success = abap_false.
     ENDTRY.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_WBS_BUILDER->CREATE_WBS_ELEMENTSTEST
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR
+* | [--->] IT_WBS_ITEMS                   TYPE        STANDARD TABLE
+* | [<---] ET_WBS_CREATED                 TYPE        STANDARD TABLE
+* | [<-()] RV_SUCCESS                     TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD create_wbs_elementstest.
+
+    DATA: lv_pspid          TYPE ztb_a2r_wbshdr-pspid,
+          ls_wbs            TYPE ztb_a2r_wbsitem,
+          ls_wbs_temp       TYPE ztb_a2r_wbsitem,
+          ls_wbs_created    TYPE ztb_a2r_wbsitem,
+          lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          lt_return         TYPE TABLE OF bapiret2,
+          ls_return         TYPE bapiret2,
+          lt_wbs_celement   TYPE TABLE OF bapi_wbs_element,
+          ls_wbs_celement   TYPE bapi_wbs_element,
+          lt_extensionin    TYPE TABLE OF bapiparex,
+          ls_extensionin    TYPE bapiparex,
+          ls_te_wbs         TYPE bapi_te_wbs_element,
+          lv_level1_posid   TYPE ps_posid,
+          lv_level1_pspnr   TYPE ps_pspnr,
+          lv_counter        TYPE i VALUE 1,
+          lv_waers          TYPE waers,
+          lv_parent_posid   TYPE ps_posid,
+          lv_posid_internal TYPE ps_posid,
+          lv_current_index  TYPE i,
+          lv_parent_counter TYPE i,
+          ls_project_new    TYPE bapi_bus2001_new.
+
+    rv_success = abap_false.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 1: GET NEXT PROJECT NUMBER
+    "═══════════════════════════════════════════════════════════════════
+    lv_pspid = get_next_project_number( is_header-profl ).
+
+    IF lv_pspid IS INITIAL.
+      MESSAGE e029(zcj00) WITH 'Failed to get project number'.
+      RETURN.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 2: GET CURRENCY FROM COMPANY CODE
+    "═══════════════════════════════════════════════════════════════════
+    SELECT SINGLE waers FROM t001
+    INTO lv_waers
+    WHERE bukrs = is_header-bukrs.
+
+    IF sy-subrc <> 0.
+      lv_waers = 'USD'.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 3: INITIALIZE BAPI
+    "═══════════════════════════════════════════════════════════════════
+    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 4: CREATE PROJECT DEFINITION (Level 1)
+    " (Inline version of former FORM CHECK_PROJ_CREATE)
+    "═══════════════════════════════════════════════════════════════════
+
+    CLEAR ls_project_new.
+
+    " Use the generated project number
+    ls_project_new-project_definition = lv_pspid.
+
+    " Map from header
+    ls_project_new-description        = is_header-post1.
+    ls_project_new-company_code       = is_header-bukrs.
+    ls_project_new-controlling_area   = is_header-vkokr. " << Recommend VKOKR instead of BUKRS(4)
+    ls_project_new-profit_ctr         = is_header-prctr.
+    ls_project_new-start              = is_header-plfaz.
+    ls_project_new-finish             = is_header-plsez.
+    ls_project_new-plant              = is_header-werks.
+    ls_project_new-project_profile    = is_header-profl.
+    ls_project_new-responsible_no     = is_header-vernr.
+
+    " Create Project Definition
+    CALL FUNCTION 'BAPI_BUS2001_CREATE'
+      EXPORTING
+        i_project_definition = ls_project_new
+      TABLES
+        et_return            = lt_return.
+
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+             WITH ls_return-message_v1 ls_return-message_v2
+                  ls_return-message_v3 ls_return-message_v4.
+      rv_success = abap_false.
+      RETURN.
+    ENDLOOP.
+
+*    " Commit project creation
+*    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+*      EXPORTING
+*        wait = 'X'.
+
+    " Store Level 1 POSID (same as project)
+    lv_level1_posid = lv_pspid.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 5: CREATE SUB-WBS ELEMENTS (Level 2+)
+    "═══════════════════════════════════════════════════════════════════
+    " Sort by level (ascending this time for parent tracking)
+    lt_wbs_sorted = it_wbs_items.
+    SORT lt_wbs_sorted BY stufe ASCENDING.
+
+    " Build WBS element table for BAPI
+    CLEAR lv_counter.
+    LOOP AT lt_wbs_sorted INTO ls_wbs.
+
+
+      " Skip items without budget
+      IF ls_wbs-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      " Skip Level 1 (already created as project definition)
+      IF ls_wbs-stufe = 1.
+        CONTINUE.
+      ENDIF.
+
+      lv_counter = lv_counter + 1.
+
+      CLEAR ls_wbs_celement.
+
+      " ───────────────────────────────────────────────────────────────
+      " WBS ELEMENT IDENTIFICATION
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_element = |{ lv_pspid }-{ lv_counter }|.
+
+      " ───────────────────────────────────────────────────────────────
+      " BASIC FIELDS (From Structure Browser - Image 1)
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-description      = ls_wbs-post1.        " PS_POST1
+      ls_wbs_celement-comp_code     = is_header-bukrs.     " BUKRS
+      ls_wbs_celement-bus_area    = is_header-bukrs.     " GSBER (can be different)
+      ls_wbs_celement-request_cctr_controlling_area = is_header-bukrs(4).  " KOKRS
+      ls_wbs_celement-profit_ctr       = is_header-prctr.     " PRCTR
+      ls_wbs_celement-plant            = is_header-werks.     " WERKS_D
+
+      " ───────────────────────────────────────────────────────────────
+      " PLANNING FIELDS
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_planning_element = abap_true.       " PS_PLAKZ
+
+      " ───────────────────────────────────────────────────────────────
+      " INVESTMENT FIELDS
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-inv_reason       = is_header-izwek.     " IZWEK
+      ls_wbs_celement-invest_profile   = ls_wbs-imprf.        " IM_PROFIL
+
+      " ───────────────────────────────────────────────────────────────
+      " DATES (From Structure Browser - Image 4)
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_basic_start_date  = sy-datum.       " PS_PSTRT
+      ls_wbs_celement-wbs_basic_finish_date = is_header-plsez. " PS_PENDE
+
+      " ───────────────────────────────────────────────────────────────
+      " RESPONSIBILITY
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-respsbl_cctr     = ls_wbs-kostl.        " PS_KOSTL
+      ls_wbs_celement-responsible_no   = is_header-vernr.     " PS_VERNR
+
+      " ───────────────────────────────────────────────────────────────
+      " ACCOUNT ASSIGNMENT
+      " ───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_account_assignment_element = abap_true. " PS_BELKZ
+
+      " ───────────────────────────────────────────────────────────────
+      " HIERARCHY: Determine parent based on STUFE
+      " ───────────────────────────────────────────────────────────────
+      " For Level 2, parent is the project (Level 1)
+      " For Level 3+, find previous element with lower STUFE
+
+      CLEAR lv_parent_posid.
+
+      IF ls_wbs-stufe = 2.
+        " Level 2 parent is always the project
+        lv_parent_posid = lv_pspid.
+      ELSE.
+        " Level 3+ - find parent by looking back in sorted list
+        lv_current_index = sy-tabix.
+
+        LOOP AT lt_wbs_sorted INTO ls_wbs_temp TO lv_current_index - 1.
+          " Find first element with STUFE = current - 1
+          IF ls_wbs_temp-stufe = ls_wbs-stufe - 1.
+            " Calculate parent POSID
+            IF ls_wbs_temp-stufe = 1.
+              lv_parent_posid = lv_pspid.
+            ELSE.
+              " Find counter for this parent
+              LOOP AT lt_wbs_sorted INTO DATA(ls_count) WHERE stufe > 1.
+                IF ls_count-posid = ls_wbs_temp-posid.
+                  EXIT.
+                ENDIF.
+                IF ls_count-wert2 IS NOT INITIAL.
+                  lv_parent_counter = lv_parent_counter + 1.
+                ENDIF.
+              ENDLOOP.
+              lv_parent_posid = |{ lv_pspid }-{ lv_parent_counter }|.
+            ENDIF.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        " Fallback to project if no parent found
+        IF lv_parent_posid IS INITIAL.
+          lv_parent_posid = lv_pspid.
+        ENDIF.
+      ENDIF.
+
+      " ───────────────────────────────────────────────────────────────
+      " CRITICAL: Use correct BAPI field names from Structure Browser
+      " There is NO wbs_up or wbs_left in BAPI_WBS_ELEMENT!
+      " Hierarchy is established through i_project_definition parameter
+      " ───────────────────────────────────────────────────────────────
+      " Parent is specified in separate call or via project structure
+
+      APPEND ls_wbs_celement TO lt_wbs_celement.
+
+      " ───────────────────────────────────────────────────────────────
+      " EXTENSION FIELDS (if needed)
+      " ───────────────────────────────────────────────────────────────
+      IF ls_wbs-stufe = 1 AND is_header-zunifier_proj = 'X'.
+        CLEAR ls_te_wbs.
+        ls_te_wbs-wbs_element = ls_wbs_celement-wbs_element.
+        ls_te_wbs-zunifier_proj = 'X'.
+
+        CLEAR ls_extensionin.
+        ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+        ls_extensionin-valuepart1 = ls_te_wbs.
+        ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+        APPEND ls_extensionin TO lt_extensionin.
+      ENDIF.
+
+
+    ENDLOOP.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 6: CREATE WBS ELEMENTS VIA BAPI (if any Level 2+ exist)
+    "═══════════════════════════════════════════════════════════════════
+    IF lt_wbs_celement IS NOT INITIAL.
+
+
+      CLEAR lt_return.
+
+      " Use BAPI_BUS2054_CREATE_MULTI with project as parent context
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = lv_pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          et_return            = lt_return
+          extensionin          = lt_extensionin.
+
+      LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+        MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+          WITH ls_return-message_v1 ls_return-message_v2
+               ls_return-message_v3 ls_return-message_v4.
+        rv_success = abap_false.
+        RETURN.
+      ENDLOOP.
+
+
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 7: PRE-COMMIT
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR lt_return.
+
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+      TABLES
+        et_return = lt_return.
+
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
+      rv_success = abap_false.
+      RETURN.
+    ENDLOOP.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 8: COMMIT WORK
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR ls_return.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait   = 'X'
+      IMPORTING
+        return = ls_return.
+
+    IF ls_return-type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 9: GET CREATED WBS INTERNAL NUMBERS
+    "═══════════════════════════════════════════════════════════════════
+    " Get Level 1 (Project) internal number
+    SELECT SINGLE pspnr FROM proj
+    INTO lv_level1_pspnr
+    WHERE pspid = lv_pspid.
+
+    IF sy-subrc <> 0.
+      MESSAGE e029(zcj00) WITH 'Project not found after creation'.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Build output table with created WBS elements
+    CLEAR lv_counter.
+    LOOP AT it_wbs_items INTO ls_wbs.
+
+
+      IF ls_wbs-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_wbs_created.
+
+      IF ls_wbs-stufe = 1.
+        " Level 1 = Project
+        ls_wbs_created-posid = lv_pspid.
+        ls_wbs_created-posnr = lv_level1_pspnr.
+      ELSE.
+        " Level 2+ = Sub WBS
+        lv_counter = lv_counter + 1.
+        ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
+
+        " Get internal number from PRPS
+        SELECT SINGLE pspnr FROM prps
+          INTO ls_wbs_created-posnr
+          WHERE posid = ls_wbs_created-posid.
+
+        IF sy-subrc <> 0.
+          " Try with conversion
+          CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+            EXPORTING
+              input  = ls_wbs_created-posid
+            IMPORTING
+              output = lv_posid_internal.
+
+          SELECT SINGLE pspnr FROM prps
+            INTO ls_wbs_created-posnr
+            WHERE posid = lv_posid_internal.
+        ENDIF.
+      ENDIF.
+
+      " Copy other fields
+      ls_wbs_created-stufe = ls_wbs-stufe.
+      ls_wbs_created-post1 = ls_wbs-post1.
+      ls_wbs_created-kostl = ls_wbs-kostl.
+      ls_wbs_created-wert2 = ls_wbs-wert2.
+      ls_wbs_created-zbudget_check = ls_wbs-zbudget_check.
+      ls_wbs_created-imprf = ls_wbs-imprf.
+      ls_wbs_created-prart = ls_wbs-prart.
+      ls_wbs_created-bukrs = is_header-bukrs.
+      ls_wbs_created-werks = is_header-werks.
+
+      APPEND ls_wbs_created TO et_wbs_created.
+
+
+    ENDLOOP.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 10: LINK TO IM POSITION (IF POSNR PROVIDED)
+    "═══════════════════════════════════════════════════════════════════
+*    IF is_header-posnr IS NOT INITIAL.
+*
+*
+*      CALL FUNCTION 'IM_ASSIGN_WBS_TO_POSITION'
+*        EXPORTING
+*          i_posnr = is_header-posnr
+*          i_posid = lv_level1_posid
+*        EXCEPTIONS
+*          OTHERS  = 1.
+*
+*      IF sy-subrc <> 0.
+*        MESSAGE w031(zcj00) WITH 'Warning: IM assignment failed'.
+*      ENDIF.
+*
+*
+*    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 11: UPDATE HEADER WITH PROJECT NUMBER
+    "═══════════════════════════════════════════════════════════════════
+    UPDATE ztb_a2r_wbshdr
+    SET pspnr = lv_level1_pspnr
+    WHERE zreq_num = is_header-zreq_num.
+
+    COMMIT WORK.
+
+    rv_success = abap_true.
 
   ENDMETHOD.
 ENDCLASS.
