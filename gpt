@@ -24,7 +24,7 @@ METHOD create_wbs_elements.
   rv_success = abap_false.
 
 *--------------------------------------------------------------------*
-* 1. Project number
+* 1. GET PROJECT NUMBER (REFERENCE LOGIC)
 *--------------------------------------------------------------------*
   lv_pspid = get_next_project_number( is_header-profl ).
   IF lv_pspid IS INITIAL.
@@ -33,7 +33,7 @@ METHOD create_wbs_elements.
   ENDIF.
 
 *--------------------------------------------------------------------*
-* 2. Init PS
+* 2. PS INITIALIZATION
 *--------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
@@ -41,6 +41,7 @@ METHOD create_wbs_elements.
 * 3. CREATE PROJECT (CHECK_PROJ_CREATE)
 *--------------------------------------------------------------------*
   CLEAR ls_proj_new.
+
   ls_proj_new-project_definition = lv_pspid.
   ls_proj_new-description        = is_header-post1.
   ls_proj_new-company_code       = is_header-bukrs.
@@ -66,19 +67,25 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
 *--------------------------------------------------------------------*
-* 4. BUILD WBS (CHECK_PRPS_CREATE)
+* 4. BUILD WBS ELEMENTS (CHECK_PRPS_CREATE)
 *--------------------------------------------------------------------*
   lt_item = it_wbs_items.
+
+* EXACT reference sorting
   SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
+
+  CLEAR: lt_wbs_new, lt_extensionin.
 
   LOOP AT lt_item INTO ls_item.
 
-    CLEAR: ls_wbs_new, ls_te_wbs,
-           lv_upper_level, lv_left_level.
+    CLEAR: ls_wbs_new,
+           ls_te_wbs,
+           lv_upper_level,
+           lv_left_level.
 
     lv_index = sy-tabix + 1.
 
-*--- WBS core
+*---------------- BASIC FIELDS ----------------*
     ls_wbs_new-wbs_element      = ls_item-pspid_new.
     ls_wbs_new-description      = ls_item-post1.
     ls_wbs_new-company_code     = is_header-bukrs.
@@ -90,7 +97,7 @@ METHOD create_wbs_elements.
     ls_wbs_new-wbs_planning_element = abap_true.
     ls_wbs_new-wbs_account_assignment_element = ls_item-belkz.
 
-*--- Dates
+*---------------- DATES ----------------*
     IF gv_capex IS NOT INITIAL.
       ls_wbs_new-wbs_basic_start_date  = ls_item-plfaz.
       ls_wbs_new-wbs_basic_finish_date = ls_item-plsez.
@@ -99,14 +106,16 @@ METHOD create_wbs_elements.
       ls_wbs_new-wbs_basic_finish_date = ls_item-zstage_end_dt.
     ENDIF.
 
-*--- Hierarchy (CRITICAL)
+*---------------- HIERARCHY (REFERENCE LOGIC) ----------------*
     LOOP AT lt_item INTO ls_item_tmp FROM lv_index.
 
+      " Left sibling
       IF lv_left_level IS INITIAL
          AND ls_item_tmp-stufe = ls_item-stufe.
         lv_left_level = ls_item_tmp-pspid_new.
       ENDIF.
 
+      " Parent
       IF ls_item_tmp-stufe < ls_item-stufe.
         lv_upper_level = ls_item_tmp-pspid_new.
         EXIT.
@@ -114,16 +123,23 @@ METHOD create_wbs_elements.
 
     ENDLOOP.
 
-    ls_wbs_new-wbs_up   = lv_upper_level.
-    ls_wbs_new-wbs_left = lv_left_level.
+    IF lv_upper_level IS NOT INITIAL.
+      ls_wbs_new-wbs_up = lv_upper_level.
+    ENDIF.
+
+    IF lv_left_level IS NOT INITIAL.
+      ls_wbs_new-wbs_left = lv_left_level.
+    ENDIF.
 
     APPEND ls_wbs_new TO lt_wbs_new.
 
-*--- Extensions
+*---------------- EXTENSION (REFERENCE STYLE) ----------------*
+    CLEAR ls_te_wbs.
     ls_te_wbs-wbs_element = ls_item-pspid_new.
     ls_te_wbs-zasset      = ls_item-zasset.
     ls_te_wbs-zcustom     = ls_item-zcustom.
 
+    CLEAR ls_extensionin.
     ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
     ls_extensionin-valuepart1 = ls_te_wbs.
     APPEND ls_extensionin TO lt_extensionin.
@@ -131,7 +147,7 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
 *--------------------------------------------------------------------*
-* 5. CREATE WBS
+* 5. CREATE WBS (CHECK_PRPS_CREATE)
 *--------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
     EXPORTING
@@ -149,11 +165,17 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
 *--------------------------------------------------------------------*
-* 6. PRECOMMIT + COMMIT
+* 6. PRECOMMIT + COMMIT (REFERENCE)
 *--------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'
     TABLES
       et_return = lt_return.
+
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2.
+    RETURN.
+  ENDLOOP.
 
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
