@@ -1,132 +1,358 @@
 *&———————————————————————*
-*& Form SUBMIT_DIRECT_CREATION (COMPLETE - CALLS CLASS METHOD)
+*& Class ZCL_A2R_WBS_BUILDER - Updated Class Definition
 *&———————————————————————*
 
-- This routine directly creates the project without triggering workflow
-- Calls go_builder->create_project() which internally calls create_wbs_elements()
+- Add this new method to the PUBLIC SECTION
   *–––––––––––––––––––––––––––––––––––*
-  FORM submit_direct_creation.
 
-DATA: lv_reqnum  TYPE char10,
-lv_success TYPE abap_bool.
+CLASS zcl_a2r_wbs_builder DEFINITION
+PUBLIC
+FINAL
+CREATE PUBLIC .
 
-“═══════════════════════════════════════════════════════════════════
-“ STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
-“═══════════════════════════════════════════════════════════════════
-PERFORM convert_from_display.
-PERFORM populate_header_structure.
-
-“═══════════════════════════════════════════════════════════════════
-“ STEP 2: SAVE REQUEST (GET REQUEST NUMBER)
-“═══════════════════════════════════════════════════════════════════
-lv_reqnum = go_builder->save_request(
-is_header    = gs_header
-it_wbs_items = gt_wbs_items
-).
-
-IF lv_reqnum IS INITIAL.
-MESSAGE e013(zcj00) WITH ‘Failed to save request before submit’.
-RETURN.
-ENDIF.
-
-“ Store request number in header
-gs_header-zreq_num = lv_reqnum.
-
-“═══════════════════════════════════════════════════════════════════
-“ STEP 3: UPDATE STATUS TO PENDING (Required for tracking)
-“═══════════════════════════════════════════════════════════════════
-UPDATE ztb_a2r_wbshdr
-SET request_status = ‘PENDING’
-WHERE zreq_num = lv_reqnum.
-
-IF sy-subrc <> 0.
-MESSAGE e016(zcj00) WITH ‘Failed to update status for’ lv_reqnum.
-ROLLBACK WORK.
-RETURN.
-ENDIF.
-
-“ Commit the status change
-COMMIT WORK AND WAIT.
-
-“ Update local header structure
-gs_header-request_status = ‘PENDING’.
-
-“═══════════════════════════════════════════════════════════════════
-“ STEP 4: CREATE PROJECT DIRECTLY (SKIP WORKFLOW)
-“ This calls: go_builder->create_project()
-“   which internally calls: create_wbs_elements()
-“═══════════════════════════════════════════════════════════════════
-MESSAGE i036(zcj00) WITH ‘Creating project for request’ lv_reqnum.
-
-“ Call the class method - it handles everything
-lv_success = go_builder->create_project(
-is_header    = gs_header
-it_wbs_items = gt_wbs_items
-).
-
-IF lv_success = abap_true.
-“───────────────────────────────────────────────────────────────
-“ PROJECT CREATED SUCCESSFULLY
-“───────────────────────────────────────────────────────────────
+PUBLIC SECTION.
 
 ```
-" Update status to APPROVED (since no workflow)
-UPDATE ztb_a2r_wbshdr
-  SET request_status       = 'APPROVED'
-      zapproved_by         = sy-uname
-      zrequest_approved_on = sy-datum
+METHODS copy_template_structure
+  IMPORTING
+    !iv_pspid     TYPE ps_pspid
+    !iv_kostl     TYPE kostl
+  CHANGING
+    !ct_wbs_items TYPE STANDARD TABLE .
+METHODS total_up_budget
+  CHANGING
+    !ct_wbs_items TYPE STANDARD TABLE .
+METHODS save_request
+  IMPORTING
+    !is_header       TYPE ztb_a2r_wbshdr
+    !it_wbs_items    TYPE STANDARD TABLE
+  RETURNING
+    VALUE(rv_reqnum) TYPE char10 .
+
+"═══════════════════════════════════════════════════════════════
+" NEW METHOD: For SUBMIT flow only (no message, no transaction)
+"═══════════════════════════════════════════════════════════════
+METHODS save_request_for_submit
+  IMPORTING
+    !is_header       TYPE ztb_a2r_wbshdr
+    !it_wbs_items    TYPE STANDARD TABLE
+  RETURNING
+    VALUE(rv_reqnum) TYPE char10 .
+
+METHODS submit_request
+  IMPORTING
+    !is_header        TYPE ztb_a2r_wbshdr
+    !it_wbs_items     TYPE STANDARD TABLE
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool .
+METHODS create_project
+  IMPORTING
+    !is_header        TYPE ztb_a2r_wbshdr
+    !it_wbs_items     TYPE STANDARD TABLE
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool .
+METHODS check_approver_matrix
+  IMPORTING
+    !iv_bukrs         TYPE bukrs
+    !iv_profl         TYPE profidproj
+    !iv_reqtype       TYPE ztb_a2r_reqtype-z_reqtype
+  EXPORTING
+    !ev_appr1         TYPE char8
+    !ev_appr2         TYPE char8
+    !ev_auto          TYPE char1
+    !ev_error_handler TYPE char8
+    !et_l1_approvers  TYPE hpa_t_bname
+    !et_l2_approvers  TYPE hpa_t_bname
+  RETURNING
+    VALUE(rv_found)   TYPE abap_bool .
+```
+
+PRIVATE SECTION.
+“ … (keep all existing private methods)
+
+ENDCLASS.
+
+
+
+
+*&———————————————————————*
+*& Method: SAVE_REQUEST_FOR_SUBMIT (NEW - For SUBMIT flow)
+*& Class: ZCL_A2R_WBS_BUILDER
+*&———————————————————————*
+
+- This method is specifically for the SUBMIT flow
+- It saves the request WITHOUT showing messages or calling transactions
+- This allows the calling routine to continue with project creation
+  *–––––––––––––––––––––––––––––––––––*
+  METHOD save_request_for_submit.
+  
+  DATA: ls_header TYPE ztb_a2r_wbshdr,
+  ls_item   TYPE ztb_a2r_wbsitem,
+  ls_wbs    TYPE ztb_a2r_wbsitem,
+  lv_error  TYPE abap_bool.
+  
+  CLEAR: rv_reqnum, lv_error.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 1: GET REQUEST NUMBER
+  “═══════════════════════════════════════════════════════════════════
+  IF is_header-zreq_num IS INITIAL.
+  rv_reqnum = get_next_request_number( ).
+  IF rv_reqnum IS INITIAL.
+  RETURN.
+  ENDIF.
+  ELSE.
+  rv_reqnum = is_header-zreq_num.
+  ENDIF.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 2: PREPARE HEADER
+  “═══════════════════════════════════════════════════════════════════
+  CLEAR ls_header.
+  ls_header-mandt = sy-mandt.
+  ls_header-zreq_num = rv_reqnum.
+  ls_header-posnr = is_header-posnr.
+  ls_header-prnam = is_header-prnam.
+  ls_header-pspnr = is_header-pspnr.
+  ls_header-post1 = is_header-post1.
+  ls_header-vernr = is_header-vernr.
+  ls_header-plsez = is_header-plsez.
+  ls_header-bukrs = is_header-bukrs.
+  ls_header-werks = is_header-werks.
+  ls_header-prctr = is_header-prctr.
+  ls_header-kostl = is_header-kostl.
+  ls_header-izwek = is_header-izwek.
+  ls_header-zunifier_proj = is_header-zunifier_proj.
+  ls_header-usr008 = is_header-usr008.
+  ls_header-profl = is_header-profl.
+  ls_header-z_reqtype = is_header-z_reqtype.
+  
+  IF is_header-zreq_num IS INITIAL.
+  ls_header-ernam = sy-uname.
+  ls_header-erdat = sy-datum.
+  ls_header-request_status = ‘DRAFT’.
+  ELSE.
+  ls_header-ernam = is_header-ernam.
+  ls_header-erdat = is_header-erdat.
+  “ Preserve existing status if set
+  IF is_header-request_status IS NOT INITIAL.
+  ls_header-request_status = is_header-request_status.
+  ELSE.
+  ls_header-request_status = ‘DRAFT’.
+  ENDIF.
+  ENDIF.
+  
+  IF is_header-z_remarks IS NOT INITIAL.
+  ls_header-z_remarks = is_header-z_remarks.
+  ENDIF.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 3: SAVE TO DATABASE
+  “═══════════════════════════════════════════════════════════════════
+  TRY.
+  “ Insert or update header
+  IF is_header-zreq_num IS INITIAL.
+  INSERT ztb_a2r_wbshdr FROM ls_header.
+  ELSE.
+  UPDATE ztb_a2r_wbshdr FROM ls_header.
+  IF sy-subrc <> 0.
+  INSERT ztb_a2r_wbshdr FROM ls_header.
+  ENDIF.
+  ENDIF.
+  
+  ```
+  IF sy-subrc = 0.
+    " Delete old items if updating
+    IF is_header-zreq_num IS NOT INITIAL.
+      DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
+    ENDIF.
+  
+    " Insert WBS items
+    LOOP AT it_wbs_items INTO ls_wbs.
+      CLEAR ls_item.
+      ls_item-mandt = sy-mandt.
+      ls_item-zreq_num = rv_reqnum.
+      ls_item-bukrs = ls_header-bukrs.
+      ls_item-posid = ls_wbs-posid.
+      ls_item-stufe = ls_wbs-stufe.
+      ls_item-post1 = ls_wbs-post1.
+      ls_item-kostl = ls_wbs-kostl.
+      ls_item-wert2 = ls_wbs-wert2.
+      ls_item-zbudget_check = ls_wbs-zbudget_check.
+      ls_item-imprf = ls_wbs-imprf.
+      ls_item-prart = ls_wbs-prart.
+      ls_item-werks = ls_header-werks.
+  
+      IF ls_wbs-posnr IS NOT INITIAL.
+        ls_item-posnr = ls_wbs-posnr.
+      ENDIF.
+  
+      INSERT ztb_a2r_wbsitem FROM ls_item.
+  
+      IF sy-subrc <> 0.
+        lv_error = abap_true.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+  
+    "═══════════════════════════════════════════════════════════
+    " COMMIT OR ROLLBACK
+    " ✓ NO MESSAGE
+    " ✓ NO TRANSACTION CALL
+    " ✓ Just return the request number so caller can continue
+    "═══════════════════════════════════════════════════════════
+    IF lv_error = abap_false.
+      COMMIT WORK AND WAIT.
+      " Success - just return the request number
+    ELSE
+      ROLLBACK WORK.
+      CLEAR rv_reqnum.
+    ENDIF.
+  
+  ELSE
+    CLEAR rv_reqnum.
+    ROLLBACK WORK.
+  ENDIF.
+  ```
+  
+  CATCH cx_root INTO DATA(lx_error).
+  “ Don’t show message - just clear request number
+  CLEAR rv_reqnum.
+  ROLLBACK WORK.
+  ENDTRY.
+
+ENDMETHOD.
+
+
+
+
+
+*&———————————————————————*
+*& Form SUBMIT_DIRECT_CREATION (Updated to use new method)
+*& Include: ZTR_A2R_WBSZCJ01_F01
+*&———————————————————————*
+
+- Uses save_request_for_submit() instead of save_request()
+- This ensures execution continues after save
+  *–––––––––––––––––––––––––––––––––––*
+  FORM submit_direct_creation.
+  
+  DATA: lv_reqnum  TYPE char10,
+  lv_success TYPE abap_bool.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+  “═══════════════════════════════════════════════════════════════════
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 2: SAVE REQUEST (GET REQUEST NUMBER)
+  “ ✓ Using new method that doesn’t interrupt flow
+  “═══════════════════════════════════════════════════════════════════
+  lv_reqnum = go_builder->save_request_for_submit(
+  is_header    = gs_header
+  it_wbs_items = gt_wbs_items
+  ).
+  
+  IF lv_reqnum IS INITIAL.
+  MESSAGE e013(zcj00) WITH ‘Failed to save request before submit’.
+  RETURN.
+  ENDIF.
+  
+  “ Store request number in header
+  gs_header-zreq_num = lv_reqnum.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 3: UPDATE STATUS TO PENDING (Required for tracking)
+  “═══════════════════════════════════════════════════════════════════
+  UPDATE ztb_a2r_wbshdr
+  SET request_status = ‘PENDING’
   WHERE zreq_num = lv_reqnum.
-
-IF sy-subrc = 0.
+  
+  IF sy-subrc <> 0.
+  MESSAGE e016(zcj00) WITH ‘Failed to update status for’ lv_reqnum.
+  ROLLBACK WORK.
+  RETURN.
+  ENDIF.
+  
+  “ Commit the status change
+  COMMIT WORK AND WAIT.
+  
+  “ Update local header structure
+  gs_header-request_status = ‘PENDING’.
+  
+  “═══════════════════════════════════════════════════════════════════
+  “ STEP 4: CREATE PROJECT DIRECTLY (SKIP WORKFLOW)
+  “═══════════════════════════════════════════════════════════════════
+  MESSAGE i036(zcj00) WITH ‘Creating project for request’ lv_reqnum.
+  
+  “ Call the class method - it handles everything
+  lv_success = go_builder->create_project(
+  is_header    = gs_header
+  it_wbs_items = gt_wbs_items
+  ).
+  
+  IF lv_success = abap_true.
+  “───────────────────────────────────────────────────────────────
+  “ PROJECT CREATED SUCCESSFULLY
+  “───────────────────────────────────────────────────────────────
+  
+  “ Update status to APPROVED (since no workflow)
+  UPDATE ztb_a2r_wbshdr
+  SET request_status       = ‘APPROVED’
+  zapproved_by         = sy-uname
+  zrequest_approved_on = sy-datum
+  WHERE zreq_num = lv_reqnum.
+  
+  IF sy-subrc = 0.
   COMMIT WORK.
-
+  
+  ```
   " Get project details for success message
   SELECT SINGLE pspnr FROM ztb_a2r_wbshdr
     INTO @DATA(lv_pspnr)
     WHERE zreq_num = @lv_reqnum.
-
+  
   IF sy-subrc = 0 AND lv_pspnr IS NOT INITIAL.
     " Get external PSPID for display
     SELECT SINGLE pspid FROM proj
       INTO @DATA(lv_pspid)
       WHERE pspnr = @lv_pspnr.
-
+  
     IF sy-subrc = 0.
       MESSAGE s037(zcj00) WITH 'Request' lv_reqnum
                                'approved. Project:' lv_pspid.
-    ELSE.
+    ELSE
       MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
     ENDIF.
-  ELSE.
+  ELSE
     MESSAGE s033(zcj00) WITH 'Request' lv_reqnum 'approved'.
   ENDIF.
-
+  
   " Return to main screen
   LEAVE TO SCREEN 0.
-
-ELSE
-  MESSAGE e038(zcj00) WITH 'Failed to update approval status'.
+  ```
+  
+  ELSE
+  MESSAGE e038(zcj00) WITH ‘Failed to update approval status’.
   ROLLBACK WORK.
-ENDIF.
-```
-
-ELSE.
-“───────────────────────────────────────────────────────────────
-“ PROJECT CREATION FAILED
-“───────────────────────────────────────────────────────────────
-
-```
-" Mark as ERROR
-UPDATE ztb_a2r_wbshdr
-  SET request_status = 'ERROR'
+  ENDIF.
+  
+  ELSE.
+  “───────────────────────────────────────────────────────────────
+  “ PROJECT CREATION FAILED
+  “───────────────────────────────────────────────────────────────
+  
+  “ Mark as ERROR
+  UPDATE ztb_a2r_wbshdr
+  SET request_status = ‘ERROR’
   WHERE zreq_num = lv_reqnum.
-
-COMMIT WORK.
-
-MESSAGE e034(zcj00) WITH 'Error creating project for request' lv_reqnum.
-RETURN.
-```
-
-ENDIF.
+  
+  COMMIT WORK.
+  
+  MESSAGE e034(zcj00) WITH ‘Error creating project for request’ lv_reqnum.
+  RETURN.
+  ENDIF.
 
 ENDFORM.
