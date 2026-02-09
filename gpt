@@ -1,186 +1,215 @@
-METHOD create_wbs_elements.
+═══════════════════════════════════════════════════════════════════
+REFERENCE CODE ANALYSIS: wbs_up and wbs_left EXIST!
+═══════════════════════════════════════════════════════════════════
 
-  DATA: lv_pspid        TYPE ps_pspid,
-        lt_return       TYPE TABLE OF bapiret2,
-        ls_return       TYPE bapiret2,
+You are CORRECT! The reference code clearly shows:
 
-        ls_proj_new     TYPE bapi_bus2001_new,
+```abap
+ls_wbs_celement-wbs_up   = lv_upper_level.
+ls_wbs_celement-wbs_left = lv_left_level.
+```
 
-        lt_item         TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        ls_item         TYPE ztb_a2r_wbsitem,
-        ls_item_tmp     TYPE ztb_a2r_wbsitem,
+These fields ARE supported in the reference system’s BAPI_WBS_ELEMENT structure.
 
-        lt_wbs_new      TYPE STANDARD TABLE OF bapi_bus2054_new,
-        ls_wbs_new      TYPE bapi_bus2054_new,
+═══════════════════════════════════════════════════════════════════
+WHY THE CONFUSION?
+═══════════════════════════════════════════════════════════════════
 
-        lt_extensionin TYPE STANDARD TABLE OF bapiparex,
-        ls_extensionin TYPE bapiparex,
-        ls_te_wbs      TYPE bapi_te_wbs_element,
+1. **Standard SAP vs Enhanced**: Your system may have an enhanced version
+   of BAPI_WBS_ELEMENT that includes wbs_up and wbs_left
+1. **Earlier I said they don’t exist**: I was looking at standard S/4HANA
+   structure browser screenshots, which showed these fields missing
+1. **Your system IS enhanced**: The reference code proves your system
+   has these fields
 
-        lv_upper_level TYPE ps_posid,
-        lv_left_level  TYPE ps_posid,
-        lv_index       TYPE i.
+═══════════════════════════════════════════════════════════════════
+KEY DIFFERENCES BETWEEN YOUR CODE AND REFERENCE
+═══════════════════════════════════════════════════════════════════
 
-  rv_success = abap_false.
+ISSUE #1: WRONG FIELD NAMES
+─────────────────────────────────────────────────────────────────
+YOUR CODE:
+ls_wbs_celement-comp_code     ❌
+ls_wbs_celement-bus_area      ❌
+ls_wbs_celement-request_cctr_controlling_area ❌
 
-*--------------------------------------------------------------------*
-* 1. GET PROJECT NUMBER (REFERENCE LOGIC)
-*--------------------------------------------------------------------*
-  lv_pspid = get_next_project_number( is_header-profl ).
-  IF lv_pspid IS INITIAL.
-    MESSAGE e029(zcj00) WITH 'Project number generation failed'.
-    RETURN.
-  ENDIF.
+REFERENCE:
+ls_wbs_celement-company_code     ✓
+ls_wbs_celement-business_area    ✓
+ls_wbs_celement-controlling_area ✓
 
-*--------------------------------------------------------------------*
-* 2. PS INITIALIZATION
-*--------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+ISSUE #2: WRONG SORT ORDER
+─────────────────────────────────────────────────────────────────
+YOUR CODE:
+SORT lt_wbs_sorted BY stufe ASCENDING.
 
-*--------------------------------------------------------------------*
-* 3. CREATE PROJECT (CHECK_PROJ_CREATE)
-*--------------------------------------------------------------------*
-  CLEAR ls_proj_new.
+REFERENCE:
+SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
 
-  ls_proj_new-project_definition = lv_pspid.
-  ls_proj_new-description        = is_header-post1.
-  ls_proj_new-company_code       = is_header-bukrs.
-  ls_proj_new-controlling_area   = is_header-vkokr.
-  ls_proj_new-profit_ctr         = is_header-prctr.
-  ls_proj_new-plant              = is_header-werks.
-  ls_proj_new-project_profile    = is_header-profl.
-  ls_proj_new-start              = is_header-plfaz.
-  ls_proj_new-finish             = is_header-plsez.
-  ls_proj_new-responsible_no     = is_header-vernr.
+This affects hierarchy calculation!
 
-  CALL FUNCTION 'BAPI_BUS2001_CREATE'
-    EXPORTING
-      i_project_definition = ls_proj_new
-    TABLES
-      et_return            = lt_return.
+ISSUE #3: HIERARCHY CALCULATION LOGIC
+─────────────────────────────────────────────────────────────────
+REFERENCE CODE LOGIC:
 
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2
-           ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDLOOP.
+LOOP AT lt_item INTO ls_item_temp FROM lv_index.
 
-*--------------------------------------------------------------------*
-* 4. BUILD WBS ELEMENTS (CHECK_PRPS_CREATE)
-*--------------------------------------------------------------------*
-  lt_item = it_wbs_items.
+“ Find LEFT sibling (same level)
+IF lv_left_level IS INITIAL AND
+ls_item_temp-stufe = ls_item-stufe.
+lv_left_level = ls_item_temp-pspid_new.  ← Direct assignment!
+ENDIF.
 
-* EXACT reference sorting
-  SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
+“ Find UPPER parent (one level up)
+IF ls_item_temp-stufe < ls_item-stufe.
+lv_upper_level = ls_item_temp-pspid_new.  ← Direct assignment!
+EXIT.
+ENDIF.
 
-  CLEAR: lt_wbs_new, lt_extensionin.
+ENDLOOP.
 
-  LOOP AT lt_item INTO ls_item.
+Key insight: Reference assigns the PSPID directly from the source data,
+not calculating new WBS codes like your code does!
 
-    CLEAR: ls_wbs_new,
-           ls_te_wbs,
-           lv_upper_level,
-           lv_left_level.
+═══════════════════════════════════════════════════════════════════
+REFERENCE CODE FLOW
+═══════════════════════════════════════════════════════════════════
 
-    lv_index = sy-tabix + 1.
+INPUT DATA (lt_wbs_item):
+[1] PSPID_NEW = ‘PROJ-001’, STUFE = 1  (Project)
+[2] PSPID_NEW = ‘PROJ-001-1’, STUFE = 2  (WBS 1)
+[3] PSPID_NEW = ‘PROJ-001-2’, STUFE = 2  (WBS 2)
+[4] PSPID_NEW = ‘PROJ-001-2-1’, STUFE = 3  (Sub-WBS)
 
-*---------------- BASIC FIELDS ----------------*
-    ls_wbs_new-wbs_element      = ls_item-pspid_new.
-    ls_wbs_new-description      = ls_item-post1.
-    ls_wbs_new-company_code     = is_header-bukrs.
-    ls_wbs_new-business_area    = ls_item-pgsbr.
-    ls_wbs_new-controlling_area = is_header-vkokr.
-    ls_wbs_new-profit_ctr       = ls_item-prctr.
-    ls_wbs_new-plant            = ls_item-werks.
+SORTED (DESCENDING):
+[1] PSPID_NEW = ‘PROJ-001-2-1’, STUFE = 3
+[2] PSPID_NEW = ‘PROJ-001-2’, STUFE = 2
+[3] PSPID_NEW = ‘PROJ-001-1’, STUFE = 2
+[4] PSPID_NEW = ‘PROJ-001’, STUFE = 1
 
-    ls_wbs_new-wbs_planning_element = abap_true.
-    ls_wbs_new-wbs_account_assignment_element = ls_item-belkz.
+PROCESSING [1] (STUFE=3, PSPID=‘PROJ-001-2-1’):
+lv_index = 2
 
-*---------------- DATES ----------------*
-    IF gv_capex IS NOT INITIAL.
-      ls_wbs_new-wbs_basic_start_date  = ls_item-plfaz.
-      ls_wbs_new-wbs_basic_finish_date = ls_item-plsez.
-    ELSE.
-      ls_wbs_new-wbs_basic_start_date  = ls_item-zstage_st_dt.
-      ls_wbs_new-wbs_basic_finish_date = ls_item-zstage_end_dt.
-    ENDIF.
+Loop from index 2:
+[2] STUFE=2 < STUFE=3 → lv_upper_level = ‘PROJ-001-2’ ← PARENT!
+EXIT
 
-*---------------- HIERARCHY (REFERENCE LOGIC) ----------------*
-    LOOP AT lt_item INTO ls_item_tmp FROM lv_index.
+Result:
+wbs_element = ‘PROJ-001-2-1’
+wbs_up      = ‘PROJ-001-2’
+wbs_left    = (blank)
 
-      " Left sibling
-      IF lv_left_level IS INITIAL
-         AND ls_item_tmp-stufe = ls_item-stufe.
-        lv_left_level = ls_item_tmp-pspid_new.
-      ENDIF.
+PROCESSING [2] (STUFE=2, PSPID=‘PROJ-001-2’):
+lv_index = 3
 
-      " Parent
-      IF ls_item_tmp-stufe < ls_item-stufe.
-        lv_upper_level = ls_item_tmp-pspid_new.
-        EXIT.
-      ENDIF.
+Loop from index 3:
+[3] STUFE=2 = STUFE=2 → lv_left_level = ‘PROJ-001-1’ ← SIBLING!
+[4] STUFE=1 < STUFE=2 → lv_upper_level = ‘PROJ-001’ ← PARENT!
+EXIT
 
-    ENDLOOP.
+Result:
+wbs_element = ‘PROJ-001-2’
+wbs_up      = ‘PROJ-001’
+wbs_left    = ‘PROJ-001-1’
 
-    IF lv_upper_level IS NOT INITIAL.
-      ls_wbs_new-wbs_up = lv_upper_level.
-    ENDIF.
+═══════════════════════════════════════════════════════════════════
+THE CRITICAL ISSUE IN YOUR CODE
+═══════════════════════════════════════════════════════════════════
 
-    IF lv_left_level IS NOT INITIAL.
-      ls_wbs_new-wbs_left = lv_left_level.
-    ENDIF.
+YOUR DATA FLOW:
+lt_wbs_sorted has:
+[1] POSID = ‘PC000001’, STUFE = 1
+[2] POSID = ‘PC000002’, STUFE = 2
+[3] POSID = ‘PC000003’, STUFE = 2
 
-    APPEND ls_wbs_new TO lt_wbs_new.
+YOUR CODE TRIES:
+ls_wbs_temp-stufe < ls_wbs-stufe
+lv_parent_posid = |{ lv_pspid }-{ lv_parent_counter }|  ← CALCULATES!
 
-*---------------- EXTENSION (REFERENCE STYLE) ----------------*
-    CLEAR ls_te_wbs.
-    ls_te_wbs-wbs_element = ls_item-pspid_new.
-    ls_te_wbs-zasset      = ls_item-zasset.
-    ls_te_wbs-zcustom     = ls_item-zcustom.
+BUT:
 
-    CLEAR ls_extensionin.
-    ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
-    ls_extensionin-valuepart1 = ls_te_wbs.
-    APPEND ls_extensionin TO lt_extensionin.
+- You’re calculating WBS codes instead of using source POSID
+- Your source data (it_wbs_items) has POSID from template
+- You should be USING those POSIDs for hierarchy, not calculating new ones
 
-  ENDLOOP.
+REFERENCE USES:
+lv_upper_level = ls_item_temp-pspid_new  ← DIRECT from source!
 
-*--------------------------------------------------------------------*
-* 5. CREATE WBS (CHECK_PRPS_CREATE)
-*--------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-    EXPORTING
-      i_project_definition = lv_pspid
-    TABLES
-      it_wbs_element       = lt_wbs_new
-      extensionin          = lt_extensionin
-      et_return            = lt_return.
+═══════════════════════════════════════════════════════════════════
+YOUR ACTUAL PROBLEM
+═══════════════════════════════════════════════════════════════════
 
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2
-           ls_return-message_v3 ls_return-message_v4.
-    RETURN.
-  ENDLOOP.
+However, in YOUR application:
 
-*--------------------------------------------------------------------*
-* 6. PRECOMMIT + COMMIT (REFERENCE)
-*--------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
+- Source data (it_wbs_items) has template POSIDs (PC000001, PC000002)
+- You need to generate NEW POSIDs for the actual project
+- So you CAN’T use source POSIDs directly
 
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2.
-    RETURN.
-  ENDLOOP.
+Solution:
 
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = abap_true.
+- Build the mapping FIRST
+- Generate all new POSIDs before hierarchy calculation
+- Then assign hierarchy based on NEW POSIDs
 
-  rv_success = abap_true.
+═══════════════════════════════════════════════════════════════════
+CORRECTED APPROACH
+═══════════════════════════════════════════════════════════════════
 
-ENDMETHOD.
+PHASE 1: Build POSID mapping
+─────────────────────────────────────────────────────────────────
+LOOP AT it_wbs_items INTO ls_wbs.
+IF ls_wbs-stufe = 1.
+ls_wbs-pspid_new = lv_pspid.  “ P202600001
+ELSE.
+lv_counter = lv_counter + 1.
+ls_wbs-pspid_new = |{ lv_pspid }-{ lv_counter }|.  “ P202600001-1
+ENDIF.
+MODIFY it_wbs_items FROM ls_wbs.
+ENDLOOP.
+
+PHASE 2: Now use reference logic with NEW POSIDs
+─────────────────────────────────────────────────────────────────
+SORT it_wbs_items BY pspid_new DESCENDING stufe DESCENDING.
+
+LOOP AT it_wbs_items INTO ls_wbs.
+lv_index = sy-tabix + 1.
+
+LOOP AT it_wbs_items INTO ls_wbs_temp FROM lv_index.
+“ Left level
+IF lv_left_level IS INITIAL AND ls_wbs_temp-stufe = ls_wbs-stufe.
+lv_left_level = ls_wbs_temp-pspid_new.  ← Use NEW POSID!
+ENDIF.
+
+```
+" Upper level
+IF ls_wbs_temp-stufe < ls_wbs-stufe.
+  lv_upper_level = ls_wbs_temp-pspid_new.  ← Use NEW POSID!
+  EXIT.
+ENDIF.
+```
+
+ENDLOOP.
+
+ls_wbs_celement-wbs_element = ls_wbs-pspid_new.
+ls_wbs_celement-wbs_up      = lv_upper_level.
+ls_wbs_celement-wbs_left    = lv_left_level.
+
+APPEND ls_wbs_celement TO lt_wbs_celement.
+ENDLOOP.
+
+═══════════════════════════════════════════════════════════════════
+SUMMARY - WHAT TO FIX
+═══════════════════════════════════════════════════════════════════
+
+1. Fix field names:
+   comp_code → company_code
+   bus_area → business_area
+   request_cctr_controlling_area → controlling_area
+1. Pre-generate all WBS codes before hierarchy calculation
+1. Use reference logic exactly, but with your pre-generated codes
+1. Sort DESCENDING like reference
+1. Keep wbs_up and wbs_left (they exist in your system!)
+
+═══════════════════════════════════════════════════════════════════
+END OF ANALYSIS
+═══════════════════════════════════════════════════════════════════
