@@ -6,9 +6,10 @@ METHOD get_next_project_number.
 *& Uses: CN_SUCHE_FREIE_NUMMER with exact parameter names from SE37
 *&---------------------------------------------------------------------*
 
-  DATA: lv_proj_e_imp    TYPE proj-pspid,   " Final value from FM
-        lv_proj_s_imp    TYPE proj-pspid,   " Start value for FM
-        lv_template_pspid TYPE proj-pspid.  " Template from config
+  DATA: lv_proj_e_imp      TYPE proj-pspid,   " Final value from FM
+        lv_proj_s_imp      TYPE proj-pspid,   " Start value for FM
+        lv_template_pspnr  TYPE proj-pspnr,   " Template PSPNR (internal)
+        lv_template_pspid  TYPE proj-pspid.   " Template PSPID (external)
 
   CLEAR rv_pspid.
 
@@ -19,7 +20,8 @@ METHOD get_next_project_number.
   " ═══════════════════════════════════════════════════════════════
   
   " Try to get last project from this profile
-  SELECT pspid FROM proj
+  SELECT pspid
+    FROM proj
     WHERE profl = @iv_profl
     ORDER BY pspid DESCENDING
     UP TO 1 ROWS
@@ -29,13 +31,23 @@ METHOD get_next_project_number.
   " If no existing projects, use template as pattern
   IF sy-subrc <> 0 OR lv_proj_s_imp IS INITIAL.
     
-    " Get template project PSPID from config table
-    SELECT SINGLE pspid FROM ztb_a2r_conftab1
-      INTO @lv_template_pspid
+    " Get template project PSPNR from config table
+    SELECT SINGLE pspnr
+      FROM ztb_a2r_conftab1
+      INTO @lv_template_pspnr
       WHERE profl = @iv_profl.
     
-    IF sy-subrc = 0 AND lv_template_pspid IS NOT INITIAL.
+    IF sy-subrc = 0 AND lv_template_pspnr IS NOT INITIAL.
+      
+      " Convert internal PSPNR to external PSPID format
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = lv_template_pspnr
+        IMPORTING
+          output = lv_template_pspid.
+      
       lv_proj_s_imp = lv_template_pspid.
+      
     ELSE.
       MESSAGE e029(zcj00) WITH 'No starting pattern found for profile' iv_profl.
       RETURN.
@@ -73,7 +85,7 @@ METHOD get_next_project_number.
   ENDIF.
 
   " ═══════════════════════════════════════════════════════════════
-  " Step 4: Return the generated project number
+  " Step 4: Return the generated project number (external format)
   " ═══════════════════════════════════════════════════════════════
   rv_pspid = lv_proj_e_imp.
 
