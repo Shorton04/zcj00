@@ -1,215 +1,352 @@
-═══════════════════════════════════════════════════════════════════
-REFERENCE CODE ANALYSIS: wbs_up and wbs_left EXIST!
-═══════════════════════════════════════════════════════════════════
+*&———————————————————————*
+*& CORRECTED: Based on Reference Code (check_prps_create)
+*& The reference shows wbs_up and wbs_left ARE supported
+*&———————————————————————*
 
-You are CORRECT! The reference code clearly shows:
+METHOD create_wbs_elements.
 
-```abap
-ls_wbs_celement-wbs_up   = lv_upper_level.
-ls_wbs_celement-wbs_left = lv_left_level.
+DATA: lv_pspid          TYPE ps_pspid,
+ls_wbs            TYPE ztb_a2r_wbsitem,
+ls_wbs_temp       TYPE ztb_a2r_wbsitem,
+ls_wbs_created    TYPE ztb_a2r_wbsitem,
+lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+lt_return         TYPE TABLE OF bapiret2,
+ls_return         TYPE bapiret2,
+lt_wbs_celement   TYPE TABLE OF bapi_wbs_element,
+ls_wbs_celement   TYPE bapi_wbs_element,
+lt_extensionin    TYPE TABLE OF bapiparex,
+ls_extensionin    TYPE bapiparex,
+ls_te_wbs         TYPE bapi_te_wbs_element,
+lv_level1_posid   TYPE ps_posid,
+lv_level1_pspnr   TYPE ps_pspnr,
+lv_counter        TYPE i VALUE 1,
+lv_waers          TYPE waers,
+lv_posid_internal TYPE ps_posid,
+lv_index          TYPE i,
+lv_upper_level    TYPE ps_posid,
+lv_left_level     TYPE ps_posid,
+ls_project_new    TYPE bapi_bus2001_new.
+
+rv_success = abap_false.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 1: GET NEXT PROJECT NUMBER
+“═══════════════════════════════════════════════════════════════════
+lv_pspid = get_next_project_number( is_header-profl ).
+
+IF lv_pspid IS INITIAL.
+MESSAGE e029(zcj00) WITH ‘Failed to get project number’.
+RETURN.
+ENDIF.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 2: GET CURRENCY FROM COMPANY CODE
+“═══════════════════════════════════════════════════════════════════
+SELECT SINGLE waers FROM t001
+INTO lv_waers
+WHERE bukrs = is_header-bukrs.
+
+IF sy-subrc <> 0.
+lv_waers = ‘USD’.
+ENDIF.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 3: INITIALIZE BAPI
+“═══════════════════════════════════════════════════════════════════
+CALL FUNCTION ‘BAPI_PS_INITIALIZATION’.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 4: PREPARE PROJECT DEFINITION STRUCTURE (From reference)
+“═══════════════════════════════════════════════════════════════════
+CLEAR ls_project_new.
+
+ls_project_new-project_definition = lv_pspid.
+ls_project_new-description        = is_header-post1.
+ls_project_new-company_code       = is_header-bukrs.
+ls_project_new-controlling_area   = is_header-bukrs(4).
+ls_project_new-profit_ctr         = is_header-prctr.
+ls_project_new-start              = sy-datum.
+ls_project_new-finish             = is_header-plsez.
+ls_project_new-plant              = is_header-werks.
+ls_project_new-project_profile    = is_header-profl.
+ls_project_new-responsible_no     = is_header-vernr.
+ls_project_new-currency           = lv_waers.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 5: CREATE PROJECT DEFINITION
+“═══════════════════════════════════════════════════════════════════
+CALL FUNCTION ‘BAPI_BUS2001_CREATE’
+EXPORTING
+i_project_definition = ls_project_new
+TABLES
+et_return            = lt_return.
+
+LOOP AT lt_return INTO ls_return WHERE type CA ‘EA’.
+MESSAGE ID ls_return-id TYPE ‘E’ NUMBER ls_return-number
+WITH ls_return-message_v1 ls_return-message_v2
+ls_return-message_v3 ls_return-message_v4.
+rv_success = abap_false.
+RETURN.
+ENDLOOP.
+
+“ Store Level 1 POSID
+lv_level1_posid = lv_pspid.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 6: PREPARE WBS ELEMENTS (Exactly like reference check_prps_create)
+“═══════════════════════════════════════════════════════════════════
+lt_wbs_sorted = it_wbs_items.
+
+“ ✓ Reference sort order: DESCENDING for both
+SORT lt_wbs_sorted BY posid DESCENDING stufe DESCENDING.
+
+LOOP AT lt_wbs_sorted INTO ls_wbs.
+
 ```
-
-These fields ARE supported in the reference system’s BAPI_WBS_ELEMENT structure.
-
-═══════════════════════════════════════════════════════════════════
-WHY THE CONFUSION?
-═══════════════════════════════════════════════════════════════════
-
-1. **Standard SAP vs Enhanced**: Your system may have an enhanced version
-   of BAPI_WBS_ELEMENT that includes wbs_up and wbs_left
-1. **Earlier I said they don’t exist**: I was looking at standard S/4HANA
-   structure browser screenshots, which showed these fields missing
-1. **Your system IS enhanced**: The reference code proves your system
-   has these fields
-
-═══════════════════════════════════════════════════════════════════
-KEY DIFFERENCES BETWEEN YOUR CODE AND REFERENCE
-═══════════════════════════════════════════════════════════════════
-
-ISSUE #1: WRONG FIELD NAMES
-─────────────────────────────────────────────────────────────────
-YOUR CODE:
-ls_wbs_celement-comp_code     ❌
-ls_wbs_celement-bus_area      ❌
-ls_wbs_celement-request_cctr_controlling_area ❌
-
-REFERENCE:
-ls_wbs_celement-company_code     ✓
-ls_wbs_celement-business_area    ✓
-ls_wbs_celement-controlling_area ✓
-
-ISSUE #2: WRONG SORT ORDER
-─────────────────────────────────────────────────────────────────
-YOUR CODE:
-SORT lt_wbs_sorted BY stufe ASCENDING.
-
-REFERENCE:
-SORT lt_item BY pspid_new DESCENDING stufe DESCENDING.
-
-This affects hierarchy calculation!
-
-ISSUE #3: HIERARCHY CALCULATION LOGIC
-─────────────────────────────────────────────────────────────────
-REFERENCE CODE LOGIC:
-
-LOOP AT lt_item INTO ls_item_temp FROM lv_index.
-
-“ Find LEFT sibling (same level)
-IF lv_left_level IS INITIAL AND
-ls_item_temp-stufe = ls_item-stufe.
-lv_left_level = ls_item_temp-pspid_new.  ← Direct assignment!
+" Skip items without budget or Level 1
+IF ls_wbs-wert2 IS INITIAL OR ls_wbs-stufe = 1.
+  CONTINUE.
 ENDIF.
 
-“ Find UPPER parent (one level up)
-IF ls_item_temp-stufe < ls_item-stufe.
-lv_upper_level = ls_item_temp-pspid_new.  ← Direct assignment!
-EXIT.
-ENDIF.
+CLEAR: ls_wbs_celement, ls_te_wbs, lv_index, lv_left_level, lv_upper_level.
 
-ENDLOOP.
-
-Key insight: Reference assigns the PSPID directly from the source data,
-not calculating new WBS codes like your code does!
-
-═══════════════════════════════════════════════════════════════════
-REFERENCE CODE FLOW
-═══════════════════════════════════════════════════════════════════
-
-INPUT DATA (lt_wbs_item):
-[1] PSPID_NEW = ‘PROJ-001’, STUFE = 1  (Project)
-[2] PSPID_NEW = ‘PROJ-001-1’, STUFE = 2  (WBS 1)
-[3] PSPID_NEW = ‘PROJ-001-2’, STUFE = 2  (WBS 2)
-[4] PSPID_NEW = ‘PROJ-001-2-1’, STUFE = 3  (Sub-WBS)
-
-SORTED (DESCENDING):
-[1] PSPID_NEW = ‘PROJ-001-2-1’, STUFE = 3
-[2] PSPID_NEW = ‘PROJ-001-2’, STUFE = 2
-[3] PSPID_NEW = ‘PROJ-001-1’, STUFE = 2
-[4] PSPID_NEW = ‘PROJ-001’, STUFE = 1
-
-PROCESSING [1] (STUFE=3, PSPID=‘PROJ-001-2-1’):
-lv_index = 2
-
-Loop from index 2:
-[2] STUFE=2 < STUFE=3 → lv_upper_level = ‘PROJ-001-2’ ← PARENT!
-EXIT
-
-Result:
-wbs_element = ‘PROJ-001-2-1’
-wbs_up      = ‘PROJ-001-2’
-wbs_left    = (blank)
-
-PROCESSING [2] (STUFE=2, PSPID=‘PROJ-001-2’):
-lv_index = 3
-
-Loop from index 3:
-[3] STUFE=2 = STUFE=2 → lv_left_level = ‘PROJ-001-1’ ← SIBLING!
-[4] STUFE=1 < STUFE=2 → lv_upper_level = ‘PROJ-001’ ← PARENT!
-EXIT
-
-Result:
-wbs_element = ‘PROJ-001-2’
-wbs_up      = ‘PROJ-001’
-wbs_left    = ‘PROJ-001-1’
-
-═══════════════════════════════════════════════════════════════════
-THE CRITICAL ISSUE IN YOUR CODE
-═══════════════════════════════════════════════════════════════════
-
-YOUR DATA FLOW:
-lt_wbs_sorted has:
-[1] POSID = ‘PC000001’, STUFE = 1
-[2] POSID = ‘PC000002’, STUFE = 2
-[3] POSID = ‘PC000003’, STUFE = 2
-
-YOUR CODE TRIES:
-ls_wbs_temp-stufe < ls_wbs-stufe
-lv_parent_posid = |{ lv_pspid }-{ lv_parent_counter }|  ← CALCULATES!
-
-BUT:
-
-- You’re calculating WBS codes instead of using source POSID
-- Your source data (it_wbs_items) has POSID from template
-- You should be USING those POSIDs for hierarchy, not calculating new ones
-
-REFERENCE USES:
-lv_upper_level = ls_item_temp-pspid_new  ← DIRECT from source!
-
-═══════════════════════════════════════════════════════════════════
-YOUR ACTUAL PROBLEM
-═══════════════════════════════════════════════════════════════════
-
-However, in YOUR application:
-
-- Source data (it_wbs_items) has template POSIDs (PC000001, PC000002)
-- You need to generate NEW POSIDs for the actual project
-- So you CAN’T use source POSIDs directly
-
-Solution:
-
-- Build the mapping FIRST
-- Generate all new POSIDs before hierarchy calculation
-- Then assign hierarchy based on NEW POSIDs
-
-═══════════════════════════════════════════════════════════════════
-CORRECTED APPROACH
-═══════════════════════════════════════════════════════════════════
-
-PHASE 1: Build POSID mapping
-─────────────────────────────────────────────────────────────────
-LOOP AT it_wbs_items INTO ls_wbs.
-IF ls_wbs-stufe = 1.
-ls_wbs-pspid_new = lv_pspid.  “ P202600001
-ELSE.
-lv_counter = lv_counter + 1.
-ls_wbs-pspid_new = |{ lv_pspid }-{ lv_counter }|.  “ P202600001-1
-ENDIF.
-MODIFY it_wbs_items FROM ls_wbs.
-ENDLOOP.
-
-PHASE 2: Now use reference logic with NEW POSIDs
-─────────────────────────────────────────────────────────────────
-SORT it_wbs_items BY pspid_new DESCENDING stufe DESCENDING.
-
-LOOP AT it_wbs_items INTO ls_wbs.
 lv_index = sy-tabix + 1.
 
-LOOP AT it_wbs_items INTO ls_wbs_temp FROM lv_index.
-“ Left level
-IF lv_left_level IS INITIAL AND ls_wbs_temp-stufe = ls_wbs-stufe.
-lv_left_level = ls_wbs_temp-pspid_new.  ← Use NEW POSID!
-ENDIF.
+" ═══════════════════════════════════════════════════════════════
+" WBS ELEMENT FIELDS (From reference - exact field names)
+" ═══════════════════════════════════════════════════════════════
 
-```
-" Upper level
-IF ls_wbs_temp-stufe < ls_wbs-stufe.
-  lv_upper_level = ls_wbs_temp-pspid_new.  ← Use NEW POSID!
-  EXIT.
-ENDIF.
-```
+" Generate WBS element code
+lv_counter = lv_counter + 1.
+ls_wbs_celement-wbs_element = |{ lv_pspid }-{ lv_counter }|.
 
+" Basic fields
+ls_wbs_celement-description      = ls_wbs-post1.
+ls_wbs_celement-company_code     = is_header-bukrs.
+ls_wbs_celement-business_area    = is_header-bukrs.
+ls_wbs_celement-controlling_area = is_header-bukrs(4).
+ls_wbs_celement-profit_ctr       = is_header-prctr.
+ls_wbs_celement-plant            = is_header-werks.
+
+" Planning
+ls_wbs_celement-wbs_planning_element = abap_true.
+
+" Investment fields
+ls_wbs_celement-inv_reason     = is_header-izwek.
+ls_wbs_celement-invest_profile = ls_wbs-imprf.
+
+" Responsibility
+ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
+ls_wbs_celement-responsible_no = is_header-vernr.
+
+" Dates
+ls_wbs_celement-wbs_basic_start_date  = sy-datum.
+ls_wbs_celement-wbs_basic_finish_date = is_header-plsez.
+
+" Account assignment
+ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
+" ═══════════════════════════════════════════════════════════════
+" HIERARCHY CALCULATION (Exact logic from reference)
+" ═══════════════════════════════════════════════════════════════
+LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
+  " Left Level (sibling - same level)
+  IF lv_left_level IS INITIAL AND 
+     ls_wbs_temp-stufe = ls_wbs-stufe.
+    " For Level 2+, calculate the WBS code
+    DATA(lv_temp_counter) TYPE i.
+    lv_temp_counter = 0.
+    LOOP AT lt_wbs_sorted INTO DATA(ls_count_temp) WHERE stufe > 1.
+      IF ls_count_temp-posid = ls_wbs_temp-posid.
+        EXIT.
+      ENDIF.
+      IF ls_count_temp-wert2 IS NOT INITIAL.
+        lv_temp_counter = lv_temp_counter + 1.
+      ENDIF.
+    ENDLOOP.
+    lv_left_level = |{ lv_pspid }-{ lv_temp_counter }|.
+  ENDIF.
+
+  " Upper Level (parent - lower level)
+  IF ls_wbs_temp-stufe < ls_wbs-stufe.
+    IF ls_wbs_temp-stufe = 1.
+      " Parent is the project itself
+      lv_upper_level = lv_pspid.
+    ELSE.
+      " Parent is another WBS element
+      CLEAR lv_temp_counter.
+      LOOP AT lt_wbs_sorted INTO ls_count_temp WHERE stufe > 1.
+        IF ls_count_temp-posid = ls_wbs_temp-posid.
+          EXIT.
+        ENDIF.
+        IF ls_count_temp-wert2 IS NOT INITIAL.
+          lv_temp_counter = lv_temp_counter + 1.
+        ENDIF.
+      ENDLOOP.
+      lv_upper_level = |{ lv_pspid }-{ lv_temp_counter }|.
+    ENDIF.
+    EXIT.
+  ENDIF.
 ENDLOOP.
 
-ls_wbs_celement-wbs_element = ls_wbs-pspid_new.
-ls_wbs_celement-wbs_up      = lv_upper_level.
-ls_wbs_celement-wbs_left    = lv_left_level.
+" ✓ Reference uses these fields!
+ls_wbs_celement-wbs_up   = lv_upper_level.
+ls_wbs_celement-wbs_left = lv_left_level.
 
 APPEND ls_wbs_celement TO lt_wbs_celement.
+
+" ═══════════════════════════════════════════════════════════════
+" EXTENSION FIELDS (From reference)
+" ═══════════════════════════════════════════════════════════════
+IF is_header-zunifier_proj = 'X' AND ls_wbs-stufe = 1.
+  CLEAR: ls_te_wbs, ls_extensionin.
+  
+  ls_te_wbs-wbs_element   = ls_wbs_celement-wbs_element.
+  ls_te_wbs-zunifier_proj = 'X'.
+
+  ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+  ls_extensionin-valuepart1 = ls_te_wbs.
+  ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+  
+  APPEND ls_extensionin TO lt_extensionin.
+ENDIF.
+```
+
 ENDLOOP.
 
-═══════════════════════════════════════════════════════════════════
-SUMMARY - WHAT TO FIX
-═══════════════════════════════════════════════════════════════════
+“═══════════════════════════════════════════════════════════════════
+“ STEP 7: CREATE WBS ELEMENTS (From reference)
+“═══════════════════════════════════════════════════════════════════
+IF NOT lt_wbs_celement IS INITIAL OR NOT lt_extensionin IS INITIAL.
 
-1. Fix field names:
-   comp_code → company_code
-   bus_area → business_area
-   request_cctr_controlling_area → controlling_area
-1. Pre-generate all WBS codes before hierarchy calculation
-1. Use reference logic exactly, but with your pre-generated codes
-1. Sort DESCENDING like reference
-1. Keep wbs_up and wbs_left (they exist in your system!)
+```
+CLEAR lt_return.
 
-═══════════════════════════════════════════════════════════════════
-END OF ANALYSIS
-═══════════════════════════════════════════════════════════════════
+CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+  EXPORTING
+    i_project_definition = lv_pspid
+  TABLES
+    it_wbs_element       = lt_wbs_celement
+    et_return            = lt_return
+    extensionin          = lt_extensionin.
+
+LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+  MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+    WITH ls_return-message_v1 ls_return-message_v2
+         ls_return-message_v3 ls_return-message_v4.
+  rv_success = abap_false.
+  RETURN.
+ENDLOOP.
+```
+
+ENDIF.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 8: PRE-COMMIT (From reference)
+“═══════════════════════════════════════════════════════════════════
+CLEAR lt_return.
+
+CALL FUNCTION ‘BAPI_PS_PRECOMMIT’
+TABLES
+et_return = lt_return.
+
+LOOP AT lt_return INTO ls_return WHERE type CA ‘EA’.
+MESSAGE ID ls_return-id TYPE ‘E’ NUMBER ls_return-number
+WITH ls_return-message_v1 ls_return-message_v2.
+rv_success = abap_false.
+RETURN.
+ENDLOOP.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 9: COMMIT WORK (From reference)
+“═══════════════════════════════════════════════════════════════════
+CLEAR ls_return.
+
+CALL FUNCTION ‘BAPI_TRANSACTION_COMMIT’
+EXPORTING
+wait   = ‘X’
+IMPORTING
+return = ls_return.
+
+IF ls_return-type CA ‘EA’.
+MESSAGE ID ls_return-id TYPE ‘E’ NUMBER ls_return-number
+WITH ls_return-message_v1 ls_return-message_v2.
+rv_success = abap_false.
+RETURN.
+ENDIF.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 10: GET CREATED WBS INTERNAL NUMBERS
+“═══════════════════════════════════════════════════════════════════
+SELECT SINGLE pspnr FROM proj
+INTO lv_level1_pspnr
+WHERE pspid = lv_pspid.
+
+IF sy-subrc <> 0.
+MESSAGE e029(zcj00) WITH ‘Project not found after creation’.
+rv_success = abap_false.
+RETURN.
+ENDIF.
+
+“ Build output table
+CLEAR lv_counter.
+LOOP AT it_wbs_items INTO ls_wbs.
+
+```
+IF ls_wbs-wert2 IS INITIAL.
+  CONTINUE.
+ENDIF.
+
+CLEAR ls_wbs_created.
+
+IF ls_wbs-stufe = 1.
+  ls_wbs_created-posid = lv_pspid.
+  ls_wbs_created-posnr = lv_level1_pspnr.
+ELSE.
+  lv_counter = lv_counter + 1.
+  ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
+
+  SELECT SINGLE pspnr FROM prps
+    INTO ls_wbs_created-posnr
+    WHERE posid = ls_wbs_created-posid.
+
+  IF sy-subrc <> 0.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+      EXPORTING
+        input  = ls_wbs_created-posid
+      IMPORTING
+        output = lv_posid_internal.
+
+    SELECT SINGLE pspnr FROM prps
+      INTO ls_wbs_created-posnr
+      WHERE posid = lv_posid_internal.
+  ENDIF.
+ENDIF.
+
+ls_wbs_created-stufe = ls_wbs-stufe.
+ls_wbs_created-post1 = ls_wbs-post1.
+ls_wbs_created-kostl = ls_wbs-kostl.
+ls_wbs_created-wert2 = ls_wbs-wert2.
+ls_wbs_created-zbudget_check = ls_wbs-zbudget_check.
+ls_wbs_created-imprf = ls_wbs-imprf.
+ls_wbs_created-prart = ls_wbs-prart.
+ls_wbs_created-bukrs = is_header-bukrs.
+ls_wbs_created-werks = is_header-werks.
+
+APPEND ls_wbs_created TO et_wbs_created.
+```
+
+ENDLOOP.
+
+“═══════════════════════════════════════════════════════════════════
+“ STEP 11: UPDATE HEADER WITH PROJECT NUMBER
+“═══════════════════════════════════════════════════════════════════
+UPDATE ztb_a2r_wbshdr
+SET pspnr = lv_level1_pspnr
+WHERE zreq_num = is_header-zreq_num.
+
+COMMIT WORK.
+
+rv_success = abap_true.
+
+ENDMETHOD.
