@@ -1,7 +1,80 @@
-SELECT SINGLE w~posid 
-    FROM ztb_a2r_wbsitem AS w
-    INNER JOIN ztb_a2r_wbshdr AS h
-      ON h~zreq_num = w~zreq_num
-    INTO @lv_posid_raw
-    WHERE h~profl = @iv_profl    " Project profile parameter
-      AND w~stufe = 1.           " Level = 1
+"═══════════════════════════════════════════════════════════════════
+" STEP 6: CREATE WBS ELEMENTS LEVEL BY LEVEL
+"═══════════════════════════════════════════════════════════════════
+
+" Get maximum level from template
+DATA: lv_max_stufe TYPE ps_stufe,
+      lv_current_stufe TYPE ps_stufe.
+
+lv_max_stufe = 0.
+LOOP AT lt_wbs_sorted INTO ls_wbs.
+  IF ls_wbs-stufe > lv_max_stufe.
+    lv_max_stufe = ls_wbs-stufe.
+  ENDIF.
+ENDLOOP.
+
+" Create WBS level by level (Level 2, then 3, then 4, etc.)
+lv_current_stufe = 2.
+
+WHILE lv_current_stufe <= lv_max_stufe.
+
+  CLEAR lt_wbs_celement.
+  
+  " Build WBS elements for this level only
+  LOOP AT lt_wbs_sorted INTO ls_wbs WHERE stufe = lv_current_stufe.
+  
+    " Skip if no budget (optional)
+    IF ls_wbs-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
+    
+    " ... your existing WBS building logic ...
+    " (build ls_wbs_celement)
+    
+    APPEND ls_wbs_celement TO lt_wbs_celement.
+    
+  ENDLOOP.
+
+  " Create this level's WBS elements
+  IF lt_wbs_celement IS NOT INITIAL.
+  
+    CLEAR lt_return.
+
+    CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+      EXPORTING
+        i_project_definition = lv_pspid
+      TABLES
+        it_wbs_element       = lt_wbs_celement
+        et_return            = lt_return
+        extensionin          = lt_extensionin.
+
+    LOOP AT lt_return INTO ls_return WHERE type = 'E'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+        WITH ls_return-message_v1 ls_return-message_v2
+             ls_return-message_v3 ls_return-message_v4.
+      
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      RETURN.
+    ENDLOOP.
+    
+    " Precommit after each level
+    CLEAR lt_return.
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+      TABLES
+        et_return = lt_return.
+
+    LOOP AT lt_return INTO ls_return WHERE type = 'E'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+        WITH ls_return-message_v1 ls_return-message_v2.
+      
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      RETURN.
+    ENDLOOP.
+
+  ENDIF.
+
+  lv_current_stufe = lv_current_stufe + 1.
+
+ENDWHILE.
