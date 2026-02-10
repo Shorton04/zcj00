@@ -1,64 +1,125 @@
-"═══════════════════════════════════════════════════════════════════
-" STEP 5: BUILD WBS ELEMENTS FROM TEMPLATE STRUCTURE
-"═══════════════════════════════════════════════════════════════════
+      CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
+      lv_index = sy-tabix + 1.
 
-" Sort by STUFE ASCENDING (so parents are created before children)
-lt_wbs_sorted = it_wbs_items.
-SORT lt_wbs_sorted BY stufe ASCENDING posid ASCENDING.
+      "───────────────────────────────────────────────────────────────
+      " WBS ELEMENT ID: Build from new project number + template suffix
+      "───────────────────────────────────────────────────────────────
+      DATA: lv_template_posid   TYPE ps_posid,
+            lv_new_posid        TYPE ps_posid,
+            lv_template_project TYPE ps_pspid.
 
-"═══════════════════════════════════════════════════════════════════
-" STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
-"═══════════════════════════════════════════════════════════════════
+      lv_template_posid = ls_wbs-posid.
+      
+      " Get template project ID (Level 1)
+      READ TABLE lt_wbs_sorted INTO DATA(ls_level1) WITH KEY stufe = 1.
+      IF sy-subrc = 0.
+        lv_template_project = ls_level1-posid.
+      ENDIF.
 
-CLEAR lt_wbs_celement.
+      " Build new WBS POSID by replacing template project with new project
+      IF lv_template_project IS NOT INITIAL AND 
+         lv_template_posid CS lv_template_project.
+        lv_new_posid = lv_template_posid.
+        REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
+      ELSE.
+        lv_new_posid = lv_template_posid.
+      ENDIF.
 
-LOOP AT lt_wbs_sorted INTO ls_wbs.
+      ls_wbs_celement-wbs_element = lv_new_posid.
 
-  " Skip Level 1 (already created as project definition)
-  IF ls_wbs-stufe = 1.
-    CONTINUE.
-  ENDIF.
+      "───────────────────────────────────────────────────────────────
+      " BASIC FIELDS
+      "───────────────────────────────────────────────────────────────
+      ls_wbs_celement-description      = ls_wbs-post1.
+      ls_wbs_celement-company_code     = is_header-bukrs.
+      ls_wbs_celement-business_area    = is_header-bukrs.
+      ls_wbs_celement-controlling_area = is_header-bukrs(4).
+      ls_wbs_celement-profit_ctr       = is_header-prctr.
+      ls_wbs_celement-plant            = is_header-werks.
+      ls_wbs_celement-res_anal_key     = ls_wbs-abgsl.
 
-  " Remove wert2 check - create all WBS elements
-  " IF ls_wbs-wert2 IS INITIAL.
-  "   CONTINUE.
-  " ENDIF.
+      "───────────────────────────────────────────────────────────────
+      " PLANNING & INVESTMENT FIELDS
+      "───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_planning_element = abap_true.
+      ls_wbs_celement-inv_reason           = is_header-izwek.
+      ls_wbs_celement-invest_profile       = ls_wbs-imprf.
+      ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
+      ls_wbs_celement-responsible_no       = is_header-vernr.
 
-  CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
-  lv_index = sy-tabix + 1.
+      "───────────────────────────────────────────────────────────────
+      " DATES
+      "───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
 
-  " ... ALL your existing WBS building logic ...
-  " (WBS ID, basic fields, hierarchy, etc.)
-  
-  APPEND ls_wbs_celement TO lt_wbs_celement.
-  
-  " Extension fields if needed
-  IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
-    " ... extension logic ...
-  ENDIF.
+      IF is_header-vernr IS NOT INITIAL.
+        ls_wbs_celement-applicant_no = is_header-vernr.
+      ENDIF.
 
-ENDLOOP.
+      "───────────────────────────────────────────────────────────────
+      " ACCOUNT ASSIGNMENT
+      "───────────────────────────────────────────────────────────────
+      ls_wbs_celement-wbs_account_assignment_element = abap_true.
 
-" Create ALL WBS elements in ONE BAPI call
-IF lt_wbs_celement IS NOT INITIAL.
+      "───────────────────────────────────────────────────────────────
+      " HIERARCHY: WBS_UP and WBS_LEFT
+      "───────────────────────────────────────────────────────────────
+      
+      " Find UPPER level (parent)
+      CLEAR lv_upper_level.
+      LOOP AT lt_wbs_sorted INTO DATA(ls_wbs_temp) FROM lv_index.
+        IF ls_wbs_temp-stufe < ls_wbs-stufe.
+          " Found parent
+          IF ls_wbs_temp-stufe = 1.
+            " Parent is the project
+            lv_upper_level = lv_pspid.
+          ELSE.
+            " Parent is another WBS - rebuild its ID with new project
+            DATA: lv_parent_template TYPE ps_posid,
+                  lv_parent_new      TYPE ps_posid.
+            
+            lv_parent_template = ls_wbs_temp-posid.
+            lv_parent_new = lv_parent_template.
+            
+            IF lv_template_project IS NOT INITIAL.
+              REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
+            ENDIF.
+            
+            lv_upper_level = lv_parent_new.
+          ENDIF.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
 
-  CLEAR lt_return.
+      " Find LEFT level (left sibling)
+      CLEAR lv_left_level.
+      DATA: lv_search_index TYPE i.
+      lv_search_index = sy-tabix + 1.
+      
+      LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_search_index.
+        IF lv_left_level IS INITIAL AND
+           ls_wbs_temp-stufe = ls_wbs-stufe.
+          " Found left sibling
+          DATA: lv_left_template TYPE ps_posid,
+                lv_left_new      TYPE ps_posid.
+          
+          lv_left_template = ls_wbs_temp-posid.
+          lv_left_new = lv_left_template.
+          
+          IF lv_template_project IS NOT INITIAL.
+            REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
+          ENDIF.
+          
+          lv_left_level = lv_left_new.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
 
-  CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-    EXPORTING
-      i_project_definition = lv_pspid
-    TABLES
-      it_wbs_element       = lt_wbs_celement
-      et_return            = lt_return
-      extensionin          = lt_extensionin.
+      " Set hierarchy pointers
+      ls_wbs_celement-wbs_up   = lv_upper_level.
+      ls_wbs_celement-wbs_left = lv_left_level.
 
-  LOOP AT lt_return INTO ls_return WHERE type = 'E'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2
-           ls_return-message_v3 ls_return-message_v4.
-    
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    RETURN.
-  ENDLOOP.
-
-ENDIF.
+      APPEND ls_wbs_celement TO lt_wbs_celement.
