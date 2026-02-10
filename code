@@ -1,8 +1,120 @@
+METHOD get_next_project_number.
+*&---------------------------------------------------------------------*
+*& METHOD: GET_NEXT_PROJECT_NUMBER
+*& Uses CN_SUCHE_FREIE_NUMMER exactly like CJ20N "Find Open Number"
+*& Reference: Screenshot shows "Find number after last assigned"
+*&---------------------------------------------------------------------*
+
+  DATA: lv_template_pspnr TYPE ps_pspnr,
+        lv_start_pspid    TYPE ps_pspid,
+        lv_proj_exp       TYPE ps_pspid.
+
+  CLEAR rv_pspid.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 1: GET STARTING VALUE FROM ZTB_A2R_CONFTAB1
+  " (Image 2 shows: Project Profile ZPC0001, PSPNR = 00000008 = PC.000001)
+  "═══════════════════════════════════════════════════════════════════
+  
+  SELECT SINGLE pspnr FROM ztb_a2r_conftab1
+    INTO @lv_template_pspnr
+    WHERE profl = @iv_profl.
+
+  IF sy-subrc <> 0 OR lv_template_pspnr IS INITIAL.
+    MESSAGE e029(zcj00) WITH 'No template found in ZTB_A2R_CONFTAB1 for profile' iv_profl.
+    RETURN.
+  ENDIF.
+
+  " Convert internal PSPNR (00000008) to external PSPID (PC.000001)
+  CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+    EXPORTING
+      input  = lv_template_pspnr
+    IMPORTING
+      output = lv_start_pspid.
+
+  IF lv_start_pspid IS INITIAL.
+    MESSAGE e029(zcj00) WITH 'Invalid PSPNR in config table' lv_template_pspnr.
+    RETURN.
+  ENDIF.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 2: CALL CN_SUCHE_FREIE_NUMMER
+  " Image 1 shows the dialog with:
+  "   Start value: PC.000001
+  "   Finish value: PC.999999
+  "   Strategy: "Find number after last assigned" (selected)
+  "   Proposed: PC.000011
+  "═══════════════════════════════════════════════════════════════════
+
+  CALL FUNCTION 'CN_SUCHE_FREIE_NUMMER'
+    EXPORTING
+      search_imp = '1'              " 1 = Project definition search
+      proj_s_imp = lv_start_pspid   " Start value from config (PC.000001)
+      refresh    = 'X'              " Refresh buffer
+      no_dialog  = 'X'              " ← CRITICAL: No popup dialog
+    IMPORTING
+      proj_exp   = lv_proj_exp      " Returns next available (e.g., PC.000011)
+    EXCEPTIONS
+      wrong_search    = 1
+      search_canceled = 2
+      OTHERS          = 3.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 3: ERROR HANDLING
+  "═══════════════════════════════════════════════════════════════════
+
+  IF sy-subrc <> 0.
+    
+    CASE sy-subrc.
+      WHEN 1.
+        MESSAGE e029(zcj00) WITH 'CN_SUCHE_FREIE_NUMMER: Wrong search type'.
+      WHEN 2.
+        MESSAGE e029(zcj00) WITH 'CN_SUCHE_FREIE_NUMMER: Search canceled by user'.
+      WHEN OTHERS.
+        MESSAGE e029(zcj00) WITH 'CN_SUCHE_FREIE_NUMMER failed' sy-subrc.
+    ENDCASE.
+    
+    RETURN.
+    
+  ENDIF.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 4: VALIDATE OUTPUT
+  "═══════════════════════════════════════════════════════════════════
+
+  IF lv_proj_exp IS INITIAL.
+    MESSAGE e029(zcj00) WITH 'CN_SUCHE_FREIE_NUMMER returned empty project number'.
+    RETURN.
+  ENDIF.
+
+  " Double-check that returned number doesn't already exist
+  SELECT SINGLE pspid FROM proj
+    INTO @DATA(lv_exists)
+    WHERE pspid = @lv_proj_exp.
+
+  IF sy-subrc = 0.
+    MESSAGE e029(zcj00) WITH 'Generated project' lv_proj_exp 'already exists!'.
+    RETURN.
+  ENDIF.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 5: RETURN PROPOSED VALUE
+  "═══════════════════════════════════════════════════════════════════
+  
+  rv_pspid = lv_proj_exp.
+
+ENDMETHOD.
+
+
+
+
+
+
 METHOD create_wbs_elements.
 *&---------------------------------------------------------------------*
 *& METHOD: CREATE_WBS_ELEMENTS
-*& Creates Project Definition (Level 1) + WBS Elements (Level 2+)
-*& Based on reference FORM wbs_request_create pattern
+*& Creates Project Definition + WBS Elements based on template structure
+*& Reference: FORM wbs_request_create + check_prps_create pattern
 *&---------------------------------------------------------------------*
 
   DATA: lv_pspid          TYPE ps_pspid,
@@ -12,12 +124,11 @@ METHOD create_wbs_elements.
         lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
         lt_return         TYPE TABLE OF bapiret2,
         ls_return         TYPE bapiret2,
-        lt_wbs_celement   TYPE TABLE OF bapi_bus2054_new,  "← CORRECTED type
-        ls_wbs_celement   TYPE bapi_bus2054_new,            "← CORRECTED type
+        lt_wbs_celement   TYPE TABLE OF bapi_bus2054_new,
+        ls_wbs_celement   TYPE bapi_bus2054_new,
         lt_extensionin    TYPE TABLE OF bapiparex,
         ls_extensionin    TYPE bapiparex,
         ls_te_wbs         TYPE bapi_te_wbs_element,
-        lv_level1_posid   TYPE ps_posid,
         lv_level1_pspnr   TYPE ps_pspnr,
         lv_waers          TYPE waers,
         lv_upper_level    TYPE ps_posid,
@@ -38,7 +149,7 @@ METHOD create_wbs_elements.
   ENDIF.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 2: GET CURRENCY
+  " STEP 2: GET CURRENCY FROM COMPANY CODE
   "═══════════════════════════════════════════════════════════════════
   SELECT SINGLE waers FROM t001
     INTO lv_waers
@@ -54,11 +165,15 @@ METHOD create_wbs_elements.
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 4: CREATE PROJECT DEFINITION (Reference: check_proj_create)
+  " STEP 4: CREATE PROJECT DEFINITION (Level 1)
+  " Reference: FORM check_proj_create
   "═══════════════════════════════════════════════════════════════════
   CLEAR ls_project_new.
 
+  " Use the generated project number
   ls_project_new-project_definition = lv_pspid.
+
+  " Map from header (following reference pattern)
   ls_project_new-description        = is_header-post1.
   ls_project_new-company_code       = is_header-bukrs.
   ls_project_new-controlling_area   = is_header-bukrs(4).
@@ -75,6 +190,7 @@ METHOD create_wbs_elements.
     ls_project_new-controlling_area = is_header-vkokr.
   ENDIF.
 
+  " Create Project Definition via BAPI
   CALL FUNCTION 'BAPI_BUS2001_CREATE'
     EXPORTING
       i_project_definition = ls_project_new
@@ -89,20 +205,23 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 5: CREATE WBS ELEMENTS (Reference: check_prps_create)
+  " STEP 5: BUILD WBS ELEMENTS FROM TEMPLATE STRUCTURE
+  " Reference: FORM check_prps_create
+  " Critical: Maintain template hierarchy and naming from IT_WBS_ITEMS
   "═══════════════════════════════════════════════════════════════════
-  " Sort by STUFE DESCENDING then by position
+
+  " Sort by STUFE DESCENDING (reference pattern)
   lt_wbs_sorted = it_wbs_items.
   SORT lt_wbs_sorted BY stufe DESCENDING.
 
   LOOP AT lt_wbs_sorted INTO ls_wbs.
 
-    " Skip Level 1 (already created as project)
+    " Skip Level 1 (already created as project definition)
     IF ls_wbs-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    " Skip items without budget
+    " Skip items without budget (optional based on requirements)
     IF ls_wbs-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
@@ -111,13 +230,63 @@ METHOD create_wbs_elements.
     lv_index = sy-tabix + 1.
 
     "───────────────────────────────────────────────────────────────
-    " WBS ELEMENT ID: Use template POSID pattern
-    " Example: If template is PC.000003.00, keep same structure
+    " WBS ELEMENT ID: Critical - Build from new project number + template suffix
+    " Template: PC.000003.00, PC.000003.00.1, PC.000003.00.2, etc.
+    " New:      PC.000011.00, PC.000011.00.1, PC.000011.00.2, etc.
     "───────────────────────────────────────────────────────────────
-    ls_wbs_celement-wbs_element = ls_wbs-posid.
+    
+    " Extract suffix from template POSID
+    " Template POSID format: PC.000003.00.1
+    " We need: .00.1 part
+    DATA: lv_template_posid TYPE ps_posid,
+          lv_new_posid      TYPE ps_posid,
+          lv_suffix         TYPE string,
+          lv_template_len   TYPE i,
+          lv_project_len    TYPE i.
+
+    lv_template_posid = ls_wbs-posid.
+    
+    " Find where project number ends in template
+    " Template project should be in STUFE = 1 item or from COPY_TEMPLATE_STRUCTURE
+    " Assuming template format: PC.NNNNNN.XX.Y where PC.NNNNNN is project
+    " and .XX.Y is WBS hierarchy suffix
+    
+    " Simple approach: Replace template project ID with new project ID
+    " Template: PC.000003.00.1 → Find 'PC.000003' and replace with new 'PC.000011'
+    
+    " Get template project ID (should be first 9 or 10 chars depending on format)
+    " For safety, we'll use the Level 1 WBS POSID as template project
+    DATA: lv_template_project TYPE ps_pspid.
+    
+    " Read Level 1 from sorted list to get template project ID
+    READ TABLE lt_wbs_sorted INTO DATA(ls_level1) WITH KEY stufe = 1.
+    IF sy-subrc = 0.
+      lv_template_project = ls_level1-posid.
+    ELSE.
+      " Fallback: Extract from first Level 2 WBS
+      " Format: PC.000003.00 → Extract PC.000003
+      IF strlen( lv_template_posid ) >= 10.
+        lv_template_project = lv_template_posid(10).  " 'PC.000003'
+      ENDIF.
+    ENDIF.
+
+    " Build new WBS POSID by replacing template project with new project
+    IF lv_template_project IS NOT INITIAL AND 
+       lv_template_posid CS lv_template_project.
+      
+      " Replace template project ID with new project ID
+      lv_new_posid = lv_template_posid.
+      REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
+      
+    ELSE.
+      " Fallback: Use template POSID as-is (shouldn't happen)
+      lv_new_posid = lv_template_posid.
+    ENDIF.
+
+    ls_wbs_celement-wbs_element = lv_new_posid.
 
     "───────────────────────────────────────────────────────────────
-    " BASIC FIELDS (From reference check_prps_create)
+    " BASIC FIELDS (Reference: check_prps_create)
     "───────────────────────────────────────────────────────────────
     ls_wbs_celement-description      = ls_wbs-post1.
     ls_wbs_celement-company_code     = is_header-bukrs.
@@ -125,6 +294,7 @@ METHOD create_wbs_elements.
     ls_wbs_celement-controlling_area = is_header-bukrs(4).
     ls_wbs_celement-profit_ctr       = is_header-prctr.
     ls_wbs_celement-plant            = is_header-werks.
+    ls_wbs_celement-res_anal_key     = ls_wbs-abgsl.
 
     "───────────────────────────────────────────────────────────────
     " PLANNING & INVESTMENT FIELDS
@@ -138,10 +308,15 @@ METHOD create_wbs_elements.
     "───────────────────────────────────────────────────────────────
     " DATES
     "───────────────────────────────────────────────────────────────
-    ls_wbs_celement-wbs_basic_start_date    = sy-datum.
-    ls_wbs_celement-wbs_basic_finish_date   = is_header-plsez.
-    ls_wbs_celement-wbs_forecast_start_date = sy-datum.
+    ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+    ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+    ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
     ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+    " Applicant numbers from reference
+    IF is_header-vernr IS NOT INITIAL.
+      ls_wbs_celement-applicant_no = is_header-vernr.
+    ENDIF.
 
     "───────────────────────────────────────────────────────────────
     " ACCOUNT ASSIGNMENT
@@ -149,41 +324,69 @@ METHOD create_wbs_elements.
     ls_wbs_celement-wbs_account_assignment_element = abap_true.
 
     "───────────────────────────────────────────────────────────────
-    " HIERARCHY: CRITICAL - Use wbs_up and wbs_left from reference
+    " HIERARCHY: WBS_UP and WBS_LEFT (CRITICAL - Reference pattern)
     "───────────────────────────────────────────────────────────────
-    " Find UPPER level (parent)
+    
+    " Find UPPER level (parent) - same logic with new project ID
+    CLEAR lv_upper_level.
     LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
       IF ls_wbs_temp-stufe < ls_wbs-stufe.
+        " Found parent
         IF ls_wbs_temp-stufe = 1.
-          lv_upper_level = lv_pspid.  " Parent is project
+          " Parent is the project
+          lv_upper_level = lv_pspid.
         ELSE.
-          lv_upper_level = ls_wbs_temp-posid.
+          " Parent is another WBS - rebuild its ID with new project
+          DATA: lv_parent_template TYPE ps_posid,
+                lv_parent_new      TYPE ps_posid.
+          
+          lv_parent_template = ls_wbs_temp-posid.
+          lv_parent_new = lv_parent_template.
+          
+          IF lv_template_project IS NOT INITIAL.
+            REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
+          ENDIF.
+          
+          lv_upper_level = lv_parent_new.
         ENDIF.
         EXIT.
       ENDIF.
     ENDLOOP.
 
-    " Find LEFT level (sibling)
-    CLEAR lv_index.
-    lv_index = sy-tabix + 1.
-    LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
+    " Find LEFT level (left sibling) - same logic
+    CLEAR lv_left_level.
+    DATA: lv_search_index TYPE i.
+    lv_search_index = sy-tabix + 1.
+    
+    LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_search_index.
       IF lv_left_level IS INITIAL AND
          ls_wbs_temp-stufe = ls_wbs-stufe.
-        lv_left_level = ls_wbs_temp-posid.
+        " Found left sibling
+        DATA: lv_left_template TYPE ps_posid,
+              lv_left_new      TYPE ps_posid.
+        
+        lv_left_template = ls_wbs_temp-posid.
+        lv_left_new = lv_left_template.
+        
+        IF lv_template_project IS NOT INITIAL.
+          REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
+        ENDIF.
+        
+        lv_left_level = lv_left_new.
         EXIT.
       ENDIF.
     ENDLOOP.
 
-    " Set hierarchy
+    " Set hierarchy pointers
     ls_wbs_celement-wbs_up   = lv_upper_level.
     ls_wbs_celement-wbs_left = lv_left_level.
 
     APPEND ls_wbs_celement TO lt_wbs_celement.
 
     "───────────────────────────────────────────────────────────────
-    " EXTENSION FIELDS (only if needed)
+    " EXTENSION FIELDS (Reference pattern)
     "───────────────────────────────────────────────────────────────
-    IF ls_wbs-stufe = 1 AND is_header-zunifier_proj = 'X'.
+    IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
       CLEAR: ls_te_wbs, ls_extensionin.
 
       ls_te_wbs-wbs_element   = ls_wbs_celement-wbs_element.
@@ -199,13 +402,12 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 6: CREATE WBS ELEMENTS (Reference pattern)
+  " STEP 6: CREATE WBS ELEMENTS VIA BAPI (Reference pattern)
   "═══════════════════════════════════════════════════════════════════
   IF lt_wbs_celement IS NOT INITIAL.
 
     CLEAR lt_return.
 
-    " Use BAPI_BUS2054_CREATE_MULTI (same as reference)
     CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
       EXPORTING
         i_project_definition = lv_pspid
@@ -239,7 +441,7 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 8: COMMIT
+  " STEP 8: COMMIT WORK
   "═══════════════════════════════════════════════════════════════════
   CLEAR ls_return.
 
@@ -258,14 +460,15 @@ METHOD create_wbs_elements.
   WAIT UP TO 1 SECONDS.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 9: GET CREATED INTERNAL NUMBERS
+  " STEP 9: GET CREATED WBS INTERNAL NUMBERS
   "═══════════════════════════════════════════════════════════════════
+  
   " Get project internal number
   SELECT SINGLE pspnr FROM proj
     INTO lv_level1_pspnr
     WHERE pspid = lv_pspid.
 
-  " Build output table
+  " Build output table with created WBS elements
   LOOP AT it_wbs_items INTO ls_wbs.
 
     IF ls_wbs-wert2 IS INITIAL.
@@ -279,10 +482,20 @@ METHOD create_wbs_elements.
       ls_wbs_created-posid = lv_pspid.
       ls_wbs_created-posnr = lv_level1_pspnr.
     ELSE.
-      " Level 2+ = WBS Element
-      ls_wbs_created-posid = ls_wbs-posid.
+      " Level 2+ = WBS Element - rebuild POSID with new project number
+      DATA: lv_created_posid TYPE ps_posid.
+      
+      lv_created_posid = ls_wbs-posid.
+      
+      " Replace template project with new project
+      READ TABLE lt_wbs_sorted INTO ls_level1 WITH KEY stufe = 1.
+      IF sy-subrc = 0.
+        REPLACE ls_level1-posid IN lv_created_posid WITH lv_pspid.
+      ENDIF.
+      
+      ls_wbs_created-posid = lv_created_posid.
 
-      " Get internal number
+      " Get internal number from PRPS
       SELECT SINGLE pspnr FROM prps
         INTO ls_wbs_created-posnr
         WHERE posid = ls_wbs_created-posid.
@@ -305,10 +518,11 @@ METHOD create_wbs_elements.
   ENDLOOP.
 
   "═══════════════════════════════════════════════════════════════════
-  " STEP 10: UPDATE HEADER
+  " STEP 10: UPDATE HEADER WITH PROJECT NUMBER
   "═══════════════════════════════════════════════════════════════════
   UPDATE ztb_a2r_wbshdr
-    SET pspnr = lv_level1_pspnr
+    SET pspnr = lv_level1_pspnr,
+        pspid = lv_pspid
     WHERE zreq_num = is_header-zreq_num.
 
   COMMIT WORK.
