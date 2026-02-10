@@ -1,16 +1,64 @@
 "═══════════════════════════════════════════════════════════════════
-" STEP 7: PRE-COMMIT (Call ONCE after all WBS created)
+" STEP 5: BUILD WBS ELEMENTS FROM TEMPLATE STRUCTURE
 "═══════════════════════════════════════════════════════════════════
-CLEAR lt_return.
 
-CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-  TABLES
-    et_return = lt_return.
+" Sort by STUFE ASCENDING (so parents are created before children)
+lt_wbs_sorted = it_wbs_items.
+SORT lt_wbs_sorted BY stufe ASCENDING posid ASCENDING.
 
-LOOP AT lt_return INTO ls_return WHERE type = 'E'.
-  MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-    WITH ls_return-message_v1 ls_return-message_v2.
+"═══════════════════════════════════════════════════════════════════
+" STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
+"═══════════════════════════════════════════════════════════════════
+
+CLEAR lt_wbs_celement.
+
+LOOP AT lt_wbs_sorted INTO ls_wbs.
+
+  " Skip Level 1 (already created as project definition)
+  IF ls_wbs-stufe = 1.
+    CONTINUE.
+  ENDIF.
+
+  " Remove wert2 check - create all WBS elements
+  " IF ls_wbs-wert2 IS INITIAL.
+  "   CONTINUE.
+  " ENDIF.
+
+  CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
+  lv_index = sy-tabix + 1.
+
+  " ... ALL your existing WBS building logic ...
+  " (WBS ID, basic fields, hierarchy, etc.)
   
-  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-  RETURN.
+  APPEND ls_wbs_celement TO lt_wbs_celement.
+  
+  " Extension fields if needed
+  IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
+    " ... extension logic ...
+  ENDIF.
+
 ENDLOOP.
+
+" Create ALL WBS elements in ONE BAPI call
+IF lt_wbs_celement IS NOT INITIAL.
+
+  CLEAR lt_return.
+
+  CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+    EXPORTING
+      i_project_definition = lv_pspid
+    TABLES
+      it_wbs_element       = lt_wbs_celement
+      et_return            = lt_return
+      extensionin          = lt_extensionin.
+
+  LOOP AT lt_return INTO ls_return WHERE type = 'E'.
+    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+      WITH ls_return-message_v1 ls_return-message_v2
+           ls_return-message_v3 ls_return-message_v4.
+    
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDLOOP.
+
+ENDIF.
