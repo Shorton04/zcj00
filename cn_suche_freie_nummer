@@ -1,0 +1,230 @@
+FUNCTION cn_suche_freie_nummer.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(SEARCH_IMP) LIKE  RC27X-FLG_SEL DEFAULT '1'
+*"     VALUE(SEARCH_END_IMP) LIKE  RC27X-FLG_SEL OPTIONAL
+*"     VALUE(PROJ_S_IMP) LIKE  PROJ-PSPID OPTIONAL
+*"     VALUE(PRPS_S_IMP) LIKE  PRPS-POSID OPTIONAL
+*"     VALUE(PROJS_S_IMP) LIKE  PROJS-PSPID OPTIONAL
+*"     VALUE(PRPSS_S_IMP) LIKE  PRPSS-POSID OPTIONAL
+*"     VALUE(VSKOPF_S_IMP) LIKE  VSKOPF-VSNMR OPTIONAL
+*"     VALUE(PROJ_E_IMP) LIKE  PROJ-PSPID OPTIONAL
+*"     VALUE(PRPS_E_IMP) LIKE  PRPS-POSID OPTIONAL
+*"     VALUE(PROJS_E_IMP) LIKE  PROJS-PSPID OPTIONAL
+*"     VALUE(PRPSS_E_IMP) LIKE  PRPSS-POSID OPTIONAL
+*"     VALUE(VSKOPF_E_IMP) LIKE  VSKOPF-VSNMR OPTIONAL
+*"     VALUE(WITHOUT_MASK_AT_END) LIKE  RC27X-FLG_SEL OPTIONAL
+*"     VALUE(REFRESH) OPTIONAL
+*"     VALUE(NO_DIALOG) LIKE  RC27X-FLG_SEL OPTIONAL
+*"     VALUE(IT_BUFFER_START_ID) TYPE  PSHLP_WBS_POSID_TT OPTIONAL
+*"     VALUE(IT_ELEM_DRAFT_ID) TYPE  PSHLP_WBS_POSID_TT OPTIONAL
+*"  EXPORTING
+*"     VALUE(PROJ_EXP) LIKE  PROJ-PSPID
+*"     VALUE(PRPS_EXP) LIKE  PRPS-POSID
+*"     VALUE(PROJS_EXP) LIKE  PROJS-PSPID
+*"     VALUE(PRPSS_EXP) LIKE  PRPSS-POSID
+*"     VALUE(VSKOPF_EXP) LIKE  VSKOPF-VSNMR
+*"  TABLES
+*"      KEYTAB_IMP OPTIONAL
+*"  EXCEPTIONS
+*"      WRONG_SEARCH
+*"      SEARCH_CANCELED
+*"----------------------------------------------------------------------
+
+  DATA: proj_pspid  LIKE proj-pspid,
+        projs_pspid LIKE projs-pspid.
+
+* Suche nach ...
+  search = search_imp.
+  without_mask = without_mask_at_end.
+
+  CLEAR: cn00-propose,
+         vskopf,
+         *vskopf,
+         proj,
+         *proj,
+         prps,
+         *prps,
+         projs,
+         *projs,
+         prpss,
+         *prpss.
+* Start-/Endwerte aus Parameter oder altem Vorschlagswert versorgen
+  IF cn00-propose IS INITIAL.
+* GPA-Parameter holen
+    CASE search.
+      WHEN 1.
+        GET PARAMETER ID 'PSP' FIELD proj_pspid.
+* Vorschlagswert durch GET-Parameter, sonst Vorschlag aus früherem
+* Lauf nehmen
+        IF NOT proj_pspid IS INITIAL.
+          proj-pspid = proj_pspid.
+        ENDIF.
+      WHEN 2.
+        IF prps-posid IS INITIAL.
+          GET PARAMETER ID 'PRO' FIELD prps-posid.
+        ENDIF.
+      WHEN 3.
+        GET PARAMETER ID 'SDE' FIELD projs_pspid.
+* Vorschlagswert durch GET-Parameter, sonst Vorschlag aus früherem
+* Lauf nehmen
+        IF NOT projs_pspid IS INITIAL.
+          projs-pspid = projs_pspid.
+        ENDIF.
+      WHEN 4.
+        IF prpss-posid IS INITIAL.
+          GET PARAMETER ID 'SEE' FIELD prpss-posid.
+        ENDIF.
+      WHEN 5.
+        IF vskopf-vsnmr IS INITIAL.
+          GET PARAMETER ID 'VS2' FIELD vskopf-vsnmr.
+        ENDIF.
+    ENDCASE.
+  ELSE.
+* Vorschlagswert als Startwert setzen
+    CASE search.
+      WHEN 1.
+        GET PARAMETER ID 'PSP' FIELD proj_pspid.
+* Vorschlagswert durch GET-Parameter, sonst Vorschlag aus früherem
+* Lauf nehmen
+        IF NOT proj_pspid IS INITIAL.
+          proj-pspid = proj_pspid.
+        ELSE.
+          proj-pspid   = cn00-propose.
+        ENDIF.
+      WHEN 2.
+        prps-posid   = cn00-propose.
+      WHEN 3.
+        GET PARAMETER ID 'SDE' FIELD projs_pspid.
+* VORSCHLAGSWERT DURCH GET-PARAMETER, SONST VORSCHLAG AUS FRÜHEREM
+* LAUF NEHMEN
+        IF NOT projs_pspid IS INITIAL.
+          projs-pspid = projs_pspid.
+        ELSE.
+          projs-pspid  = cn00-propose.
+        ENDIF.
+      WHEN 4.
+        prpss-posid  = cn00-propose.
+      WHEN 5.
+        vskopf-vsnmr = cn00-propose.
+    ENDCASE.
+  ENDIF.
+
+* Schnittstellenfelder übernehmen
+
+* ... Startwerte
+  IF NOT proj_s_imp IS INITIAL.
+    proj-pspid  = proj_s_imp.
+  ELSEIF NOT prps_s_imp IS INITIAL.
+    prps-posid  = prps_s_imp.
+  ELSEIF NOT projs_s_imp IS INITIAL.
+    projs-pspid = projs_s_imp.
+  ELSEIF NOT prpss_s_imp IS INITIAL.
+    prpss-posid = prpss_s_imp.
+  ELSEIF NOT vskopf_s_imp IS INITIAL.
+    vskopf-vsnmr = vskopf_s_imp.
+* ... Endwerte
+  ELSEIF NOT proj_e_imp IS INITIAL.
+    *proj-pspid  = proj_e_imp.
+  ELSEIF NOT prps_e_imp IS INITIAL.
+    *prps-posid  = prps_e_imp.
+  ELSEIF NOT projs_e_imp IS INITIAL.
+    *projs-pspid = projs_e_imp.
+  ELSEIF NOT prpss_e_imp IS INITIAL.
+    *prpss-posid = prpss_e_imp.
+  ELSEIF NOT vskopf_e_imp IS INITIAL.
+    *vskopf-vsnmr = vskopf_e_imp.
+  ENDIF.
+* ... Suchwerte
+  IF NOT search_end_imp IS INITIAL.
+    CLEAR cn00-gap.
+    cn00-end = yx.
+  ELSE.
+    CLEAR cn00-end.
+    cn00-gap = yx.
+  ENDIF.
+* ... in laufender Transaktion angelegte Schlüssel
+  CLEAR keytab.
+  REFRESH keytab.
+  LOOP AT keytab_imp.
+    MOVE keytab_imp TO keytab-key.
+    keytab-ext = yx.
+    APPEND keytab.
+  ENDLOOP.
+
+* Felder initialisieren
+  CLEAR conv_start_input.
+  CLEAR conv_start_output.
+  CLEAR cn00-propose.
+  CLEAR conv_start_output.
+  pick = false.
+  request = yx.
+
+* Dynpro aufrufen
+  CASE search.
+    WHEN '1'.
+      IF no_dialog is INITIAL.  "++ Note : 3396592
+      CALL SCREEN 1000
+        STARTING AT 25  4
+        ENDING   AT 74 14.
+* Begin of Note : 3396592
+      ELSE.
+        PERFORM get_next_number USING proj-pspid
+                                      it_buffer_start_id
+                                      it_elem_draft_id
+                                      space.
+      ENDIF.
+* End of Note : 3396592
+      proj_exp = cn00-propose.
+    WHEN '2'.
+      IF no_dialog IS INITIAL.
+        CALL SCREEN 1100
+          STARTING AT 25  4
+          ENDING   AT 74 14.
+      ELSE.
+        PERFORM get_next_number USING prps-posid
+                                      it_buffer_start_id
+                                      it_elem_draft_id
+                                      space.
+      ENDIF.
+      prps_exp = cn00-propose.
+    WHEN '3'.
+      CALL SCREEN 1200
+        STARTING AT 25  4
+        ENDING   AT 74 14.
+      projs_exp = cn00-propose.
+    WHEN '4'.
+      CALL SCREEN 1300
+        STARTING AT 25  4
+        ENDING   AT 74 14.
+      prpss_exp = cn00-propose.
+    WHEN '5'.
+      IF no_dialog IS INITIAL.
+        CALL SCREEN 1400
+          STARTING AT 25  4
+          ENDING   AT 74 14.
+      ELSE.
+        prps-posid = vskopf-vsnmr.
+        PERFORM get_next_number USING prps-posid
+                                      it_buffer_start_id
+                                      it_elem_draft_id
+                                      space.
+      ENDIF.
+      vskopf_exp = cn00-propose.
+    WHEN OTHERS.
+      RAISE wrong_search.
+  ENDCASE.
+
+* Get proposed number as new parameter ID
+  IF NOT cn00-propose IS INITIAL.
+    CASE search.
+      WHEN 1.
+        SET PARAMETER ID 'PSP' FIELD cn00-propose.
+      WHEN 3.
+        SET PARAMETER ID 'SDE' FIELD cn00-propose.
+      WHEN 4.
+        SET PARAMETER ID 'SEE' FIELD cn00-propose.
+    ENDCASE.
+  ENDIF.
+ENDFUNCTION.
