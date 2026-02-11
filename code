@@ -1,138 +1,139 @@
 "═══════════════════════════════════════════════════════════════════
-  " STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
-  "═══════════════════════════════════════════════════════════════════
+" STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
+"═══════════════════════════════════════════════════════════════════
 
-  CLEAR lt_wbs_celement.
+CLEAR lt_wbs_celement.
 
-  " Sort by POSID DESCENDING, STUFE DESCENDING
-  lt_wbs_sorted = it_wbs_items.
-  SORT lt_wbs_sorted BY posid DESCENDING stufe DESCENDING.
+" Sort by POSID DESCENDING, STUFE DESCENDING
+lt_wbs_sorted = it_wbs_items.
+SORT lt_wbs_sorted BY posid DESCENDING stufe DESCENDING.
 
-  LOOP AT lt_wbs_sorted INTO ls_wbs.
+LOOP AT lt_wbs_sorted INTO ls_wbs.
 
-    CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
+  " CLEAR ALL variables including work variables
+  CLEAR: ls_wbs_celement, 
+         ls_te_wbs, 
+         lv_upper_level, 
+         lv_left_level,
+         lv_left_new,      " ← ADD THIS
+         lv_parent_new.    " ← ADD THIS
 
-    lv_index = sy-tabix + 1.
-
-    "───────────────────────────────────────────────────────────────
-    " WBS ELEMENT ID
-    "───────────────────────────────────────────────────────────────
-
-    lv_template_posid = ls_wbs-posid.
-
-    " Get template project ID (Level 1)
-    READ TABLE lt_wbs_sorted INTO ls_level1 WITH KEY stufe = 1.
-    IF sy-subrc = 0.
-      lv_template_project = ls_level1-posid.
-    ENDIF.
-
-    " Build new WBS POSID
-    IF ls_wbs-stufe = 1.
-      lv_new_posid = lv_pspid.
-      REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
-    ELSE.
-      IF lv_template_project IS NOT INITIAL AND
-         lv_template_posid CS lv_template_project.
-        lv_new_posid = lv_template_posid.
-        REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
-      ELSE.
-        lv_new_posid = lv_template_posid.
-      ENDIF.
-      REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
-    ENDIF.
-
-    ls_wbs_celement-wbs_element = lv_new_posid.
-
-    "───────────────────────────────────────────────────────────────
-    " BASIC FIELDS
-    "───────────────────────────────────────────────────────────────
-    ls_wbs_celement-description      = ls_wbs-post1.
-    ls_wbs_celement-company_code     = is_header-bukrs.
-    ls_wbs_celement-profit_ctr       = is_header-prctr.
-    ls_wbs_celement-plant            = is_header-werks.
-
-    ls_wbs_celement-wbs_planning_element = abap_true.
-    ls_wbs_celement-inv_reason           = is_header-izwek.
-
-    IF ls_wbs-stufe = 1.
-      ls_wbs_celement-invest_profile = ls_wbs-imprf.
-    ELSE.
-      CLEAR ls_wbs_celement-invest_profile.
-    ENDIF.
-
-    ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
-    ls_wbs_celement-responsible_no = is_header-vernr.
-
-    ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
-    ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
-    ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
-    ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
-
-    ls_wbs_celement-wbs_account_assignment_element = abap_true.
-
-    "───────────────────────────────────────────────────────────────
-    " HIERARCHY: WBS_UP and WBS_LEFT
-    "───────────────────────────────────────────────────────────────
-
-    CLEAR: lv_upper_level, lv_left_level.  " ← CRITICAL: Clear at start
-
-    " WBS_LEFT: Search BACKWARD for same-level sibling
-    DATA(lv_backward_index) = sy-tabix - 1.
-
-    WHILE lv_backward_index > 0.
-      READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_backward_index.
-      IF sy-subrc = 0 AND ls_wbs_temp-stufe = ls_wbs-stufe.
-        " Found a sibling - rebuild with new project
-        lv_left_new = ls_wbs_temp-posid.
-        IF lv_template_project IS NOT INITIAL.
-          REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
-        ENDIF.
-        REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
-        lv_left_level = lv_left_new.
-        EXIT.
-      ENDIF.
-      lv_backward_index = lv_backward_index - 1.
-    ENDWHILE.
-
-    " WBS_UP: Search FORWARD for parent
-    LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
-      IF ls_wbs_temp-stufe < ls_wbs-stufe.
-        IF ls_wbs_temp-stufe = 1.
-          lv_upper_level = lv_pspid.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_upper_level WITH ''.
-        ELSE.
-          CLEAR lv_parent_new.  " ← Clear before use
-          lv_parent_new = ls_wbs_temp-posid.
-          IF lv_template_project IS NOT INITIAL.
-            REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
-          ENDIF.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
-          lv_upper_level = lv_parent_new.
-        ENDIF.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    ls_wbs_celement-wbs_up   = lv_upper_level.
-    ls_wbs_celement-wbs_left = lv_left_level.
-
-    APPEND ls_wbs_celement TO lt_wbs_celement.
+  lv_index = sy-tabix + 1.
 
   "───────────────────────────────────────────────────────────────
-    " EXTENSION FIELDS
-    "───────────────────────────────────────────────────────────────
-    IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
-      CLEAR: ls_te_wbs, ls_extensionin.
+  " WBS ELEMENT ID
+  "───────────────────────────────────────────────────────────────
 
-      ls_te_wbs-wbs_element   = lv_new_posid.
-      ls_te_wbs-zunifier_proj = 'X'.
+  lv_template_posid = ls_wbs-posid.
 
-      ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
-      ls_extensionin-valuepart1 = ls_te_wbs.
-      ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+  " Get template project ID (Level 1)
+  READ TABLE lt_wbs_sorted INTO ls_level1 WITH KEY stufe = 1.
+  IF sy-subrc = 0.
+    lv_template_project = ls_level1-posid.
+  ENDIF.
 
-      APPEND ls_extensionin TO lt_extensionin.
+  " Build new WBS POSID
+  IF ls_wbs-stufe = 1.
+    lv_new_posid = lv_pspid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
+  ELSE.
+    IF lv_template_project IS NOT INITIAL AND
+       lv_template_posid CS lv_template_project.
+      lv_new_posid = lv_template_posid.
+      REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
+    ELSE.
+      lv_new_posid = lv_template_posid.
     ENDIF.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
+  ENDIF.
 
+  ls_wbs_celement-wbs_element = lv_new_posid.
+
+  "───────────────────────────────────────────────────────────────
+  " BASIC FIELDS
+  "───────────────────────────────────────────────────────────────
+  ls_wbs_celement-description      = ls_wbs-post1.
+  ls_wbs_celement-company_code     = is_header-bukrs.
+  ls_wbs_celement-profit_ctr       = is_header-prctr.
+  ls_wbs_celement-plant            = is_header-werks.
+
+  ls_wbs_celement-wbs_planning_element = abap_true.
+  ls_wbs_celement-inv_reason           = is_header-izwek.
+
+  IF ls_wbs-stufe = 1.
+    ls_wbs_celement-invest_profile = ls_wbs-imprf.
+  ELSE.
+    CLEAR ls_wbs_celement-invest_profile.
+  ENDIF.
+
+  ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
+  ls_wbs_celement-responsible_no = is_header-vernr.
+
+  ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+  ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+  ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+  ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+  ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
+  "───────────────────────────────────────────────────────────────
+  " HIERARCHY: WBS_UP and WBS_LEFT
+  "───────────────────────────────────────────────────────────────
+
+  " WBS_LEFT: Search BACKWARD for same-level sibling
+  DATA(lv_backward_index) = sy-tabix - 1.
+
+  WHILE lv_backward_index > 0.
+    READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_backward_index.
+    IF sy-subrc = 0 AND ls_wbs_temp-stufe = ls_wbs-stufe.
+      " Found a sibling - rebuild with new project
+      lv_left_new = ls_wbs_temp-posid.
+      IF lv_template_project IS NOT INITIAL.
+        REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
+      ENDIF.
+      REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
+      lv_left_level = lv_left_new.
+      EXIT.
+    ENDIF.
+    lv_backward_index = lv_backward_index - 1.
+  ENDWHILE.
+
+  " WBS_UP: Search FORWARD for parent
+  LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
+    IF ls_wbs_temp-stufe < ls_wbs-stufe.
+      IF ls_wbs_temp-stufe = 1.
+        lv_parent_new = lv_pspid.
+      ELSE.
+        lv_parent_new = ls_wbs_temp-posid.
+        IF lv_template_project IS NOT INITIAL.
+          REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
+        ENDIF.
+      ENDIF.
+      REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
+      lv_upper_level = lv_parent_new.
+      EXIT.
+    ENDIF.
   ENDLOOP.
 
+  ls_wbs_celement-wbs_up   = lv_upper_level.
+  ls_wbs_celement-wbs_left = lv_left_level.
+
+  APPEND ls_wbs_celement TO lt_wbs_celement.
+
+  "───────────────────────────────────────────────────────────────
+  " EXTENSION FIELDS
+  "───────────────────────────────────────────────────────────────
+  IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
+    CLEAR: ls_te_wbs, ls_extensionin.
+
+    ls_te_wbs-wbs_element   = lv_new_posid.
+    ls_te_wbs-zunifier_proj = 'X'.
+
+    ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+    ls_extensionin-valuepart1 = ls_te_wbs.
+    ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+
+    APPEND ls_extensionin TO lt_extensionin.
+  ENDIF.
+
+ENDLOOP.
