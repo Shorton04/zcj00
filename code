@@ -1,12 +1,21 @@
 "═══════════════════════════════════════════════════════════════════
 " STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
+" Reference: FORM check_prps_create - SORT DESCENDING, SEARCH FORWARD
 "═══════════════════════════════════════════════════════════════════
 
 CLEAR lt_wbs_celement.
 
+" CRITICAL: Sort DESCENDING by STUFE (like reference)
+" This puts Level 3 first, then Level 2, then Level 1
+lt_wbs_sorted = it_wbs_items.
+SORT lt_wbs_sorted BY stufe DESCENDING posid DESCENDING.
+
 LOOP AT lt_wbs_sorted INTO ls_wbs.
 
   CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
+  
+  " lv_index points to NEXT item in the sorted table (reference pattern)
+  lv_index = sy-tabix + 1.
 
   "───────────────────────────────────────────────────────────────
   " WBS ELEMENT ID: Build from new project number + template suffix
@@ -20,14 +29,13 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
     lv_template_project = ls_level1-posid.
   ENDIF.
 
-  " Special handling for Level 1
+  " Build new WBS POSID
   IF ls_wbs-stufe = 1.
-    " Level 1 = Project ID (no dots, no conversion)
+    " Level 1 = Project ID (no dots in internal format)
     lv_new_posid = lv_pspid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.  " Remove dots: PC.000038 → PC000038
-
+    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
   ELSE.
-    " Level 2+ = Build WBS ID
+    " Level 2+ = Replace template project with new project
     IF lv_template_project IS NOT INITIAL AND
        lv_template_posid CS lv_template_project.
       lv_new_posid = lv_template_posid.
@@ -35,7 +43,6 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
     ELSE.
       lv_new_posid = lv_template_posid.
     ENDIF.
-
     " Remove dots for internal format
     REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
   ENDIF.
@@ -80,66 +87,55 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
   ls_wbs_celement-wbs_account_assignment_element = abap_true.
 
   "───────────────────────────────────────────────────────────────
-  " HIERARCHY: WBS_UP and WBS_LEFT (FIXED LOGIC)
+  " HIERARCHY: WBS_UP and WBS_LEFT
+  " Reference pattern: SEARCH FORWARD from lv_index (because DESCENDING sort)
   "───────────────────────────────────────────────────────────────
 
-  " Find UPPER level (parent) - SEARCH BACKWARD
-  CLEAR lv_upper_level.
-
-  IF ls_wbs-stufe = 1.
-    " Level 1 has NO parent (wbs_up is blank)
-    CLEAR ls_wbs_celement-wbs_up.
-
-  ELSE.
-    " Level 2+ has parents - search BACKWARD from current position
-    DATA(lv_current_index) = sy-tabix.
-    DATA(lv_parent_index) = lv_current_index - 1.
-
-    WHILE lv_parent_index > 0.
-      READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_parent_index.
-      IF sy-subrc = 0 AND ls_wbs_temp-stufe < ls_wbs-stufe.
-        " Found parent
-        IF ls_wbs_temp-stufe = 1.
-          " Parent is Level 1 (the project WBS element)
-          lv_upper_level = lv_pspid.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_upper_level WITH ''.  " PC.000043 → PC000043
-        ELSE.
-          " Parent is another WBS - rebuild its ID with new project
-          lv_parent_new = ls_wbs_temp-posid.
-          REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
-          lv_upper_level = lv_parent_new.
-        ENDIF.
-        EXIT.
-      ENDIF.
-      lv_parent_index = lv_parent_index - 1.
-    ENDWHILE.
-
-    ls_wbs_celement-wbs_up = lv_upper_level.
-  ENDIF.
-
-  " Find LEFT level (left sibling) - SEARCH FORWARD at SAME level
-  CLEAR lv_left_level.
-  lv_search_index = sy-tabix + 1.
-
-  LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_search_index.
-    IF ls_wbs_temp-stufe = ls_wbs-stufe.
-      " Found left sibling at same level
+  " Search FORWARD from lv_index (next item after current)
+  LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
+    
+    " Find LEFT sibling (same level)
+    IF lv_left_level IS INITIAL AND
+       ls_wbs_temp-stufe = ls_wbs-stufe.
+      " Found left sibling - rebuild with new project
       lv_left_new = ls_wbs_temp-posid.
       IF lv_template_project IS NOT INITIAL.
         REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
       ENDIF.
       REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
       lv_left_level = lv_left_new.
-      EXIT.
     ENDIF.
+
+    " Find UPPER level (parent - lower stufe number = higher in hierarchy)
+    IF ls_wbs_temp-stufe < ls_wbs-stufe.
+      " Found parent
+      IF ls_wbs_temp-stufe = 1.
+        " Parent is Level 1 (project)
+        lv_upper_level = lv_pspid.
+        REPLACE ALL OCCURRENCES OF '.' IN lv_upper_level WITH ''.
+      ELSE.
+        " Parent is another WBS - rebuild with new project
+        lv_parent_new = ls_wbs_temp-posid.
+        IF lv_template_project IS NOT INITIAL.
+          REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
+        ENDIF.
+        REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
+        lv_upper_level = lv_parent_new.
+      ENDIF.
+      EXIT.  " Found parent, stop searching
+    ENDIF.
+    
   ENDLOOP.
 
+  " Assign hierarchy pointers
+  ls_wbs_celement-wbs_up   = lv_upper_level.
   ls_wbs_celement-wbs_left = lv_left_level.
 
   APPEND ls_wbs_celement TO lt_wbs_celement.
 
-  " Extension fields if needed
+  "───────────────────────────────────────────────────────────────
+  " EXTENSION FIELDS
+  "───────────────────────────────────────────────────────────────
   IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
     CLEAR: ls_te_wbs, ls_extensionin.
 
