@@ -1,24 +1,22 @@
 "═══════════════════════════════════════════════════════════════════
 " STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
-" Reference: FORM check_prps_create - SORT DESCENDING, SEARCH FORWARD
+" CRITICAL: Sort order must match reference exactly
 "═══════════════════════════════════════════════════════════════════
 
 CLEAR lt_wbs_celement.
 
-" CRITICAL: Sort DESCENDING by STUFE (like reference)
-" This puts Level 3 first, then Level 2, then Level 1
+" REFERENCE PATTERN: Sort by POSID first, THEN by STUFE (both DESCENDING)
 lt_wbs_sorted = it_wbs_items.
-SORT lt_wbs_sorted BY stufe DESCENDING posid DESCENDING.
+SORT lt_wbs_sorted BY posid DESCENDING stufe DESCENDING.
 
 LOOP AT lt_wbs_sorted INTO ls_wbs.
 
   CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
   
-  " lv_index points to NEXT item in the sorted table (reference pattern)
   lv_index = sy-tabix + 1.
 
   "───────────────────────────────────────────────────────────────
-  " WBS ELEMENT ID: Build from new project number + template suffix
+  " WBS ELEMENT ID
   "───────────────────────────────────────────────────────────────
 
   lv_template_posid = ls_wbs-posid.
@@ -31,11 +29,9 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
 
   " Build new WBS POSID
   IF ls_wbs-stufe = 1.
-    " Level 1 = Project ID (no dots in internal format)
     lv_new_posid = lv_pspid.
     REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
   ELSE.
-    " Level 2+ = Replace template project with new project
     IF lv_template_project IS NOT INITIAL AND
        lv_template_posid CS lv_template_project.
       lv_new_posid = lv_template_posid.
@@ -43,7 +39,6 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
     ELSE.
       lv_new_posid = lv_template_posid.
     ENDIF.
-    " Remove dots for internal format
     REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
   ENDIF.
 
@@ -57,47 +52,34 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
   ls_wbs_celement-profit_ctr       = is_header-prctr.
   ls_wbs_celement-plant            = is_header-werks.
 
-  "───────────────────────────────────────────────────────────────
-  " PLANNING & INVESTMENT FIELDS
-  "───────────────────────────────────────────────────────────────
   ls_wbs_celement-wbs_planning_element = abap_true.
   ls_wbs_celement-inv_reason           = is_header-izwek.
 
-  " INVEST_PROFILE only for Level 1
   IF ls_wbs-stufe = 1.
     ls_wbs_celement-invest_profile = ls_wbs-imprf.
   ELSE.
     CLEAR ls_wbs_celement-invest_profile.
   ENDIF.
 
-  ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
-  ls_wbs_celement-responsible_no       = is_header-vernr.
+  ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
+  ls_wbs_celement-responsible_no = is_header-vernr.
 
-  "───────────────────────────────────────────────────────────────
-  " DATES
-  "───────────────────────────────────────────────────────────────
   ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
   ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
   ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
   ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
 
-  "───────────────────────────────────────────────────────────────
-  " ACCOUNT ASSIGNMENT
-  "───────────────────────────────────────────────────────────────
   ls_wbs_celement-wbs_account_assignment_element = abap_true.
 
   "───────────────────────────────────────────────────────────────
-  " HIERARCHY: WBS_UP and WBS_LEFT
-  " Reference pattern: SEARCH FORWARD from lv_index (because DESCENDING sort)
+  " HIERARCHY: Reference pattern exactly
   "───────────────────────────────────────────────────────────────
 
-  " Search FORWARD from lv_index (next item after current)
   LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
     
-    " Find LEFT sibling (same level)
+    " LEFT sibling (same level) - Reference: checks FIRST
     IF lv_left_level IS INITIAL AND
        ls_wbs_temp-stufe = ls_wbs-stufe.
-      " Found left sibling - rebuild with new project
       lv_left_new = ls_wbs_temp-posid.
       IF lv_template_project IS NOT INITIAL.
         REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
@@ -106,15 +88,12 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
       lv_left_level = lv_left_new.
     ENDIF.
 
-    " Find UPPER level (parent - lower stufe number = higher in hierarchy)
+    " UPPER level (parent) - Reference: checks SECOND and EXITS
     IF ls_wbs_temp-stufe < ls_wbs-stufe.
-      " Found parent
       IF ls_wbs_temp-stufe = 1.
-        " Parent is Level 1 (project)
         lv_upper_level = lv_pspid.
         REPLACE ALL OCCURRENCES OF '.' IN lv_upper_level WITH ''.
       ELSE.
-        " Parent is another WBS - rebuild with new project
         lv_parent_new = ls_wbs_temp-posid.
         IF lv_template_project IS NOT INITIAL.
           REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
@@ -122,12 +101,11 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
         REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
         lv_upper_level = lv_parent_new.
       ENDIF.
-      EXIT.  " Found parent, stop searching
+      EXIT.  " EXIT immediately after finding parent
     ENDIF.
     
   ENDLOOP.
 
-  " Assign hierarchy pointers
   ls_wbs_celement-wbs_up   = lv_upper_level.
   ls_wbs_celement-wbs_left = lv_left_level.
 
@@ -139,7 +117,7 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
   IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
     CLEAR: ls_te_wbs, ls_extensionin.
 
-    ls_te_wbs-wbs_element   = ls_wbs_celement-wbs_element.
+    ls_te_wbs-wbs_element   = lv_new_posid.
     ls_te_wbs-zunifier_proj = 'X'.
 
     ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
