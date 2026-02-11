@@ -15,8 +15,9 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
          ls_te_wbs, 
          lv_upper_level, 
          lv_left_level,
-         lv_left_new,      " ← ADD THIS
-         lv_parent_new.    " ← ADD THIS
+         lv_left_new,
+         lv_parent_new,
+         lv_backward_index.
 
   lv_index = sy-tabix + 1.
 
@@ -81,7 +82,7 @@ LOOP AT lt_wbs_sorted INTO ls_wbs.
   "───────────────────────────────────────────────────────────────
 
   " WBS_LEFT: Search BACKWARD for same-level sibling
-  DATA(lv_backward_index) = sy-tabix - 1.
+  lv_backward_index = sy-tabix - 1.
 
   WHILE lv_backward_index > 0.
     READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_backward_index.
