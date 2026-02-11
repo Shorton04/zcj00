@@ -6,10 +6,10 @@ IF ls_wbs-stufe = 1.
   CLEAR ls_wbs_celement-wbs_up.
 
 ELSE.
-  " Level 2+ has parents - search BACKWARD
+  " Level 2+ has parents - search BACKWARD using WHILE
   DATA(lv_back_index) = sy-tabix - 1.
 
-  WHILE lv_back_index > 0.
+  WHILE lv_back_index > 0.  " ← Use WHILE, not LOOP
     READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_back_index.
     IF sy-subrc <> 0.
       EXIT.
@@ -34,34 +34,7 @@ ELSE.
     ENDIF.
 
     lv_back_index = lv_back_index - 1.
-  ENDWHILE.
+  ENDWHILE.  " ← Use ENDWHILE, not ENDLOOP
 
   ls_wbs_celement-wbs_up = lv_upper_level.
 ENDIF.
-
-
-
-
-" Find LEFT level (left sibling - search BACKWARD for same level)
-CLEAR lv_left_level.
-lv_search_index = sy-tabix - 1.  " ← Changed from + 1
-
-WHILE lv_search_index > 0.
-  READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_search_index.
-  IF sy-subrc <> 0.
-    EXIT.
-  ENDIF.
-
-  IF ls_wbs_temp-stufe = ls_wbs-stufe.
-    " Found left sibling
-    lv_left_new = ls_wbs_temp-posid.
-    REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
-    lv_left_level = lv_left_new.
-    EXIT.
-  ENDIF.
-
-  lv_search_index = lv_search_index - 1.
-ENDWHILE.
-
-ls_wbs_celement-wbs_left = lv_left_level.
