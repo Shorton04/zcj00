@@ -1,18 +1,48 @@
+CLASS zcl_a2r_wbs_builder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    " ... existing public methods ...
+
+  PRIVATE SECTION.
+    " ... existing private methods ...
+    
+    METHODS bdc_dynpro
+      IMPORTING
+        iv_program TYPE bdcdata-program
+        iv_dynpro  TYPE bdcdata-dynpro
+      CHANGING
+        ct_bdcdata TYPE STANDARD TABLE.
+        
+    METHODS bdc_field
+      IMPORTING
+        iv_fnam TYPE bdcdata-fnam
+        iv_fval TYPE bdcdata-fval
+      CHANGING
+        ct_bdcdata TYPE STANDARD TABLE.
+
+ENDCLASS.
+
+
+
+
 METHOD create_settlement_rules.
 *&---------------------------------------------------------------------*
 *& Create Settlement Rules via CJB2 Transaction (BDC)
-*& Reference: SHDB Recording from user
+*& Reference: SHDB Recording - No FORM routines in class pool
 *&---------------------------------------------------------------------*
 
   DATA: lt_bdcdata TYPE TABLE OF bdcdata,
-        ls_bdcdata TYPE bdcdata,
         lt_bdcmsg  TYPE TABLE OF bdcmsgcoll,
+        ls_bdcmsg  TYPE bdcmsgcoll,
         ls_wbs     TYPE ztb_a2r_wbsitem,
-        lv_pspid   TYPE ps_pspid,
         lv_posid   TYPE ps_posid,
         lv_sender_objnr   TYPE j_objnr,
         lv_receiver_objnr TYPE j_objnr,
         lv_parent_posid   TYPE ps_posid,
+        lv_parent_pspnr   TYPE ps_pspnr,
         lv_mode    TYPE c VALUE 'N',  " Background mode
         lv_update  TYPE c VALUE 'S'.  " Synchronous update
 
@@ -30,27 +60,27 @@ METHOD create_settlement_rules.
       CONTINUE.
     ENDIF.
 
-    " Get sender WBS object number
+    " Get sender WBS details
     SELECT SINGLE p~objnr, p~posid, p~psphi
       FROM prps AS p
-      INTO (@lv_sender_objnr, @lv_posid, @DATA(lv_psphi))
+      INTO (@lv_sender_objnr, @lv_posid, @lv_parent_pspnr)
       WHERE p~posid = @ls_wbs-posid.
 
     IF sy-subrc <> 0.
       CONTINUE.
     ENDIF.
 
-    " Get parent (receiver) WBS from hierarchy
+    " Get parent (receiver) WBS
     SELECT SINGLE objnr, posid
       FROM prps
       INTO (@lv_receiver_objnr, @lv_parent_posid)
-      WHERE pspnr = @lv_psphi.
+      WHERE pspnr = @lv_parent_pspnr.
 
     IF sy-subrc <> 0 OR lv_receiver_objnr IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Convert POSID to PSPID format for BDC
+    " Convert POSID to external format for BDC
     CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
       EXPORTING
         input  = lv_posid
@@ -65,45 +95,101 @@ METHOD create_settlement_rules.
 
     CLEAR lt_bdcdata.
 
-    " Screen 1: CJB2 Initial Screen
-    PERFORM bdc_dynpro USING 'SAPLKAZB' '1000'
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'RKAUF-TEST'
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'BDC_OKCODE' 'RUN'
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'RKAUF-TEST' lv_posid  " Sender WBS
-                       CHANGING lt_bdcdata.
+    "═══════════════════════════════════════════════════════════════
+    " BDC Screen 1: CJB2 Initial Screen (SAPLKAZB 1000)
+    "═══════════════════════════════════════════════════════════════
+    bdc_dynpro(
+      EXPORTING
+        iv_program = 'SAPLKAZB'
+        iv_dynpro  = '1000'
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
 
-    " Screen 2: Settlement Rule Details (SAPLKAOP 0570)
-    PERFORM bdc_dynpro USING 'SAPLKAOP' '0570'
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'LKP74-PSPID'
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'LKP74-PSPID' lv_parent_posid  " Receiver WBS
-                       CHANGING lt_bdcdata.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=SICH'  " Save
-                       CHANGING lt_bdcdata.
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'BDC_CURSOR'
+        iv_fval = 'RKAUF-TEST'
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
 
-    " Execute BDC
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'BDC_OKCODE'
+        iv_fval = 'RUN'
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'RKAUF-TEST'
+        iv_fval = lv_posid  " Sender WBS
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    "═══════════════════════════════════════════════════════════════
+    " BDC Screen 2: Settlement Rule Details (SAPLKAOP 0570)
+    "═══════════════════════════════════════════════════════════════
+    bdc_dynpro(
+      EXPORTING
+        iv_program = 'SAPLKAOP'
+        iv_dynpro  = '0570'
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'BDC_CURSOR'
+        iv_fval = 'LKP74-PSPID'
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'LKP74-PSPID'
+        iv_fval = lv_parent_posid  " Receiver WBS
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'BDC_OKCODE'
+        iv_fval = '=SICH'  " Save
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    "═══════════════════════════════════════════════════════════════
+    " Execute BDC Transaction
+    "═══════════════════════════════════════════════════════════════
+    CLEAR lt_bdcmsg.
+
     CALL TRANSACTION 'CJB2'
       USING lt_bdcdata
       MODE lv_mode
       UPDATE lv_update
       MESSAGES INTO lt_bdcmsg.
 
-    " Check for errors
-    READ TABLE lt_bdcmsg TRANSPORTING NO FIELDS
-      WITH KEY msgtyp = 'E'.
-
-    IF sy-subrc = 0.
-      " Error occurred
+    "═══════════════════════════════════════════════════════════════
+    " Check for Errors
+    "═══════════════════════════════════════════════════════════════
+    LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
+      MESSAGE ID ls_bdcmsg-msgid TYPE 'E' NUMBER ls_bdcmsg-msgnr
+        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2 
+             ls_bdcmsg-msgv3 ls_bdcmsg-msgv4.
       rv_success = abap_false.
-      MESSAGE e024(zcj00).  " Settlement rule creation failed
       RETURN.
-    ENDIF.
+    ENDLOOP.
 
-    " Activate SETC status
+    "═══════════════════════════════════════════════════════════════
+    " Activate SETC Status
+    "═══════════════════════════════════════════════════════════════
     CALL FUNCTION 'STATUS_CHANGE_INTERN'
       EXPORTING
         client              = sy-mandt
@@ -114,6 +200,12 @@ METHOD create_settlement_rules.
         object_not_found    = 1
         status_inconsistent = 2
         OTHERS              = 3.
+
+    IF sy-subrc <> 0.
+      MESSAGE e024(zcj00).  " Settlement rule error
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
 
   ENDLOOP.
 
@@ -126,37 +218,35 @@ ENDMETHOD.
 
 
 
+
+METHOD bdc_dynpro.
 *&---------------------------------------------------------------------*
-*&      Form  BDC_DYNPRO
+*& Add screen to BDC data table
 *&---------------------------------------------------------------------*
-FORM bdc_dynpro USING p_program TYPE bdcdata-program
-                      p_dynpro  TYPE bdcdata-dynpro
-              CHANGING ct_bdcdata TYPE STANDARD TABLE.
 
   DATA: ls_bdcdata TYPE bdcdata.
 
   CLEAR ls_bdcdata.
-  ls_bdcdata-program  = p_program.
-  ls_bdcdata-dynpro   = p_dynpro.
+  ls_bdcdata-program  = iv_program.
+  ls_bdcdata-dynpro   = iv_dynpro.
   ls_bdcdata-dynbegin = 'X'.
   APPEND ls_bdcdata TO ct_bdcdata.
 
-ENDFORM.
+ENDMETHOD.
 
+
+METHOD bdc_field.
 *&---------------------------------------------------------------------*
-*&      Form  BDC_FIELD
+*& Add field to BDC data table
 *&---------------------------------------------------------------------*
-FORM bdc_field USING p_fnam TYPE bdcdata-fnam
-                     p_fval TYPE bdcdata-fval
-             CHANGING ct_bdcdata TYPE STANDARD TABLE.
 
   DATA: ls_bdcdata TYPE bdcdata.
 
-  IF p_fval IS NOT INITIAL.
+  IF iv_fval IS NOT INITIAL.
     CLEAR ls_bdcdata.
-    ls_bdcdata-fnam = p_fnam.
-    ls_bdcdata-fval = p_fval.
+    ls_bdcdata-fnam = iv_fnam.
+    ls_bdcdata-fval = iv_fval.
     APPEND ls_bdcdata TO ct_bdcdata.
   ENDIF.
 
-ENDFORM.
+ENDMETHOD.
