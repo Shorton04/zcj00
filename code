@@ -1,3 +1,30 @@
+METHOD create_project.
+  DATA: lt_wbs_created TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
+
+  " Step 1: Create WBS - returns ACTUAL created WBS in lt_wbs_created
+  IF create_wbs_elements(
+    EXPORTING
+      is_header      = is_header
+      it_wbs_items   = it_wbs_items    " ← Template data
+    IMPORTING
+      et_wbs_created = lt_wbs_created  " ← ACTUAL created data
+  ) = abap_false.
+    RETURN.
+  ENDIF.
+
+  " Step 2: Create settlement rules using ACTUAL created data
+  IF create_settlement_rules(
+    it_wbs_items = lt_wbs_created  " ← Uses ACTUAL created WBS!
+  ) = abap_false.
+    RETURN.
+  ENDIF.
+
+  " ... rest of steps ...
+ENDMETHOD.
+
+
+
+
 METHOD create_settlement_rules.
 *&---------------------------------------------------------------------*
 *& Create Settlement Rules via CJB2 Transaction (BDC)
