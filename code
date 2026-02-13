@@ -3,63 +3,27 @@
   "═══════════════════════════════════════════════════════════════════
   DATA: lt_bdcdata TYPE TABLE OF bdcdata,
         lt_bdcmsg  TYPE TABLE OF bdcmsgcoll,
-        ls_bdcmsg  TYPE bdcmsgcoll,
-        lv_posid_external TYPE ps_posid,
-        lv_posid_char TYPE char132,
-        lv_parent_posid_external TYPE ps_posid,
-        lv_parent_posid_char TYPE char132,
-        lv_sender_objnr   TYPE j_objnr,
-        lv_receiver_objnr TYPE j_objnr,
-        lv_parent_pspnr   TYPE ps_pspnr,
+        lv_pspid_char TYPE char132,
+        lv_period_char TYPE char132,
+        lv_gjahr_char TYPE char132,
         lv_mode    TYPE c VALUE 'N',
         lv_update  TYPE c VALUE 'S'.
 
-  " Loop through created WBS elements to create settlement rules
-  LOOP AT et_wbs_created INTO ls_wbs_created.
+  " Get current period and fiscal year
+  DATA(lv_period) = sy-datum+4(2).  " Current month (MM)
+  DATA(lv_gjahr) = sy-datum+0(4).   " Current year (YYYY)
 
-    " Skip Level 1 and items without budget
-    IF ls_wbs_created-stufe = 1 OR ls_wbs_created-wert2 IS INITIAL.
-      CONTINUE.
-    ENDIF.
+  " Convert to CHAR132
+  lv_period_char = lv_period.
+  lv_gjahr_char = lv_gjahr.
 
-    " Get sender WBS details
-    SELECT SINGLE p~objnr, p~psphi
-      FROM prps AS p
-      INTO (@lv_sender_objnr, @lv_parent_pspnr)
-      WHERE p~posid = @ls_wbs_created-posid.
+  " Get Level 1 WBS Element (Project Definition) from lt_wbs_celement
+  READ TABLE lt_wbs_celement INTO ls_wbs_celement INDEX 1.
 
-    IF sy-subrc <> 0.
-      CONTINUE.
-    ENDIF.
-
-    " Get parent (receiver) WBS
-    SELECT SINGLE objnr, posid
-      FROM prps
-      INTO (@lv_receiver_objnr, @lv_parent_posid_external)
-      WHERE pspnr = @lv_parent_pspnr.
-
-    IF sy-subrc <> 0 OR lv_receiver_objnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    " Convert to external format
-    lv_posid_external = ls_wbs_created-posid.
-
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
-      EXPORTING
-        input  = lv_posid_external
-      IMPORTING
-        output = lv_posid_external.
-
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
-      EXPORTING
-        input  = lv_parent_posid_external
-      IMPORTING
-        output = lv_parent_posid_external.
+  IF sy-subrc = 0 AND ls_wbs_celement-wbs_element IS NOT INITIAL.
 
     " Convert to CHAR132
-    lv_posid_char = lv_posid_external.
-    lv_parent_posid_char = lv_parent_posid_external.
+    lv_pspid_char = ls_wbs_celement-wbs_element.
 
     CLEAR lt_bdcdata.
 
@@ -91,12 +55,12 @@
     bdc_field(
       EXPORTING
         iv_fnam = 'RKAUF-TEST'
-        iv_fval = lv_posid_char
+        iv_fval = lv_pspid_char
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
 
-    " BDC Screen 2: SAPLKAOP 0570
+    " BDC Screen 2: SAPLKAOP 0570 (Settlement Rule Screen)
     bdc_dynpro(
       EXPORTING
         iv_program = 'SAPLKAOP'
@@ -107,16 +71,33 @@
 
     bdc_field(
       EXPORTING
-        iv_fnam = 'BDC_CURSOR'
-        iv_fval = 'LKP74-PSPID'
+        iv_fnam = 'LKP74-PSPID'
+        iv_fval = lv_pspid_char
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    " BDC Screen 3: SAPLKAZB 2100 (Period and Year)
+    bdc_dynpro(
+      EXPORTING
+        iv_program = 'SAPLKAZB'
+        iv_dynpro  = '2100'
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
 
     bdc_field(
       EXPORTING
-        iv_fnam = 'LKP74-PSPID'
-        iv_fval = lv_parent_posid_char
+        iv_fnam = 'RKAUF-FROM'
+        iv_fval = lv_period_char
+      CHANGING
+        ct_bdcdata = lt_bdcdata
+    ).
+
+    bdc_field(
+      EXPORTING
+        iv_fnam = 'RKAUF-GJAHR'
+        iv_fval = lv_gjahr_char
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
@@ -129,7 +110,7 @@
         ct_bdcdata = lt_bdcdata
     ).
 
-    " Execute BDC
+    " Execute CJB2
     CLEAR lt_bdcmsg.
 
     CALL TRANSACTION 'CJB2'
@@ -138,7 +119,7 @@
       UPDATE lv_update
       MESSAGES INTO lt_bdcmsg.
 
-  ENDLOOP.
+  ENDIF.
 
   COMMIT WORK.
   MESSAGE s025(zcj00) WITH 'Project' lv_pspid 'created successfully'.
