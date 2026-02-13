@@ -1,12 +1,13 @@
   "═══════════════════════════════════════════════════════════════════
-  " STEP 10: CREATE SETTLEMENT RULES
+  " STEP 10: CREATE SETTLEMENT RULES - DEBUG VERSION
   "═══════════════════════════════════════════════════════════════════
   DATA: lt_bdcdata TYPE TABLE OF bdcdata,
         lt_bdcmsg  TYPE TABLE OF bdcmsgcoll,
+        ls_bdcmsg  TYPE bdcmsgcoll,
         lv_pspid_char TYPE char132,
         lv_period_char TYPE char132,
         lv_gjahr_char TYPE char132,
-        lv_mode    TYPE c VALUE 'N',
+        lv_mode    TYPE c VALUE 'A',  " ← Changed to 'A' for debugging
         lv_update  TYPE c VALUE 'S'.
 
   " Get current period and fiscal year
@@ -24,6 +25,10 @@
 
     " Convert to CHAR132
     lv_pspid_char = ls_wbs_celement-wbs_element.
+
+    " ✓ DEBUG: Show what we're passing to CJB2
+    MESSAGE i025(zcj00) WITH 'Calling CJB2 with:' lv_pspid_char
+      DISPLAY LIKE 'I'.
 
     CLEAR lt_bdcdata.
 
@@ -60,7 +65,7 @@
         ct_bdcdata = lt_bdcdata
     ).
 
-    " BDC Screen 2: SAPLKAOP 0570 (Settlement Rule Screen)
+    " BDC Screen 2: SAPLKAOP 0570
     bdc_dynpro(
       EXPORTING
         iv_program = 'SAPLKAOP'
@@ -77,7 +82,7 @@
         ct_bdcdata = lt_bdcdata
     ).
 
-    " BDC Screen 3: SAPLKAZB 2100 (Period and Year)
+    " BDC Screen 3: SAPLKAZB 2100
     bdc_dynpro(
       EXPORTING
         iv_program = 'SAPLKAZB'
@@ -110,7 +115,7 @@
         ct_bdcdata = lt_bdcdata
     ).
 
-    " Execute CJB2
+    " Execute CJB2 in foreground
     CLEAR lt_bdcmsg.
 
     CALL TRANSACTION 'CJB2'
@@ -119,6 +124,23 @@
       UPDATE lv_update
       MESSAGES INTO lt_bdcmsg.
 
+    " ✓ DEBUG: Display any error messages
+    LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
+      MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
+        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
+             ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
+        DISPLAY LIKE 'E'.
+    ENDLOOP.
+
+    " ✓ DEBUG: Show success messages too
+    LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'S'.
+      MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
+        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
+        DISPLAY LIKE 'S'.
+    ENDLOOP.
+
+  ELSE.
+    MESSAGE e025(zcj00) WITH 'lt_wbs_celement is empty!'.
   ENDIF.
 
   COMMIT WORK.
