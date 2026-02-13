@@ -1,102 +1,108 @@
-CLASS zcl_a2r_wbs_builder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-    " ... existing public methods ...
-
-  PRIVATE SECTION.
-    " ... existing private methods ...
-    
-    METHODS bdc_dynpro
-      IMPORTING
-        iv_program TYPE bdcdata-program
-        iv_dynpro  TYPE bdcdata-dynpro
-      CHANGING
-        ct_bdcdata TYPE STANDARD TABLE.
-        
-    METHODS bdc_field
-      IMPORTING
-        iv_fnam TYPE bdcdata-fnam
-        iv_fval TYPE bdcdata-fval
-      CHANGING
-        ct_bdcdata TYPE STANDARD TABLE.
-
-ENDCLASS.
-
-
-
-
 METHOD create_settlement_rules.
 *&---------------------------------------------------------------------*
 *& Create Settlement Rules via CJB2 Transaction (BDC)
-*& Reference: SHDB Recording - No FORM routines in class pool
+*& CRITICAL: Uses ET_WBS_CREATED from create_wbs_elements (not template data)
+*& Reference: SHDB Recording for CJB2
 *&---------------------------------------------------------------------*
 
   DATA: lt_bdcdata TYPE TABLE OF bdcdata,
         lt_bdcmsg  TYPE TABLE OF bdcmsgcoll,
         ls_bdcmsg  TYPE bdcmsgcoll,
         ls_wbs     TYPE ztb_a2r_wbsitem,
-        lv_posid   TYPE ps_posid,
+        lv_posid_external TYPE ps_posid,
+        lv_posid_char TYPE char132,
+        lv_parent_posid_external TYPE ps_posid,
+        lv_parent_posid_char TYPE char132,
         lv_sender_objnr   TYPE j_objnr,
         lv_receiver_objnr TYPE j_objnr,
-        lv_parent_posid   TYPE ps_posid,
         lv_parent_pspnr   TYPE ps_pspnr,
         lv_mode    TYPE c VALUE 'N',  " Background mode
-        lv_update  TYPE c VALUE 'S'.  " Synchronous update
+        lv_update  TYPE c VALUE 'S',  " Synchronous update
+        lv_error_count TYPE i,
+        lv_success_count TYPE i.
 
   rv_success = abap_false.
+  CLEAR: lv_error_count, lv_success_count.
+
+  "═══════════════════════════════════════════════════════════════
+  " IMPORTANT: it_wbs_items = et_wbs_created from create_wbs_elements
+  " This table contains the ACTUAL created WBS POSIDs, not template
+  "═══════════════════════════════════════════════════════════════
 
   LOOP AT it_wbs_items INTO ls_wbs.
 
-    " Skip Level 1 (no settlement needed)
+    " Skip Level 1 (project definition has no settlement)
     IF ls_wbs-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    " Skip items without budget
+    " Skip items without budget (no settlement needed)
     IF ls_wbs-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Get sender WBS details
-    SELECT SINGLE p~objnr, p~posid, p~psphi
-      FROM prps AS p
-      INTO (@lv_sender_objnr, @lv_posid, @lv_parent_pspnr)
-      WHERE p~posid = @ls_wbs-posid.
-
-    IF sy-subrc <> 0.
+    " Skip if POSID is empty (should not happen)
+    IF ls_wbs-posid IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Get parent (receiver) WBS
+    "═══════════════════════════════════════════════════════════════
+    " Get sender WBS object number using ACTUAL created POSID
+    "═══════════════════════════════════════════════════════════════
+    SELECT SINGLE p~objnr, p~psphi
+      FROM prps AS p
+      INTO (@lv_sender_objnr, @lv_parent_pspnr)
+      WHERE p~posid = @ls_wbs-posid.  " ← Uses actual created POSID
+
+    IF sy-subrc <> 0.
+      MESSAGE i024(zcj00) WITH 'WBS not found:' ls_wbs-posid
+        DISPLAY LIKE 'W'.
+      lv_error_count = lv_error_count + 1.
+      CONTINUE.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════
+    " Get parent (receiver) WBS using hierarchy
+    "═══════════════════════════════════════════════════════════════
     SELECT SINGLE objnr, posid
       FROM prps
-      INTO (@lv_receiver_objnr, @lv_parent_posid)
+      INTO (@lv_receiver_objnr, @lv_parent_posid_external)
       WHERE pspnr = @lv_parent_pspnr.
 
     IF sy-subrc <> 0 OR lv_receiver_objnr IS INITIAL.
+      MESSAGE i024(zcj00) WITH 'Parent WBS not found for' ls_wbs-posid
+        DISPLAY LIKE 'W'.
+      lv_error_count = lv_error_count + 1.
       CONTINUE.
     ENDIF.
 
-    " Convert POSID to external format for BDC
+    "═══════════════════════════════════════════════════════════════
+    " Convert POSID to external format for BDC display
+    " ls_wbs-posid is already in external format from create_wbs_elements
+    "═══════════════════════════════════════════════════════════════
+    lv_posid_external = ls_wbs-posid.
+
+    " Ensure external format with dots
     CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
       EXPORTING
-        input  = lv_posid
+        input  = lv_posid_external
       IMPORTING
-        output = lv_posid.
+        output = lv_posid_external.
 
     CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
       EXPORTING
-        input  = lv_parent_posid
+        input  = lv_parent_posid_external
       IMPORTING
-        output = lv_parent_posid.
+        output = lv_parent_posid_external.
+
+    " Convert to CHAR132 for BDC compatibility
+    lv_posid_char = lv_posid_external.
+    lv_parent_posid_char = lv_parent_posid_external.
 
     CLEAR lt_bdcdata.
 
     "═══════════════════════════════════════════════════════════════
-    " BDC Screen 1: CJB2 Initial Screen (SAPLKAZB 1000)
+    " BDC Screen 1: SAPLKAZB 1000 (CJB2 Initial Screen)
     "═══════════════════════════════════════════════════════════════
     bdc_dynpro(
       EXPORTING
@@ -125,13 +131,13 @@ METHOD create_settlement_rules.
     bdc_field(
       EXPORTING
         iv_fnam = 'RKAUF-TEST'
-        iv_fval = lv_posid  " Sender WBS
+        iv_fval = lv_posid_char  " Sender WBS (actual created)
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
 
     "═══════════════════════════════════════════════════════════════
-    " BDC Screen 2: Settlement Rule Details (SAPLKAOP 0570)
+    " BDC Screen 2: SAPLKAOP 0570 (Settlement Rule Screen)
     "═══════════════════════════════════════════════════════════════
     bdc_dynpro(
       EXPORTING
@@ -152,7 +158,7 @@ METHOD create_settlement_rules.
     bdc_field(
       EXPORTING
         iv_fnam = 'LKP74-PSPID'
-        iv_fval = lv_parent_posid  " Receiver WBS
+        iv_fval = lv_parent_posid_char  " Receiver WBS (parent)
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
@@ -179,16 +185,27 @@ METHOD create_settlement_rules.
     "═══════════════════════════════════════════════════════════════
     " Check for Errors
     "═══════════════════════════════════════════════════════════════
+    DATA(lv_has_error) = abap_false.
+
     LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
-      MESSAGE ID ls_bdcmsg-msgid TYPE 'E' NUMBER ls_bdcmsg-msgnr
-        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2 
-             ls_bdcmsg-msgv3 ls_bdcmsg-msgv4.
-      rv_success = abap_false.
-      RETURN.
+
+      lv_has_error = abap_true.
+
+      " Log error message
+      MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
+        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
+             ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
+        DISPLAY LIKE 'E'.
+
     ENDLOOP.
 
+    IF lv_has_error = abap_true.
+      lv_error_count = lv_error_count + 1.
+      CONTINUE.  " Skip to next WBS
+    ENDIF.
+
     "═══════════════════════════════════════════════════════════════
-    " Activate SETC Status
+    " Activate SETC Status (Settlement rule created)
     "═══════════════════════════════════════════════════════════════
     CALL FUNCTION 'STATUS_CHANGE_INTERN'
       EXPORTING
@@ -201,52 +218,32 @@ METHOD create_settlement_rules.
         status_inconsistent = 2
         OTHERS              = 3.
 
-    IF sy-subrc <> 0.
-      MESSAGE e024(zcj00).  " Settlement rule error
-      rv_success = abap_false.
-      RETURN.
+    IF sy-subrc = 0.
+      lv_success_count = lv_success_count + 1.
+    ELSE.
+      " Log warning but don't fail entire process
+      MESSAGE i024(zcj00) WITH 'SETC status failed for' lv_posid_external
+        DISPLAY LIKE 'W'.
     ENDIF.
 
   ENDLOOP.
 
+  "═══════════════════════════════════════════════════════════════
+  " Final Status Check
+  "═══════════════════════════════════════════════════════════════
   COMMIT WORK AND WAIT.
-  rv_success = abap_true.
 
-ENDMETHOD.
-
-
-
-
-
-
-METHOD bdc_dynpro.
-*&---------------------------------------------------------------------*
-*& Add screen to BDC data table
-*&---------------------------------------------------------------------*
-
-  DATA: ls_bdcdata TYPE bdcdata.
-
-  CLEAR ls_bdcdata.
-  ls_bdcdata-program  = iv_program.
-  ls_bdcdata-dynpro   = iv_dynpro.
-  ls_bdcdata-dynbegin = 'X'.
-  APPEND ls_bdcdata TO ct_bdcdata.
-
-ENDMETHOD.
-
-
-METHOD bdc_field.
-*&---------------------------------------------------------------------*
-*& Add field to BDC data table
-*&---------------------------------------------------------------------*
-
-  DATA: ls_bdcdata TYPE bdcdata.
-
-  IF iv_fval IS NOT INITIAL.
-    CLEAR ls_bdcdata.
-    ls_bdcdata-fnam = iv_fnam.
-    ls_bdcdata-fval = iv_fval.
-    APPEND ls_bdcdata TO ct_bdcdata.
+  IF lv_error_count = 0 AND lv_success_count > 0.
+    rv_success = abap_true.
+    MESSAGE s032(zcj00) WITH lv_success_count 'settlement rule(s) created'.
+  ELSEIF lv_success_count > 0.
+    " Partial success
+    rv_success = abap_true.
+    MESSAGE w024(zcj00) WITH lv_success_count 'created,' lv_error_count 'failed'
+      DISPLAY LIKE 'W'.
+  ELSE.
+    rv_success = abap_false.
+    MESSAGE e024(zcj00) WITH 'All settlement rules failed'.
   ENDIF.
 
 ENDMETHOD.
