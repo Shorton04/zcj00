@@ -138,24 +138,6 @@
       UPDATE lv_update
       MESSAGES INTO lt_bdcmsg.
 
-    " Check for errors (but don't stop entire process)
-    READ TABLE lt_bdcmsg TRANSPORTING NO FIELDS
-      WHERE msgtyp = 'E' OR msgtyp = 'A'.
-
-    IF sy-subrc <> 0.
-      " No errors - activate SETC status
-      CALL FUNCTION 'STATUS_CHANGE_INTERN'
-        EXPORTING
-          client              = sy-mandt
-          objnr               = lv_sender_objnr
-          user_stat           = 'SETC'
-          set_inact           = ''
-        EXCEPTIONS
-          object_not_found    = 1
-          status_inconsistent = 2
-          OTHERS              = 3.
-    ENDIF.
-
   ENDLOOP.
 
   COMMIT WORK.
