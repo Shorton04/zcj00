@@ -39,7 +39,7 @@
     bdc_field(
       EXPORTING
         iv_fnam = 'BDC_CURSOR'
-        iv_fval = 'RKAUF-TEST'
+        iv_fval = 'RKAUF-LIST'
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
@@ -47,15 +47,15 @@
     bdc_field(
       EXPORTING
         iv_fnam = 'BDC_OKCODE'
-        iv_fval = 'RUN'
+        iv_fval = '=RUN'
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
 
     bdc_field(
       EXPORTING
-        iv_fnam = 'RKAUF-TEST'
-        iv_fval = lv_pspid_char
+        iv_fnam = 'RKAUF-LIST'
+        iv_fval = 'X'
       CHANGING
         ct_bdcdata = lt_bdcdata
     ).
