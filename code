@@ -142,16 +142,14 @@ METHOD assign_budget_cj30.
   rv_success = abap_false.
   CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  "Currency from header (mandatory for your system)
   lv_waers = get_currency_from_header( is_header ).
   IF lv_waers IS INITIAL.
     RETURN.
   ENDIF.
 
-  "Build CJ30 budget lines (only for flagged WBS if needed)
   LOOP AT it_wbs_items INTO ls_item.
 
-    ">>> If you must budget only flagged WBS, uncomment and replace field name
+    "If CJ30 should run only for flagged WBS, uncomment and use your real field
     "IF ls_item-zbudget_check IS INITIAL.
     "  CONTINUE.
     "ENDIF.
@@ -173,7 +171,7 @@ METHOD assign_budget_cj30.
     ls_bpak-e_objnr = lv_objnr.
     ls_bpak-e_versn = '000'.
     ls_bpak-e_perio = '001'.
-    ls_bpak-e_wrttp = '41'.        "CJ30 Budget value type
+    ls_bpak-e_wrttp = '41'.        "CJ30 Budget
     ls_bpak-wert    = ls_item-wert2.
     ls_bpak-twaer   = lv_waers.
 
@@ -181,16 +179,12 @@ METHOD assign_budget_cj30.
 
   ENDLOOP.
 
-  "Nothing to budget => still ok, but BLKD can still be applied if you want.
   IF lt_bpak IS INITIAL.
-    "Option A: still set BLKD even if no budget posted (based on FDS)
-    rv_success = set_blkd_status_for_higher_wbs( it_wbs_items = it_wbs_items ).
+    "No budget lines, still OK
+    rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  "CJ30 equivalent (Budget) => KBUD
-  "------------------------------------------------------------
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
       i_budget_activity = 'KBUD'   "CJ30
@@ -217,11 +211,8 @@ METHOD assign_budget_cj30.
     RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  "After successful CJ30: set BLKD on higher-level WBS
-  "------------------------------------------------------------
+  "NEW: Call BLKD after CJ30 success
   IF set_blkd_status_for_higher_wbs( it_wbs_items = it_wbs_items ) = abap_false.
-    "Budget posted but BLKD failed => treat as failure (per FDS)
     rv_success = abap_false.
     RETURN.
   ENDIF.
