@@ -1,50 +1,40 @@
 METHOD set_blkd_status_for_higher_wbs.
 
-  DATA: ls_item          TYPE ztb_a2r_wbsitem,
-        lv_pspnr         TYPE prps-pspnr,
-        lv_parent_pspnr  TYPE prhi-psphi,
-        lv_parent_posid  TYPE prps-posid.
+  DATA: ls_item           TYPE ztb_a2r_wbsitem,
+        lv_child_pspnr    TYPE prps-pspnr,
+        lv_parent_pspnr   TYPE prhi-psphi,
+        lv_parent_posid   TYPE prps-posid.
 
-  DATA: lt_user_status   TYPE TABLE OF bapi_wbs_mnt_user_status,
-        lt_sys_status    TYPE TABLE OF bapi_wbs_mnt_system_status,
-        lt_result        TYPE TABLE OF bapi_status_result.
-
-  FIELD-SYMBOLS: <ls_us>    TYPE any,
-                 <f_wbs>    TYPE any,
-                 <f_stat>   TYPE any,
-                 <f_set>    TYPE any,
-                 <f_inact>  TYPE any.
+  DATA: lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_status TYPE bapi_wbs_mnt_user_status,
+        lt_result      TYPE TABLE OF bapi_status_result.
 
   rv_success = abap_false.
-  CLEAR: lt_user_status, lt_sys_status, lt_result.
+  CLEAR: lt_user_status, lt_result.
 
-  "Collect parent WBS to be set with BLKD
   LOOP AT it_wbs_items INTO ls_item.
 
-    "Get PSPNR of current WBS
-    CLEAR lv_pspnr.
+    "Get child internal number
     SELECT SINGLE pspnr
-      INTO @lv_pspnr
+      INTO @lv_child_pspnr
       FROM prps
       WHERE posid = @ls_item-posid.
 
-    IF sy-subrc <> 0 OR lv_pspnr IS INITIAL.
+    IF sy-subrc <> 0 OR lv_child_pspnr IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    "Get parent PSPNR (higher level)
-    CLEAR lv_parent_pspnr.
+    "Get parent internal number from PRHI
     SELECT SINGLE psphi
       INTO @lv_parent_pspnr
       FROM prhi
-      WHERE pspnr = @lv_pspnr.
+      WHERE pspnr = @lv_child_pspnr.
 
     IF sy-subrc <> 0 OR lv_parent_pspnr IS INITIAL.
       CONTINUE.
     ENDIF.
 
     "Get parent POSID
-    CLEAR lv_parent_posid.
     SELECT SINGLE posid
       INTO @lv_parent_posid
       FROM prps
@@ -54,70 +44,23 @@ METHOD set_blkd_status_for_higher_wbs.
       CONTINUE.
     ENDIF.
 
-    "Append one line to I_WBS_USER_STATUS
-    APPEND INITIAL LINE TO lt_user_status ASSIGNING <ls_us>.
-    IF <ls_us> IS NOT ASSIGNED.
-      CONTINUE.
-    ENDIF.
+    CLEAR ls_user_status.
+    ls_user_status-wbs_element    = lv_parent_posid.
+    ls_user_status-set_user_status = 'BLKD'.
 
-    "Fill WBS element field (usually WBS_ELEMENT)
-    ASSIGN COMPONENT 'WBS_ELEMENT' OF STRUCTURE <ls_us> TO <f_wbs>.
-    IF sy-subrc = 0 AND <f_wbs> IS ASSIGNED.
-      <f_wbs> = lv_parent_posid.
-    ENDIF.
-
-    "Fill status code (some systems use USER_STATUS, some SET_USER_STATUS)
-    ASSIGN COMPONENT 'USER_STATUS' OF STRUCTURE <ls_us> TO <f_stat>.
-    IF sy-subrc = 0 AND <f_stat> IS ASSIGNED.
-      <f_stat> = 'BLKD'.
-    ELSE.
-      ASSIGN COMPONENT 'SET_USER_STATUS' OF STRUCTURE <ls_us> TO <f_stat>.
-      IF sy-subrc = 0 AND <f_stat> IS ASSIGNED.
-        <f_stat> = 'BLKD'.
-      ENDIF.
-    ENDIF.
-
-    "Tell BAPI to SET the status (field name differs by release)
-    ASSIGN COMPONENT 'SET_STATUS' OF STRUCTURE <ls_us> TO <f_set>.
-    IF sy-subrc = 0 AND <f_set> IS ASSIGNED.
-      <f_set> = 'X'.
-    ELSE.
-      ASSIGN COMPONENT 'ACTIVATE' OF STRUCTURE <ls_us> TO <f_set>.
-      IF sy-subrc = 0 AND <f_set> IS ASSIGNED.
-        <f_set> = 'X'.
-      ENDIF.
-    ENDIF.
-
-    "Ensure we are not deactivating (if a flag exists)
-    ASSIGN COMPONENT 'INACT' OF STRUCTURE <ls_us> TO <f_inact>.
-    IF sy-subrc = 0 AND <f_inact> IS ASSIGNED.
-      CLEAR <f_inact>.
-    ENDIF.
+    APPEND ls_user_status TO lt_user_status.
 
   ENDLOOP.
-
-  "Remove duplicates so we set BLKD once per parent WBS
-  SORT lt_user_status BY (1). "generic sort is ok; if you know key fields, specify them
-  DELETE ADJACENT DUPLICATES FROM lt_user_status COMPARING ALL FIELDS.
 
   IF lt_user_status IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  "Call the exact BAPI shown in your screenshot
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
-      em_status        = lt_sys_status
       i_wbs_user_status = lt_user_status
-      e_result         = lt_result.
-
-  "Check result table for errors
-  READ TABLE lt_result TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
+      e_result          = lt_result.
 
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
@@ -126,6 +69,7 @@ METHOD set_blkd_status_for_higher_wbs.
   rv_success = abap_true.
 
 ENDMETHOD.
+
 
 
 
