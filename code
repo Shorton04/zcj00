@@ -1,111 +1,136 @@
 METHOD assign_plan_values.
 
-  "------------------------------------------------------------
-  " CJ40-equivalent posting via KBPP_EXTERN_UPDATE_CO
-  "------------------------------------------------------------
-  DATA: ls_wbs   TYPE ztb_a2r_wbsitem,
-        lv_objnr TYPE j_objnr,
-        lv_kokrs TYPE kokrs,
-        lv_gjahr TYPE gjahr,
-        lt_kbpp0 TYPE TABLE OF kbpp0,
-        ls_kbpp0 TYPE kbpp0,
-        lt_return TYPE TABLE OF bapiret2.
-
-  CONSTANTS: lc_versn TYPE versn VALUE '0',
-             lc_wrttp TYPE wrttp VALUE '01',        " Plan
-             lc_kstar TYPE kstar VALUE '400000'.    " <<< TODO: replace with your planning cost element
+  DATA: lt_return        TYPE TABLE OF bapiret2,
+        lv_errors_found  TYPE oax,
+        lt_bpak          TYPE TABLE OF bpak,
+        lt_bpak_cj40     TYPE TABLE OF bpak,
+        lt_bpak_cj30     TYPE TABLE OF bpak,
+        lt_bpak_cj32     TYPE TABLE OF bpak,
+        ls_bpak          TYPE bpak,
+        ls_item          TYPE ztb_a2r_wbsitem,
+        lv_objnr         TYPE j_objnr.
 
   rv_success = abap_false.
-  CLEAR: lt_kbpp0, lt_return.
 
-  " Fiscal year from header start date (fallback: current year)
-  IF is_header-plfaz IS NOT INITIAL.
-    lv_gjahr = is_header-plfaz(4).
-  ELSE.
-    lv_gjahr = sy-datum(4).
-  ENDIF.
-
-  LOOP AT it_wbs_items INTO ls_wbs.
-
-    " Skip if no plan value
-    IF ls_wbs-wert2 IS INITIAL.
+  "Build BPAK from created WBS (OBJNR required)
+  LOOP AT it_wbs_items INTO ls_item.
+    "Skip empty amounts if needed
+    IF ls_item-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Get WBS OBJNR + KOKRS from PRPS (best source)
-    SELECT SINGLE objnr pkokr
+    CLEAR lv_objnr.
+    SELECT SINGLE objnr
       FROM prps
-      INTO (lv_objnr, lv_kokrs)
-      WHERE posid = @ls_wbs-posid.
+      INTO @lv_objnr
+      WHERE posid = @ls_item-posid.
 
-    IF sy-subrc <> 0 OR lv_objnr IS INITIAL OR lv_kokrs IS INITIAL.
+    IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    CLEAR ls_kbpp0.
+    CLEAR ls_bpak.
+    ls_bpak-objnr = lv_objnr.
 
-    " KBPP0 key fields (common in S/4)
-    ls_kbpp0-objnr = lv_objnr.
-    ls_kbpp0-kstar = lc_kstar.
-    ls_kbpp0-gjahr = lv_gjahr.
-    ls_kbpp0-versn = lc_versn.
-    ls_kbpp0-wrttp = lc_wrttp.
+    "IMPORTANT:
+    "Field name for the amount in BPAK differs by system customizing.
+    "In many systems it is WLP00 (total), sometimes WERTN fields exist.
+    "Keep it aligned with what your old system filled into lt_bpak.
+    ls_bpak-wlp00 = ls_item-wert2.
 
-    " Distribute plan across periods 1..12 (even)
-    DATA(lv_monthly) = ls_wbs-wert2 / 12.
-
-    " Most systems have WTG001..WTG012 in KBPP0
-    ls_kbpp0-wtg001 = lv_monthly.
-    ls_kbpp0-wtg002 = lv_monthly.
-    ls_kbpp0-wtg003 = lv_monthly.
-    ls_kbpp0-wtg004 = lv_monthly.
-    ls_kbpp0-wtg005 = lv_monthly.
-    ls_kbpp0-wtg006 = lv_monthly.
-    ls_kbpp0-wtg007 = lv_monthly.
-    ls_kbpp0-wtg008 = lv_monthly.
-    ls_kbpp0-wtg009 = lv_monthly.
-    ls_kbpp0-wtg010 = lv_monthly.
-    ls_kbpp0-wtg011 = lv_monthly.
-    ls_kbpp0-wtg012 = lv_monthly.
-
-    APPEND ls_kbpp0 TO lt_kbpp0.
-
+    APPEND ls_bpak TO lt_bpak.
   ENDLOOP.
 
-  IF lt_kbpp0 IS INITIAL.
-    rv_success = abap_true.
+  IF lt_bpak IS INITIAL.
     RETURN.
   ENDIF.
 
-  " Post in one call (Version 0, Plan)
+  "Old system pattern: CJ30/CJ32 get lt_bpak as-is; CJ40 requires E_VERSN = '000'
+  lt_bpak_cj30 = lt_bpak.
+  lt_bpak_cj32 = lt_bpak.
+
+  LOOP AT lt_bpak INTO ls_bpak.
+    "MOVE-CORRESPONDING is what old code did; then set E_VERSN for CJ40
+    DATA(ls_bpak_cj40) = CORRESPONDING bpak( ls_bpak ).
+    ls_bpak_cj40-e_versn = '000'. "CJ40 version 000【turn11file0†Codes.txt†L5-L10】
+    APPEND ls_bpak_cj40 TO lt_bpak_cj40.
+  ENDLOOP.
+
+  "------------------------------------------------------------
+  "1) CJ40 (Budget in Planning Version) => KSTP
+  "------------------------------------------------------------
+  CLEAR: lt_return, lv_errors_found.
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      i_kokrs = lv_kokrs
-      i_gjahr = lv_gjahr
-      i_versn = lc_versn
+      i_budget_activity = 'KSTP'   "CJ40【turn11file0†Codes.txt†L12-L20】
+      i_delta_amounts   = 'X'
+      i_rollup_data     = 'X'
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
     TABLES
-      t_kbpp0 = lt_kbpp0
-      t_return = lt_return
+      it_bpak           = lt_bpak_cj40
+      it_return         = lt_return
     EXCEPTIONS
-      OTHERS  = 1.
+      no_update         = 1
+      OTHERS            = 2.
 
-  IF sy-subrc <> 0.
-    rv_success = abap_false.
-    ROLLBACK WORK.
+  IF lt_return IS NOT INITIAL OR lv_errors_found IS NOT INITIAL OR sy-subrc <> 0.
+    "Optionally raise / collect messages from lt_return
     RETURN.
   ENDIF.
 
-  " Check return messages
-  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    rv_success = abap_false.
-    ROLLBACK WORK.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+  "------------------------------------------------------------
+  "2) CJ30 (Budget) => KBUD
+  "------------------------------------------------------------
+  CLEAR: lt_return, lv_errors_found.
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      wait = abap_true.
+      i_budget_activity = 'KBUD'   "CJ30【turn11file0†Codes.txt†L36-L54】
+      i_delta_amounts   = 'X'
+      i_rollup_data     = 'X'
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak_cj30
+      it_return         = lt_return
+    EXCEPTIONS
+      no_update         = 1
+      OTHERS            = 2.
+
+  IF lt_return IS NOT INITIAL OR lv_errors_found IS NOT INITIAL OR sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  "------------------------------------------------------------
+  "3) CJ32 (Budget release) => KBFR
+  "------------------------------------------------------------
+  CLEAR: lt_return, lv_errors_found.
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity = 'KBFR'   "CJ32【turn11file0†Codes.txt†L61-L79】
+      i_delta_amounts   = 'X'
+      i_rollup_data     = 'X'
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak_cj32
+      it_return         = lt_return
+    EXCEPTIONS
+      no_update         = 1
+      OTHERS            = 2.
+
+  IF lt_return IS NOT INITIAL OR lv_errors_found IS NOT INITIAL OR sy-subrc <> 0.
+    RETURN.
+  ENDIF.
 
   rv_success = abap_true.
 
