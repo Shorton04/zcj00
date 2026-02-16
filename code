@@ -1,119 +1,68 @@
 METHODS get_currency_from_header
-  IMPORTING is_header TYPE ztb_a2r_wbshdr
-  RETURNING VALUE(rv_waers) TYPE waers.
-
-
-METHODS build_bpak_from_wbs
   IMPORTING
-    it_wbs_items            TYPE STANDARD TABLE
-    iv_waers                TYPE waers
-    iv_wrttp                TYPE co_wrttp
-    iv_versn                TYPE bp_version
-    iv_perio                TYPE co_buzei
-    iv_only_budget_flagged  TYPE abap_bool DEFAULT abap_false
-    iv_budget_flag_comp     TYPE string    DEFAULT ''
+    is_header TYPE ztb_a2r_wbshdr
   RETURNING
-    VALUE(rt_bpak)          TYPE TABLE OF bpak.
-
-
-METHODS call_kbpp_update
-  IMPORTING
-    iv_activity TYPE char4
-    it_bpak     TYPE TABLE OF bpak
-  EXPORTING
-    ev_ok       TYPE abap_bool.
+    VALUE(rv_waers) TYPE waers.
 
 
 
 METHODS assign_plan_values
   IMPORTING
     is_header    TYPE ztb_a2r_wbshdr
-    it_wbs_items TYPE STANDARD TABLE
+    it_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+
+METHODS distribute_budget_im52
+  IMPORTING
+    is_header    TYPE ztb_a2r_wbshdr
+    it_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+
+METHODS assign_budget_cj30
+  IMPORTING
+    is_header    TYPE ztb_a2r_wbshdr
+    it_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem
   RETURNING
     VALUE(rv_success) TYPE abap_bool.
 
 
 
-METHODS assign_budget
+METHODS post_plan_im52_cj30_flow
   IMPORTING
-    is_header               TYPE ztb_a2r_wbshdr
-    it_wbs_items            TYPE STANDARD TABLE
-    iv_only_budget_flagged  TYPE abap_bool DEFAULT abap_true
-    iv_budget_flag_comp     TYPE string    DEFAULT 'ZBUDGET_CHECK'
+    is_header    TYPE ztb_a2r_wbshdr
+    it_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem
   RETURNING
-    VALUE(rv_success)       TYPE abap_bool.
+    VALUE(rv_success) TYPE abap_bool.
 
 
 
-METHODS release_budget
-  IMPORTING
-    is_header               TYPE ztb_a2r_wbshdr
-    it_wbs_items            TYPE STANDARD TABLE
-    iv_only_budget_flagged  TYPE abap_bool DEFAULT abap_true
-    iv_budget_flag_comp     TYPE string    DEFAULT 'ZBUDGET_CHECK'
-  RETURNING
-    VALUE(rv_success)       TYPE abap_bool.
+METHOD assign_plan_values.
 
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lt_return       TYPE TABLE OF bapiret2.
 
+  rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-METHODS post_plan_and_budget_flow
-  IMPORTING
-    is_header            TYPE ztb_a2r_wbshdr
-    it_wbs_items         TYPE STANDARD TABLE
-    iv_budget_flag_comp  TYPE string DEFAULT 'ZBUDGET_CHECK'
-  RETURNING
-    VALUE(rv_success)    TYPE abap_bool.
-
-
-
-
-
-
-METHOD get_currency_from_header.
-  FIELD-SYMBOLS: <fs> TYPE any.
-  CLEAR rv_waers.
-
-  ASSIGN COMPONENT 'WAERS' OF STRUCTURE is_header TO <fs>.
-  IF sy-subrc = 0 AND <fs> IS ASSIGNED AND <fs> IS NOT INITIAL.
-    rv_waers = <fs>.
+  lv_waers = get_currency_from_header( is_header ).
+  IF lv_waers IS INITIAL.
     RETURN.
   ENDIF.
-
-  ASSIGN COMPONENT 'TWAER' OF STRUCTURE is_header TO <fs>.
-  IF sy-subrc = 0 AND <fs> IS ASSIGNED AND <fs> IS NOT INITIAL.
-    rv_waers = <fs>.
-    RETURN.
-  ENDIF.
-ENDMETHOD.
-
-
-
-
-METHOD build_bpak_from_wbs.
-
-  DATA: ls_item TYPE ztb_a2r_wbsitem,
-        lv_objnr TYPE j_objnr,
-        ls_bpak TYPE bpak.
-
-  CLEAR rt_bpak.
 
   LOOP AT it_wbs_items INTO ls_item.
-
-    "If you only want items with amount
     IF ls_item-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    "Optional: budget flag filter (only for budgeting flow)
-    IF iv_only_budget_flagged = abap_true AND iv_budget_flag_comp IS NOT INITIAL.
-      FIELD-SYMBOLS <fs_flag> TYPE any.
-      ASSIGN COMPONENT iv_budget_flag_comp OF STRUCTURE ls_item TO <fs_flag>.
-      IF sy-subrc <> 0 OR <fs_flag> IS NOT ASSIGNED OR <fs_flag> IS INITIAL.
-        CONTINUE.
-      ENDIF.
-    ENDIF.
-
-    CLEAR lv_objnr.
     SELECT SINGLE objnr
       FROM prps
       INTO @lv_objnr
@@ -125,31 +74,23 @@ METHOD build_bpak_from_wbs.
 
     CLEAR ls_bpak.
     ls_bpak-e_objnr = lv_objnr.
-    ls_bpak-e_versn = iv_versn.      "e.g. '000'
-    ls_bpak-e_perio = iv_perio.      "e.g. '001'
-    ls_bpak-e_wrttp = iv_wrttp.      "01/41/42
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '01'.         "PLAN
     ls_bpak-wert    = ls_item-wert2.
-    ls_bpak-twaer   = iv_waers.      "MANDATORY in your system
+    ls_bpak-twaer   = lv_waers.     "MANDATORY
 
-    APPEND ls_bpak TO rt_bpak.
+    APPEND ls_bpak TO lt_bpak.
   ENDLOOP.
 
-ENDMETHOD.
-
-
-
-
-METHOD call_kbpp_update.
-
-  DATA: lv_errors_found TYPE oax,
-        lt_return       TYPE TABLE OF bapiret2.
-
-  CLEAR: ev_ok, lt_return, lv_errors_found.
-  ev_ok = abap_false.
+  IF lt_bpak IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      i_budget_activity = iv_activity      "KSTP / KBUD / KBFR
+      i_budget_activity = 'KSTP'    "CJ40
       i_delta_amounts   = 'X'
       i_rollup_data     = 'X'
       i_check_plan_data = 'X'
@@ -158,11 +99,8 @@ METHOD call_kbpp_update.
     IMPORTING
       e_errors_found    = lv_errors_found
     TABLES
-      it_bpak           = it_bpak
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
+      it_bpak           = lt_bpak
+      it_return         = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
     RETURN.
@@ -173,157 +111,215 @@ METHOD call_kbpp_update.
     RETURN.
   ENDIF.
 
-  ev_ok = abap_true.
+  rv_success = abap_true.
 
 ENDMETHOD.
 
 
 
-METHOD assign_plan_values.
+METHOD distribute_budget_im52.
 
-  DATA: lv_waers TYPE waers,
-        lt_bpak  TYPE TABLE OF bpak,
-        lv_ok    TYPE abap_bool.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lv_posnr        TYPE bp_posit,
+        lt_return       TYPE TABLE OF bapiret2.
+
+  FIELD-SYMBOLS: <fs_posnr> TYPE any.
 
   rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found, lv_posnr.
 
   lv_waers = get_currency_from_header( is_header ).
   IF lv_waers IS INITIAL.
     RETURN.
   ENDIF.
 
-  lt_bpak = build_bpak_from_wbs(
-              it_wbs_items           = it_wbs_items
-              iv_waers               = lv_waers
-              iv_wrttp               = '01'     "PLAN
-              iv_versn               = '000'
-              iv_perio               = '001' ).
+  "Get IM Position (POSNR) from header
+  ASSIGN COMPONENT 'POSNR' OF STRUCTURE is_header TO <fs_posnr>.
+  IF sy-subrc = 0 AND <fs_posnr> IS ASSIGNED AND <fs_posnr> IS NOT INITIAL.
+    lv_posnr = <fs_posnr>.
+  ENDIF.
+
+  IF lv_posnr IS INITIAL.
+    "No IM position => cannot do IM52 distribution
+    RETURN.
+  ENDIF.
+
+  "Build distribution lines ONLY for Level 1 WBS
+  LOOP AT it_wbs_items INTO ls_item.
+
+    "Adjust this condition to your real “Level 1” logic/field
+    IF ls_item-stufe <> 1.
+      CONTINUE.
+    ENDIF.
+
+    IF ls_item-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    SELECT SINGLE objnr
+      FROM prps
+      INTO @lv_objnr
+      WHERE posid = @ls_item-posid.
+
+    IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR ls_bpak.
+    ls_bpak-s_posit = lv_posnr.     "IM Position (source)
+    ls_bpak-e_objnr = lv_objnr.     "Receiver = Level 1 WBS
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.         "Budget amount for distribution
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.
+
+    APPEND ls_bpak TO lt_bpak.
+
+  ENDLOOP.
 
   IF lt_bpak IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  call_kbpp_update(
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      iv_activity = 'KSTP'   "CJ40
-      it_bpak     = lt_bpak
+      i_budget_activity              = 'KBUD'  "Budget update interface
+      i_budget_distribution_allowed  = 'X'     "<<< IM52 trigger (per SAP note)
+      i_delta_amounts                = 'X'
+      i_rollup_data                  = 'X'
+      i_check_plan_data              = 'X'
+      i_application                  = 'P'
+      i_commit_all                   = 'X'
     IMPORTING
-      ev_ok       = lv_ok ).
+      e_errors_found                 = lv_errors_found
+    TABLES
+      it_bpak                         = lt_bpak
+      it_return                       = lt_return.
 
-  rv_success = lv_ok.
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    RETURN.
+  ENDIF.
+
+  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+  IF sy-subrc = 0.
+    RETURN.
+  ENDIF.
+
+  rv_success = abap_true.
 
 ENDMETHOD.
 
 
 
-METHOD assign_budget.
+METHOD assign_budget_cj30.
 
-  DATA: lv_waers TYPE waers,
-        lt_bpak  TYPE TABLE OF bpak,
-        lv_ok    TYPE abap_bool.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lt_return       TYPE TABLE OF bapiret2.
 
   rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
   lv_waers = get_currency_from_header( is_header ).
   IF lv_waers IS INITIAL.
     RETURN.
   ENDIF.
 
-  lt_bpak = build_bpak_from_wbs(
-              it_wbs_items           = it_wbs_items
-              iv_waers               = lv_waers
-              iv_wrttp               = '41'     "BUDGET
-              iv_versn               = '000'
-              iv_perio               = '001'
-              iv_only_budget_flagged = iv_only_budget_flagged
-              iv_budget_flag_comp    = iv_budget_flag_comp ).
+  LOOP AT it_wbs_items INTO ls_item.
+
+    "If you only budget some WBS (like ZBUDGET_CHECK), filter here
+    "IF ls_item-zbudget_check IS INITIAL.
+    "  CONTINUE.
+    "ENDIF.
+
+    IF ls_item-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    SELECT SINGLE objnr
+      FROM prps
+      INTO @lv_objnr
+      WHERE posid = @ls_item-posid.
+
+    IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.        "BUDGET (CJ30)
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.
+
+    APPEND ls_bpak TO lt_bpak.
+
+  ENDLOOP.
 
   IF lt_bpak IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  call_kbpp_update(
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      iv_activity = 'KBUD'  "CJ30
-      it_bpak     = lt_bpak
+      i_budget_activity = 'KBUD'   "CJ30
+      i_delta_amounts   = 'X'
+      i_rollup_data     = 'X'
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
     IMPORTING
-      ev_ok       = lv_ok ).
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak
+      it_return         = lt_return.
 
-  rv_success = lv_ok.
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    RETURN.
+  ENDIF.
+
+  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+  IF sy-subrc = 0.
+    RETURN.
+  ENDIF.
+
+  rv_success = abap_true.
 
 ENDMETHOD.
 
 
-
-METHOD release_budget.
-
-  DATA: lv_waers TYPE waers,
-        lt_bpak  TYPE TABLE OF bpak,
-        lv_ok    TYPE abap_bool.
+METHOD post_plan_im52_cj30_flow.
 
   rv_success = abap_false.
 
-  lv_waers = get_currency_from_header( is_header ).
-  IF lv_waers IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  lt_bpak = build_bpak_from_wbs(
-              it_wbs_items           = it_wbs_items
-              iv_waers               = lv_waers
-              iv_wrttp               = '42'     "RELEASE
-              iv_versn               = '000'
-              iv_perio               = '001'
-              iv_only_budget_flagged = iv_only_budget_flagged
-              iv_budget_flag_comp    = iv_budget_flag_comp ).
-
-  IF lt_bpak IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-  call_kbpp_update(
-    EXPORTING
-      iv_activity = 'KBFR'  "CJ32
-      it_bpak     = lt_bpak
-    IMPORTING
-      ev_ok       = lv_ok ).
-
-  rv_success = lv_ok.
-
-ENDMETHOD.
-
-
-
-
-METHOD post_plan_and_budget_flow.
-
-  rv_success = abap_false.
-
-  "1) Plan values (CJ40)
   IF assign_plan_values(
        is_header    = is_header
        it_wbs_items = it_wbs_items ) = abap_false.
     RETURN.
   ENDIF.
 
-  "2) Budget (CJ30) only flagged
-  IF assign_budget(
-       is_header               = is_header
-       it_wbs_items            = it_wbs_items
-       iv_only_budget_flagged  = abap_true
-       iv_budget_flag_comp     = iv_budget_flag_comp ) = abap_false.
+  IF distribute_budget_im52(
+       is_header    = is_header
+       it_wbs_items = it_wbs_items ) = abap_false.
     RETURN.
   ENDIF.
 
-  "3) Release budget (CJ32) only flagged
-  IF release_budget(
-       is_header               = is_header
-       it_wbs_items            = it_wbs_items
-       iv_only_budget_flagged  = abap_true
-       iv_budget_flag_comp     = iv_budget_flag_comp ) = abap_false.
+  IF assign_budget_cj30(
+       is_header    = is_header
+       it_wbs_items = it_wbs_items ) = abap_false.
     RETURN.
   ENDIF.
 
