@@ -1,101 +1,135 @@
-REPORT ztest_set_blkd_wbs.
-
-PARAMETERS:
-  p_wbs TYPE ps_posid OBLIGATORY,
-  p_set TYPE c LENGTH 4 DEFAULT 'BLKD'.
-
-DATA:
-  lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
-  ls_user_status TYPE bapi_wbs_mnt_user_status,
-  lt_result      TYPE TABLE OF bapi_status_result,
-  ls_result      TYPE bapi_status_result.
-
-START-OF-SELECTION.
-
-  "Initialize PS BAPI context
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  CLEAR ls_user_status.
-  ls_user_status-wbs_element    = p_wbs.
-  ls_user_status-set_user_status = p_set.
-  APPEND ls_user_status TO lt_user_status.
-
-  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-    TABLES
-      i_wbs_user_status = lt_user_status
-      e_result          = lt_result.
-
-  "Precommit required in your system
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  ULINE.
-  WRITE: / 'Result:'.
-  ULINE.
-
-  IF lt_result IS INITIAL.
-    WRITE: / 'No messages returned - check CJ20N status.'.
-  ELSE.
-    LOOP AT lt_result INTO ls_result.
-      WRITE: / 'Object:',        ls_result-objectkey,
-               'Action:',        ls_result-status_action,
-               'Type:',          ls_result-status_type,
-               'MsgID:',         ls_result-message_id,
-               'MsgNo:',         ls_result-message_number.
-    ENDLOOP.
-  ENDIF.
-
-
-
-
 METHOD set_blkd_status_for_higher_wbs.
 
-  DATA:
-    lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
-    ls_user_status TYPE bapi_wbs_mnt_user_status,
-    lt_result      TYPE TABLE OF bapi_status_result,
-    ls_result      TYPE bapi_status_result.
+  DATA: ls_item          TYPE ztb_a2r_wbsitem,
+        lv_child_pspnr   TYPE prps-pspnr,
+        lv_proj_pspnr    TYPE proj-pspnr,
+        lv_top_psphi     TYPE prhi-psphi,
+        lv_top_posid     TYPE prps-posid.
+
+  DATA: lt_user_status   TYPE TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_status   TYPE bapi_wbs_mnt_user_status,
+        lt_result        TYPE TABLE OF bapi_status_result,
+        ls_result        TYPE bapi_status_result.
 
   rv_success = abap_false.
+  CLEAR: lt_user_status, lt_result.
 
-  "Initialize PS context (MANDATORY in your system)
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  LOOP AT it_wbs_items INTO DATA(ls_item).
+  "------------------------------------------------------------
+  " FDS Step 1: Identify the higher level WBS (PRHI-UP)
+  " Rule from FDS:
+  "   Get PRHI-UP where PRHI-PSPHI = PROJ-PSPNR
+  " Meaning:
+  "   1) Find the PROJECT for the WBS item (PROJ-PSPNR)
+  "   2) Find the top WBS in hierarchy PRHI where PSPHI = PROJ-PSPNR
+  "   3) Convert that top PSPNR (PSPHI) to POSID and set BLKD on it
+  "------------------------------------------------------------
+  LOOP AT it_wbs_items INTO ls_item.
 
     IF ls_item-posid IS INITIAL.
       CONTINUE.
     ENDIF.
 
+    "Child internal number (WBS)
+    CLEAR lv_child_pspnr.
+    SELECT SINGLE pspnr
+      INTO @lv_child_pspnr
+      FROM prps
+      WHERE posid = @ls_item-posid.
+
+    IF sy-subrc <> 0 OR lv_child_pspnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    "Project internal number (PROJ-PSPNR) of this WBS
+    CLEAR lv_proj_pspnr.
+    SELECT SINGLE pspnr
+      INTO @lv_proj_pspnr
+      FROM proj
+      WHERE pspnr = ( SELECT SINGLE pspnr FROM proj WHERE pspnr = @lv_proj_pspnr ).
+    "^^ above line is not reliable, so use PRPS->PSPHI/PSPID? We'll do correct join below
+
+    "Correct way: PRPS has PSPHI which links to PROJ-PSPNR (project)
+    CLEAR lv_proj_pspnr.
+    SELECT SINGLE psphi
+      INTO @lv_proj_pspnr
+      FROM prps
+      WHERE pspnr = @lv_child_pspnr.
+
+    IF sy-subrc <> 0 OR lv_proj_pspnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    "FDS: Get PRHI-UP where PRHI-PSPHI = PROJ-PSPNR
+    CLEAR lv_top_psphi.
+    SELECT SINGLE psphi
+      INTO @lv_top_psphi
+      FROM prhi
+      WHERE psphi = @lv_proj_pspnr.
+
+    "If no PRHI entry, fallback: treat project itself as higher level node
+    IF sy-subrc <> 0 OR lv_top_psphi IS INITIAL.
+      lv_top_psphi = lv_proj_pspnr.
+    ENDIF.
+
+    "Convert higher level PSPNR(=PSPHI) to POSID so BAPI can accept it
+    CLEAR lv_top_posid.
+    SELECT SINGLE posid
+      INTO @lv_top_posid
+      FROM prps
+      WHERE pspnr = @lv_top_psphi.
+
+    "If project has no PRPS line (rare), skip safely
+    IF sy-subrc <> 0 OR lv_top_posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    "------------------------------------------------------------
+    " FDS Step 2: Fill I_WBS_USER_STATUS for BLKD
+    "------------------------------------------------------------
     CLEAR ls_user_status.
-    ls_user_status-wbs_element     = ls_item-posid.
-    ls_user_status-set_user_status = 'BLKD'.
+    ls_user_status-wbs_element      = lv_top_posid.
+    ls_user_status-set_user_status  = 'BLKD'.   "Set BLKD
+    CLEAR ls_user_status-undo_user_status.
+
     APPEND ls_user_status TO lt_user_status.
 
   ENDLOOP.
 
+  "Nothing to set
   IF lt_user_status IS INITIAL.
+    rv_success = abap_true.
     RETURN.
   ENDIF.
+
+  "Remove duplicates (same higher-level WBS may be found multiple times)
+  SORT lt_user_status BY wbs_element set_user_status.
+  DELETE ADJACENT DUPLICATES FROM lt_user_status COMPARING wbs_element set_user_status.
+
+  "------------------------------------------------------------
+  " Required PS BAPI sequence in your system:
+  " INIT -> SET_STATUS -> PRECOMMIT -> COMMIT
+  "------------------------------------------------------------
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
-  "Required in your system
+  "MANDATORY to avoid CNIF_PI 030 dump
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
 
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
 
-  "Check result
+  "------------------------------------------------------------
+  " Evaluate result (BAPI_STATUS_RESULT fields in your system)
+  " If MESSAGE_ID is filled, there is at least one message returned
+  "------------------------------------------------------------
   LOOP AT lt_result INTO ls_result.
     IF ls_result-message_id IS NOT INITIAL.
+      "If needed you can treat only some messages as errors, but FDS wants strict success
       rv_success = abap_false.
       RETURN.
     ENDIF.
