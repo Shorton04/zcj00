@@ -1,151 +1,140 @@
   "═══════════════════════════════════════════════════════════════════
-  " STEP 10: CREATE SETTLEMENT RULES - DEBUG VERSION
+  " STEP 11: ASSIGN PLAN VALUES (BAPI_BUS2054_CHANGE_BUDGET)
   "═══════════════════════════════════════════════════════════════════
-  DATA: lt_bdcdata TYPE TABLE OF bdcdata,
-        lt_bdcmsg  TYPE TABLE OF bdcmsgcoll,
-        ls_bdcmsg  TYPE bdcmsgcoll,
-        lv_pspid_char TYPE char132,
-        lv_period_char TYPE char132,
-        lv_gjahr_char TYPE char132,
-        lv_mode    TYPE c VALUE 'A',  " ← Changed to 'A' for debugging
-        lv_update  TYPE c VALUE 'S'.
+  DATA: lt_plan_line TYPE TABLE OF bapi_bus2054_plan_line,
+        ls_plan_line TYPE bapi_bus2054_plan_line,
+        lt_return_plan TYPE TABLE OF bapiret2,
+        ls_return_plan TYPE bapiret2,
+        lv_wbs_objnr TYPE j_objnr.
 
-  " Get current period and fiscal year
-  DATA(lv_period) = sy-datum+4(2).  " Current month (MM)
-  DATA(lv_gjahr) = sy-datum+0(4).   " Current year (YYYY)
+  " Loop through created WBS elements to assign plan values
+  LOOP AT et_wbs_created INTO ls_wbs_created.
 
-  " Convert to CHAR132
-  lv_period_char = lv_period.
-  lv_gjahr_char = lv_gjahr.
+    " Skip Level 1 and items without budget
+    IF ls_wbs_created-stufe = 1 OR ls_wbs_created-wert2 IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
-  " Get Level 1 WBS Element (Project Definition) from lt_wbs_celement
-  READ TABLE lt_wbs_celement INTO ls_wbs_celement INDEX 1.
+    " Get WBS object number
+    SELECT SINGLE objnr FROM prps
+      INTO lv_wbs_objnr
+      WHERE posid = ls_wbs_created-posid.
 
-  IF sy-subrc = 0 AND ls_wbs_celement-wbs_element IS NOT INITIAL.
+    IF sy-subrc <> 0.
+      CONTINUE.
+    ENDIF.
 
-    " Convert to CHAR132
-    lv_pspid_char = ls_wbs_celement-wbs_element.
+    CLEAR: lt_plan_line, lt_return_plan.
 
-    " ✓ DEBUG: Show what we're passing to CJB2
-    MESSAGE i025(zcj00) WITH 'Calling CJB2 with:' lv_pspid_char
-      DISPLAY LIKE 'I'.
+    " Build plan line
+    CLEAR ls_plan_line.
+    ls_plan_line-wbs_element = ls_wbs_created-posid.
+    ls_plan_line-plan_version = '0'.              " Version 0
+    ls_plan_line-fiscal_year = lv_gjahr.
+    ls_plan_line-period = lv_period.
+    ls_plan_line-value_type = '01'.               " Plan values
+    ls_plan_line-total_value = ls_wbs_created-wert2.
+    ls_plan_line-currency = is_header-waers.
 
-    CLEAR lt_bdcdata.
+    APPEND ls_plan_line TO lt_plan_line.
 
-    " BDC Screen 1: SAPLKAZB 1000
-    bdc_dynpro(
+    " Call BAPI to assign plan values
+    CALL FUNCTION 'BAPI_BUS2054_CHANGE_BUDGET'
       EXPORTING
-        iv_program = 'SAPLKAZB'
-        iv_dynpro  = '1000'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
+        wbs_element = ls_wbs_created-posid
+      TABLES
+        plan_line   = lt_plan_line
+        return      = lt_return_plan.
 
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'BDC_CURSOR'
-        iv_fval = 'RKAUF-LIST'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'BDC_OKCODE'
-        iv_fval = '=RUN'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'RKAUF-LIST'
-        iv_fval = 'X'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    " BDC Screen 2: SAPLKAOP 0570
-    bdc_dynpro(
-      EXPORTING
-        iv_program = 'SAPLKAOP'
-        iv_dynpro  = '0570'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'LKP74-PSPID'
-        iv_fval = lv_pspid_char
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    " BDC Screen 3: SAPLKAZB 2100
-    bdc_dynpro(
-      EXPORTING
-        iv_program = 'SAPLKAZB'
-        iv_dynpro  = '2100'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'RKAUF-FROM'
-        iv_fval = lv_period_char
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'RKAUF-GJAHR'
-        iv_fval = lv_gjahr_char
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    bdc_field(
-      EXPORTING
-        iv_fnam = 'BDC_OKCODE'
-        iv_fval = '=SICH'
-      CHANGING
-        ct_bdcdata = lt_bdcdata
-    ).
-
-    " Execute CJB2 in foreground
-    CLEAR lt_bdcmsg.
-
-    CALL TRANSACTION 'CJB2'
-      USING lt_bdcdata
-      MODE lv_mode
-      UPDATE lv_update
-      MESSAGES INTO lt_bdcmsg.
-
-    " ✓ DEBUG: Display any error messages
-    LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
-      MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
-        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
-             ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
+    " Check for errors
+    LOOP AT lt_return_plan INTO ls_return_plan 
+      WHERE type = 'E' OR type = 'A'.
+      MESSAGE ID ls_return_plan-id TYPE 'I' NUMBER ls_return_plan-number
+        WITH ls_return_plan-message_v1 ls_return_plan-message_v2
+             ls_return_plan-message_v3 ls_return_plan-message_v4
         DISPLAY LIKE 'E'.
     ENDLOOP.
 
-    " ✓ DEBUG: Show success messages too
-    LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'S'.
-      MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
-        WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
-        DISPLAY LIKE 'S'.
-    ENDLOOP.
+    " Commit if no errors
+    READ TABLE lt_return_plan TRANSPORTING NO FIELDS 
+      WITH KEY type = 'E'.
+    IF sy-subrc <> 0.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = 'X'.
+    ELSE.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    ENDIF.
 
-  ELSE.
-    MESSAGE e025(zcj00) WITH 'lt_wbs_celement is empty!'.
+  ENDLOOP.
+
+
+
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 12: DISTRIBUTE IM BUDGET (BAPI_IMDISTRIBUTION_CHANGE)
+  "═══════════════════════════════════════════════════════════════════
+  DATA: lt_im_dist TYPE TABLE OF bapi_imdist,
+        ls_im_dist TYPE bapi_imdist,
+        lt_return_im TYPE TABLE OF bapiret2,
+        ls_return_im TYPE bapiret2,
+        lv_im_objnr TYPE j_objnr.
+
+  " Get Level 1 WBS
+  READ TABLE et_wbs_created INTO ls_level1_wbs 
+    WITH KEY stufe = 1.
+
+  IF sy-subrc = 0 AND ls_level1_wbs-wert2 IS NOT INITIAL 
+                  AND is_header-posnr IS NOT INITIAL.
+
+    " Get IM object number
+    SELECT SINGLE objnr FROM impr
+      INTO lv_im_objnr
+      WHERE posnr = is_header-posnr.
+
+    IF sy-subrc = 0.
+
+      CLEAR: lt_im_dist, lt_return_im.
+
+      " Build IM distribution line
+      CLEAR ls_im_dist.
+      ls_im_dist-program_pos = is_header-posnr.
+      ls_im_dist-wbs_element = ls_level1_wbs-posid.
+      ls_im_dist-fiscal_year = lv_gjahr.
+      ls_im_dist-dist_value = ls_level1_wbs-wert2.
+      ls_im_dist-currency = is_header-waers.
+
+      APPEND ls_im_dist TO lt_im_dist.
+
+      " Call BAPI to distribute IM budget
+      CALL FUNCTION 'BAPI_IMDISTRIBUTION_CHANGE'
+        EXPORTING
+          program_position = is_header-posnr
+          fiscal_year      = lv_gjahr
+        TABLES
+          distribution     = lt_im_dist
+          return           = lt_return_im.
+
+      " Check for errors
+      LOOP AT lt_return_im INTO ls_return_im 
+        WHERE type = 'E' OR type = 'A'.
+        MESSAGE ID ls_return_im-id TYPE 'I' NUMBER ls_return_im-number
+          WITH ls_return_im-message_v1 ls_return_im-message_v2
+               ls_return_im-message_v3 ls_return_im-message_v4
+          DISPLAY LIKE 'E'.
+      ENDLOOP.
+
+      " Commit if no errors
+      READ TABLE lt_return_im TRANSPORTING NO FIELDS 
+        WITH KEY type = 'E'.
+      IF sy-subrc <> 0.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+      ELSE.
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      ENDIF.
+
+    ENDIF.
+
   ENDIF.
-
-  COMMIT WORK.
-  MESSAGE s025(zcj00) WITH 'Project' lv_pspid 'created successfully'.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
