@@ -1,3 +1,80 @@
+REPORT ztest_set_blkd_wbs.
+
+*-----------------------------------------------------------------------
+* Test program for BAPI_BUS2054_SET_STATUS (User Status BLKD)
+* Fixes:
+*  - CNIF_PI 078 (no initialization)  -> BAPI_PS_INITIALIZATION
+*  - CNIF_PI 030 (precommit missing)  -> BAPI_PS_PRECOMMIT
+*-----------------------------------------------------------------------
+
+PARAMETERS:
+  p_wbs   TYPE ps_posid OBLIGATORY,           "e.g. PC.000074 (full POSID)
+  p_set   TYPE c LENGTH 4 DEFAULT 'BLKD',     "status to set
+  p_undo  TYPE c LENGTH 4.                    "status to undo (optional)
+
+DATA:
+  lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+  ls_user_status TYPE bapi_wbs_mnt_user_status,
+  lt_result      TYPE TABLE OF bapi_status_result.
+
+START-OF-SELECTION.
+
+  "1) Initialize PS BAPI context (required)
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
+  "2) Fill I_WBS_USER_STATUS
+  CLEAR ls_user_status.
+  ls_user_status-wbs_element = p_wbs.
+
+  IF p_undo IS NOT INITIAL.
+    ls_user_status-undo_user_status = p_undo.
+  ELSE.
+    ls_user_status-set_user_status  = p_set.
+  ENDIF.
+
+  APPEND ls_user_status TO lt_user_status.
+
+  "3) Call BAPI to set/reset status
+  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+    TABLES
+      i_wbs_user_status = lt_user_status
+      e_result          = lt_result.
+
+  "4) PRECOMMIT is mandatory in your system (prevents CNIF_PI 030 dump)
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
+
+  "5) Commit
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  "6) Display result
+  ULINE.
+  WRITE: / 'WBS:', p_wbs, ' SET:', p_set, ' UNDO:', p_undo.
+  ULINE.
+
+  IF lt_result IS INITIAL.
+    WRITE: / 'No messages returned. Usually OK - verify in CJ20N status display.'.
+  ELSE.
+    WRITE: / 'E_RESULT messages:'.
+    ULINE.
+    LOOP AT lt_result ASSIGNING FIELD-SYMBOL(<ls_res>).
+      "BAPI_STATUS_RESULT typically contains: STATUS, MESSAGE_ID, MESSAGE_NO, MESSAGE_TEXT
+      WRITE: / <ls_res>-status,
+               <ls_res>-message_id,
+               <ls_res>-message_no,
+               <ls_res>-message_text.
+    ENDLOOP.
+    ULINE.
+  ENDIF.
+
+  WRITE: / 'Verify: CJ20N -> select WBS -> Extras/Status -> Display (User status BLKD).'.
+
+
+
+
+
+
 METHOD set_blkd_status_for_higher_wbs.
 
   DATA: ls_item           TYPE ztb_a2r_wbsitem,
