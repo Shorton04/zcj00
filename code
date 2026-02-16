@@ -1,159 +1,105 @@
 REPORT ztest_set_blkd_wbs.
 
-*-----------------------------------------------------------------------
-* Test program for BAPI_BUS2054_SET_STATUS (User Status BLKD)
-* Fixes:
-*  - CNIF_PI 078 (no initialization)  -> BAPI_PS_INITIALIZATION
-*  - CNIF_PI 030 (precommit missing)  -> BAPI_PS_PRECOMMIT
-*-----------------------------------------------------------------------
-
 PARAMETERS:
-  p_wbs   TYPE ps_posid OBLIGATORY,           "e.g. PC.000074 (full POSID)
-  p_set   TYPE c LENGTH 4 DEFAULT 'BLKD',     "status to set
-  p_undo  TYPE c LENGTH 4.                    "status to undo (optional)
+  p_wbs TYPE ps_posid OBLIGATORY,
+  p_set TYPE c LENGTH 4 DEFAULT 'BLKD'.
 
 DATA:
   lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
   ls_user_status TYPE bapi_wbs_mnt_user_status,
-  lt_result      TYPE TABLE OF bapi_status_result.
+  lt_result      TYPE TABLE OF bapi_status_result,
+  ls_result      TYPE bapi_status_result.
 
 START-OF-SELECTION.
 
-  "1) Initialize PS BAPI context (required)
+  "Initialize PS BAPI context
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-  "2) Fill I_WBS_USER_STATUS
   CLEAR ls_user_status.
-  ls_user_status-wbs_element = p_wbs.
-
-  IF p_undo IS NOT INITIAL.
-    ls_user_status-undo_user_status = p_undo.
-  ELSE.
-    ls_user_status-set_user_status  = p_set.
-  ENDIF.
-
+  ls_user_status-wbs_element    = p_wbs.
+  ls_user_status-set_user_status = p_set.
   APPEND ls_user_status TO lt_user_status.
 
-  "3) Call BAPI to set/reset status
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
-  "4) PRECOMMIT is mandatory in your system (prevents CNIF_PI 030 dump)
+  "Precommit required in your system
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
 
-  "5) Commit
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
 
-  "6) Display result
   ULINE.
-  WRITE: / 'WBS:', p_wbs, ' SET:', p_set, ' UNDO:', p_undo.
+  WRITE: / 'Result:'.
   ULINE.
 
   IF lt_result IS INITIAL.
-    WRITE: / 'No messages returned. Usually OK - verify in CJ20N status display.'.
+    WRITE: / 'No messages returned - check CJ20N status.'.
   ELSE.
-    WRITE: / 'E_RESULT messages:'.
-    ULINE.
-    LOOP AT lt_result ASSIGNING FIELD-SYMBOL(<ls_res>).
-      "BAPI_STATUS_RESULT typically contains: STATUS, MESSAGE_ID, MESSAGE_NO, MESSAGE_TEXT
-      WRITE: / <ls_res>-status,
-               <ls_res>-message_id,
-               <ls_res>-message_no,
-               <ls_res>-message_text.
+    LOOP AT lt_result INTO ls_result.
+      WRITE: / 'Object:',        ls_result-objectkey,
+               'Action:',        ls_result-status_action,
+               'Type:',          ls_result-status_type,
+               'MsgID:',         ls_result-message_id,
+               'MsgNo:',         ls_result-message_number.
     ENDLOOP.
-    ULINE.
   ENDIF.
-
-  WRITE: / 'Verify: CJ20N -> select WBS -> Extras/Status -> Display (User status BLKD).'.
-
-
 
 
 
 
 METHOD set_blkd_status_for_higher_wbs.
 
-  DATA: ls_item           TYPE ztb_a2r_wbsitem,
-        lv_child_pspnr    TYPE prps-pspnr,
-        lv_parent_pspnr   TYPE prhi-psphi,
-        lv_parent_posid   TYPE prps-posid.
-
-  DATA: lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
-        ls_user_status TYPE bapi_wbs_mnt_user_status,
-        lt_result      TYPE TABLE OF bapi_status_result.
+  DATA:
+    lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+    ls_user_status TYPE bapi_wbs_mnt_user_status,
+    lt_result      TYPE TABLE OF bapi_status_result,
+    ls_result      TYPE bapi_status_result.
 
   rv_success = abap_false.
-  CLEAR: lt_user_status, lt_result.
 
-  "--------------------------------------------
-  " Build parent WBS list
-  "--------------------------------------------
-  LOOP AT it_wbs_items INTO ls_item.
+  "Initialize PS context (MANDATORY in your system)
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-    SELECT SINGLE pspnr
-      INTO @lv_child_pspnr
-      FROM prps
-      WHERE posid = @ls_item-posid.
+  LOOP AT it_wbs_items INTO DATA(ls_item).
 
-    IF sy-subrc <> 0 OR lv_child_pspnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    SELECT SINGLE psphi
-      INTO @lv_parent_pspnr
-      FROM prhi
-      WHERE pspnr = @lv_child_pspnr.
-
-    IF sy-subrc <> 0 OR lv_parent_pspnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    SELECT SINGLE posid
-      INTO @lv_parent_posid
-      FROM prps
-      WHERE pspnr = @lv_parent_pspnr.
-
-    IF sy-subrc <> 0 OR lv_parent_posid IS INITIAL.
+    IF ls_item-posid IS INITIAL.
       CONTINUE.
     ENDIF.
 
     CLEAR ls_user_status.
-    ls_user_status-wbs_element      = lv_parent_posid.
-    ls_user_status-set_user_status  = 'BLKD'.
-
+    ls_user_status-wbs_element     = ls_item-posid.
+    ls_user_status-set_user_status = 'BLKD'.
     APPEND ls_user_status TO lt_user_status.
 
   ENDLOOP.
 
   IF lt_user_status IS INITIAL.
-    rv_success = abap_true.
     RETURN.
   ENDIF.
-
-  SORT lt_user_status BY wbs_element.
-  DELETE ADJACENT DUPLICATES FROM lt_user_status COMPARING wbs_element.
-
-  "--------------------------------------------
-  " Proper PS BAPI Call Sequence
-  "--------------------------------------------
-
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
-  "THIS WAS MISSING (causing your dump)
+  "Required in your system
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
 
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
+
+  "Check result
+  LOOP AT lt_result INTO ls_result.
+    IF ls_result-message_id IS NOT INITIAL.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+  ENDLOOP.
 
   rv_success = abap_true.
 
