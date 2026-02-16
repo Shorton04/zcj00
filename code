@@ -1,74 +1,83 @@
-REPORT ztest_set_blkd_wbs.
+METHOD set_blkd_status_for_higher_wbs.
 
-PARAMETERS:
-  p_wbs   TYPE ps_posid OBLIGATORY,      "e.g. PC.000074 or full POSID
-  p_stat  TYPE c LENGTH 4 DEFAULT 'BLKD',
-  p_undo  TYPE c LENGTH 4.               "optional: status to undo
+  DATA: ls_item           TYPE ztb_a2r_wbsitem,
+        lv_child_pspnr    TYPE prps-pspnr,
+        lv_parent_pspnr   TYPE prhi-psphi,
+        lv_parent_posid   TYPE prps-posid.
 
-DATA:
-  lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
-  ls_user_status TYPE bapi_wbs_mnt_user_status,
-  lt_result      TYPE TABLE OF bapi_status_result.
+  DATA: lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_status TYPE bapi_wbs_mnt_user_status,
+        lt_result      TYPE TABLE OF bapi_status_result.
 
-FIELD-SYMBOLS:
-  <ls_res>     TYPE any,
-  <f_status>   TYPE any,
-  <f_msgid>    TYPE any,
-  <f_msgno>    TYPE any,
-  <f_msgtext>  TYPE any.
+  rv_success = abap_false.
+  CLEAR: lt_user_status, lt_result.
 
-START-OF-SELECTION.
+  "--------------------------------------------
+  " Build parent WBS list
+  "--------------------------------------------
+  LOOP AT it_wbs_items INTO ls_item.
 
-  "1) Initialize PS BAPI context (IMPORTANT)
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+    SELECT SINGLE pspnr
+      INTO @lv_child_pspnr
+      FROM prps
+      WHERE posid = @ls_item-posid.
 
-  "2) Fill user status table
-  CLEAR ls_user_status.
-  ls_user_status-wbs_element = p_wbs.
+    IF sy-subrc <> 0 OR lv_child_pspnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
-  IF p_undo IS NOT INITIAL.
-    ls_user_status-undo_user_status = p_undo.
-  ELSE.
-    ls_user_status-set_user_status  = p_stat.
+    SELECT SINGLE psphi
+      INTO @lv_parent_pspnr
+      FROM prhi
+      WHERE pspnr = @lv_child_pspnr.
+
+    IF sy-subrc <> 0 OR lv_parent_pspnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    SELECT SINGLE posid
+      INTO @lv_parent_posid
+      FROM prps
+      WHERE pspnr = @lv_parent_pspnr.
+
+    IF sy-subrc <> 0 OR lv_parent_posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR ls_user_status.
+    ls_user_status-wbs_element      = lv_parent_posid.
+    ls_user_status-set_user_status  = 'BLKD'.
+
+    APPEND ls_user_status TO lt_user_status.
+
+  ENDLOOP.
+
+  IF lt_user_status IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
   ENDIF.
 
-  APPEND ls_user_status TO lt_user_status.
+  SORT lt_user_status BY wbs_element.
+  DELETE ADJACENT DUPLICATES FROM lt_user_status COMPARING wbs_element.
 
-  "3) Call BAPI to set/reset status
+  "--------------------------------------------
+  " Proper PS BAPI Call Sequence
+  "--------------------------------------------
+
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
-  "4) Commit
+  "THIS WAS MISSING (causing your dump)
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
+
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
 
-  "5) Display result
-  ULINE.
-  WRITE: / 'WBS:', p_wbs, ' SET:', p_stat, ' UNDO:', p_undo.
-  ULINE.
+  rv_success = abap_true.
 
-  IF lt_result IS INITIAL.
-    WRITE: / 'No messages returned. (Usually OK)'.  "still verify in CJ20N
-  ELSE.
-    LOOP AT lt_result ASSIGNING <ls_res>.
-
-      CLEAR: <f_status>, <f_msgid>, <f_msgno>, <f_msgtext>.
-
-      ASSIGN COMPONENT 'STATUS'       OF STRUCTURE <ls_res> TO <f_status>.
-      ASSIGN COMPONENT 'MESSAGE_ID'   OF STRUCTURE <ls_res> TO <f_msgid>.
-      ASSIGN COMPONENT 'MESSAGE_NO'   OF STRUCTURE <ls_res> TO <f_msgno>.
-      ASSIGN COMPONENT 'MESSAGE_TEXT' OF STRUCTURE <ls_res> TO <f_msgtext>.
-
-      WRITE: / 'STATUS:',  (10) COND string( WHEN <f_status>  IS ASSIGNED THEN <f_status>  ELSE '' ),
-               ' MSGID:',  (10) COND string( WHEN <f_msgid>   IS ASSIGNED THEN <f_msgid>   ELSE '' ),
-               ' MSGNO:',  (10) COND string( WHEN <f_msgno>   IS ASSIGNED THEN <f_msgno>   ELSE '' ).
-      WRITE: / 'TEXT:', (120) COND string( WHEN <f_msgtext> IS ASSIGNED THEN <f_msgtext> ELSE '' ).
-      ULINE.
-
-    ENDLOOP.
-  ENDIF.
-
-  WRITE: / 'Check CJ20N -> WBS -> Extras/Status -> Display to confirm BLKD is active.'.
+ENDMETHOD.
