@@ -1,99 +1,98 @@
 *---------------------------------------------------------------------*
-* Helper: get parent POSID (everything before last ".")
+* Helper: parent POSID without last ".segment"
+* Compatible (no "LAST OCCURRENCE")
 *---------------------------------------------------------------------*
-FORM get_parent_posid  USING    iv_posid  TYPE ps_posid
-                       CHANGING cv_parent TYPE ps_posid.
+FORM get_parent_posid
+  USING    iv_posid  TYPE ps_posid
+  CHANGING cv_parent TYPE ps_posid.
 
-  DATA lv_off TYPE i.
+  DATA: lt_parts TYPE STANDARD TABLE OF string WITH DEFAULT KEY,
+        lv_last  TYPE string,
+        lv_out   TYPE string.
 
   CLEAR cv_parent.
   IF iv_posid IS INITIAL.
     RETURN.
   ENDIF.
 
-  FIND LAST OCCURRENCE OF '.' IN iv_posid MATCH OFFSET lv_off.
-  IF sy-subrc = 0 AND lv_off > 0.
-    cv_parent = iv_posid(lv_off).
+  "Split by dot and remove last segment
+  SPLIT iv_posid AT '.' INTO TABLE lt_parts.
+  IF lines( lt_parts ) <= 1.
+    RETURN.
   ENDIF.
+
+  "Delete last part
+  DELETE lt_parts INDEX lines( lt_parts ).
+
+  "Rebuild parent
+  LOOP AT lt_parts INTO lv_last.
+    IF lv_out IS INITIAL.
+      lv_out = lv_last.
+    ELSE.
+      CONCATENATE lv_out lv_last INTO lv_out SEPARATED BY '.'.
+    ENDIF.
+  ENDLOOP.
+
+  cv_parent = lv_out.
 
 ENDFORM.
 
-*---------------------------------------------------------------------*
-* TOTAL UP button logic for Screen 300 table control
-* Totals GS_WBS_DISPLAY-ZAPPROVED_BUDG from deepest STUFE up to level 1
-*---------------------------------------------------------------------*
-FORM fcode_total_up.
 
-  DATA: lt_work     TYPE STANDARD TABLE OF ty_wbs_display WITH DEFAULT KEY,
-        lv_max      TYPE i,
-        lv_level    TYPE i,
-        lv_parent   TYPE ps_posid.
+*---------------------------------------------------------------------*
+* TOTALUP: roll up ZAPPROVED_BUDG using POSID parent-child hierarchy
+* Triggered by OKCODE 'TOTALUP' in USER_COMMAND_0100
+*---------------------------------------------------------------------*
+FORM total_up_wbs_tc.
 
-  FIELD-SYMBOLS: <ls>     TYPE ty_wbs_display,
-                 <child>  TYPE ty_wbs_display,
+  FIELD-SYMBOLS: <child>  TYPE ty_wbs_display,
                  <parent> TYPE ty_wbs_display.
 
-  "1) Ensure current edited line is saved back to internal table
-  "   (prevents losing the value the user just typed before clicking TOTAL_UP)
-  IF tc_wbs-current_line > 0.
-    READ TABLE gt_wbs_display ASSIGNING <ls> INDEX tc_wbs-current_line.
-    IF sy-subrc = 0.
-      <ls> = gs_wbs_display.
-    ENDIF.
-  ENDIF.
+  DATA: lv_max_level TYPE i,
+        lv_level     TYPE i,
+        lv_parent_id TYPE ps_posid.
 
-  IF gt_wbs_display IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  "2) Work on a copy
-  lt_work = gt_wbs_display.
-
-  "3) Determine deepest level (max STUFE)
-  lv_max = 0.
-  LOOP AT lt_work ASSIGNING <ls>.
-    IF <ls>-stufe IS NOT INITIAL AND <ls>-stufe > lv_max.
-      lv_max = <ls>-stufe.
+  "Find max level in current table
+  lv_max_level = 0.
+  LOOP AT gt_wbs_display ASSIGNING <child>.
+    IF <child>-stufe IS NOT INITIAL AND <child>-stufe > lv_max_level.
+      lv_max_level = <child>-stufe.
     ENDIF.
   ENDLOOP.
 
-  IF lv_max <= 1.
-    "Nothing to total up
-    gt_wbs_display = lt_work.
+  IF lv_max_level <= 1.
     RETURN.
   ENDIF.
 
-  "4) Clear budgets for higher levels (everything above leaf level)
-  "   Leaf level (lv_max) is manual input; all parents are recalculated
-  LOOP AT lt_work ASSIGNING <ls> WHERE stufe < lv_max.
-    CLEAR <ls>-zapproved_budg.
+  "Clear all parent budgets first (we re-calc); keep leaf level as user input
+  LOOP AT gt_wbs_display ASSIGNING <parent> WHERE stufe < lv_max_level.
+    CLEAR <parent>-zapproved_budg.
   ENDLOOP.
 
-  "5) Bottom-up rollup: lv_max -> 2 (add child budget into parent)
-  DO lv_max - 1 TIMES.
-    lv_level = lv_max - sy-index + 1. "e.g. if max=5: 5,4,3,2
+  "Roll up from deepest -> level 2
+  lv_level = lv_max_level.
+  WHILE lv_level > 1.
 
-    LOOP AT lt_work ASSIGNING <child> WHERE stufe = lv_level.
-      CLEAR lv_parent.
-      PERFORM get_parent_posid USING <child>-posid CHANGING lv_parent.
-      IF lv_parent IS INITIAL.
+    LOOP AT gt_wbs_display ASSIGNING <child> WHERE stufe = lv_level.
+      IF <child>-zapproved_budg IS INITIAL OR <child>-posid IS INITIAL.
         CONTINUE.
       ENDIF.
 
-      "Find parent row (by POSID). POSID is unique in your display.
-      READ TABLE lt_work ASSIGNING <parent> WITH KEY posid = lv_parent.
+      CLEAR lv_parent_id.
+      PERFORM get_parent_posid USING <child>-posid CHANGING lv_parent_id.
+      IF lv_parent_id IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      "Add child budget into its parent row (identified by POSID)
+      READ TABLE gt_wbs_display ASSIGNING <parent>
+        WITH KEY posid = lv_parent_id.
       IF sy-subrc = 0.
         <parent>-zapproved_budg = <parent>-zapproved_budg + <child>-zapproved_budg.
       ENDIF.
+
     ENDLOOP.
-  ENDDO.
 
-  "6) Push results back to global table and refresh screen binding
-  gt_wbs_display = lt_work.
-
-  "Optional but recommended: rebind current line structure for correct display
-  IF tc_wbs-current_line > 0.
-    READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
-  ENDIF.
+    lv_level = lv_level - 1.
+  ENDWHILE.
 
 ENDFORM.
