@@ -8,19 +8,15 @@ METHOD assign_plan_values.
         ls_bpak         TYPE bpak,
         ls_item         TYPE ztb_a2r_wbsitem,
         lv_objnr        TYPE j_objnr,
-        lv_waers        TYPE waers,
+        lv_waers        TYPE pwaer,
         lt_return       TYPE TABLE OF bapiret2.
 
   rv_success = abap_false.
 
-  CLEAR: lt_bpak, lt_bpak_cj40, lt_bpak_cj30, lt_bpak_cj32, lt_return, lv_errors_found.
+  CLEAR: lt_bpak, lt_return.
 
-  "------------------------------------------------------------
-  " Build BPAK lines from your WBS items
-  "------------------------------------------------------------
   LOOP AT it_wbs_items INTO ls_item.
 
-    "Skip empty amounts
     IF ls_item-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
@@ -28,80 +24,43 @@ METHOD assign_plan_values.
     "Get WBS object number + project currency
     CLEAR: lv_objnr, lv_waers.
 
-    SELECT SINGLE a~objnr, b~waers
+    SELECT SINGLE a~objnr, b~pwaer
+      INTO (@lv_objnr, @lv_waers)
       FROM prps AS a
       INNER JOIN proj AS b
         ON b~pspnr = a~psphi
-      INTO (@lv_objnr, @lv_waers)
       WHERE a~posid = @ls_item-posid.
 
-    "Fallback: if currency not found, try company code currency (optional)
-    IF lv_waers IS INITIAL.
-      "If you have header in your class as attribute/parameter, use it.
-      "Example assumes you have ms_header-bukrs somewhere;
-      "If not available, remove this fallback block.
-      IF me->ms_header-bukrs IS NOT INITIAL.
-        SELECT SINGLE waers
-          FROM t001
-          INTO @lv_waers
-          WHERE bukrs = @me->ms_header-bukrs.
-      ENDIF.
-    ENDIF.
-
-    "If still no OBJNR or no currency, skip line (FM will error without TWAER)
     IF sy-subrc <> 0 OR lv_objnr IS INITIAL OR lv_waers IS INITIAL.
       CONTINUE.
     ENDIF.
 
     CLEAR ls_bpak.
 
-    "Receiver object (WBS)
-    ls_bpak-e_objnr  = lv_objnr.
-
-    "CJ40 planning/budgeting version
-    ls_bpak-e_versn  = '000'.
-
-    "Receiver period (put all in period 001)
-    ls_bpak-e_perio  = '001'.
-
-    "Value type (01 = Plan)
-    ls_bpak-e_wrttp  = '01'.
-
-    "Amount (your structure uses WERT)
-    ls_bpak-wert     = ls_item-wert2.
-
-    "Currency (MANDATORY in your system)
-    ls_bpak-twaer    = lv_waers.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '01'.
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.
 
     APPEND ls_bpak TO lt_bpak.
 
   ENDLOOP.
 
-  "Nothing to post
   IF lt_bpak IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  "Old-system pattern: CJ30/CJ32 can use same table
+  lt_bpak_cj40 = lt_bpak.
   lt_bpak_cj30 = lt_bpak.
   lt_bpak_cj32 = lt_bpak.
 
-  "CJ40 table (keep e_versn explicitly)
-  CLEAR lt_bpak_cj40.
-  LOOP AT lt_bpak INTO ls_bpak.
-    DATA(ls_bpak_40) = CORRESPONDING bpak( ls_bpak ).
-    ls_bpak_40-e_versn = '000'.
-    APPEND ls_bpak_40 TO lt_bpak_cj40.
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  " 1) CJ40 equivalent (Plan values) => Budget activity KSTP
-  "------------------------------------------------------------
-  CLEAR: lt_return, lv_errors_found.
+  "CJ40
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      i_budget_activity = 'KSTP'   "CJ40
+      i_budget_activity = 'KSTP'
       i_delta_amounts   = 'X'
       i_rollup_data     = 'X'
       i_check_plan_data = 'X'
@@ -111,29 +70,16 @@ METHOD assign_plan_values.
       e_errors_found    = lv_errors_found
     TABLES
       it_bpak           = lt_bpak_cj40
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
+      it_return         = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    rv_success = abap_false.
     RETURN.
   ENDIF.
 
-  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 2) CJ30 equivalent (Budget) => Budget activity KBUD
-  "------------------------------------------------------------
-  CLEAR: lt_return, lv_errors_found.
+  "CJ30
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      i_budget_activity = 'KBUD'   "CJ30
+      i_budget_activity = 'KBUD'
       i_delta_amounts   = 'X'
       i_rollup_data     = 'X'
       i_check_plan_data = 'X'
@@ -143,29 +89,16 @@ METHOD assign_plan_values.
       e_errors_found    = lv_errors_found
     TABLES
       it_bpak           = lt_bpak_cj30
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
+      it_return         = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    rv_success = abap_false.
     RETURN.
   ENDIF.
 
-  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 3) CJ32 equivalent (Budget release) => Budget activity KBFR
-  "------------------------------------------------------------
-  CLEAR: lt_return, lv_errors_found.
+  "CJ32
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
-      i_budget_activity = 'KBFR'   "CJ32
+      i_budget_activity = 'KBFR'
       i_delta_amounts   = 'X'
       i_rollup_data     = 'X'
       i_check_plan_data = 'X'
@@ -175,19 +108,9 @@ METHOD assign_plan_values.
       e_errors_found    = lv_errors_found
     TABLES
       it_bpak           = lt_bpak_cj32
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
+      it_return         = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    rv_success = abap_false.
     RETURN.
   ENDIF.
 
