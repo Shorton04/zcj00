@@ -1,360 +1,123 @@
-*&---------------------------------------------------------------------*
-*& METHOD: CREATE_WBS_ELEMENTS (FINAL CORRECTED)
-*& Based on reference_3.txt - Uses BAPI_BUS2054_NEW structure
-*&---------------------------------------------------------------------*
+FORM fcode_total_up."  USING    p_tc_name TYPE dynfnam
+  "p_table_name
+  "p_mark_name.
 
-METHOD create_wbs_elements.
+  DATA: lt_table5 TYPE STANDARD TABLE OF ts_table,
+        lt_table4 TYPE STANDARD TABLE OF ts_table,
+        lt_table3 TYPE STANDARD TABLE OF ts_table,
+        lt_table2 TYPE STANDARD TABLE OF ts_table,
+        lt_table1 TYPE STANDARD TABLE OF ts_table,
+        lv_sum4   TYPE zwbs_item-budget,
+        lv_sum3   TYPE zwbs_item-budget,
+        lv_sum2   TYPE zwbs_item-budget,
+        lv_sum1   TYPE zwbs_item-budget,
+        lv_index4 TYPE sy-index,
+        lv_index3 TYPE sy-index,
+        lv_index2 TYPE sy-index,
+        lv_index1 TYPE sy-index.
+  DATA: lv_pspid_len5 TYPE numc2.
+  DATA: lv_pspid_len4 TYPE numc2.
+  DATA: lv_pspid_len3 TYPE numc2.
+  DATA: lv_pspid_len2 TYPE numc2.
+  DATA: lv_pspid_len1 TYPE numc2.
 
-  DATA: lv_pspid          TYPE ps_pspid,
-        ls_wbs            TYPE ztb_a2r_wbsitem,
-        ls_wbs_temp       TYPE ztb_a2r_wbsitem,
-        ls_wbs_created    TYPE ztb_a2r_wbsitem,
-        lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_return         TYPE TABLE OF bapiret2,
-        ls_return         TYPE bapiret2,
-        
-        " ✓ CRITICAL: Use BAPI_BUS2054_NEW, not BAPI_WBS_ELEMENT
-        lt_wbs_celement   TYPE STANDARD TABLE OF bapi_bus2054_new,
-        ls_wbs_celement   TYPE bapi_bus2054_new,
-        
-        lt_extensionin    TYPE TABLE OF bapiparex,
-        ls_extensionin    TYPE bapiparex,
-        ls_te_wbs         TYPE bapi_te_wbs_element,
-        lv_level1_posid   TYPE ps_posid,
-        lv_level1_pspnr   TYPE ps_pspnr,
-        lv_counter        TYPE i VALUE 1,
-        lv_waers          TYPE waers,
-        lv_posid_internal TYPE ps_posid,
-        lv_index          TYPE i,
-        lv_upper_level    TYPE ps_posid,
-        lv_left_level     TYPE ps_posid,
-        ls_project_new    TYPE bapi_bus2001_new.
 
-  rv_success = abap_false.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 1: GET NEXT PROJECT NUMBER
-  "═══════════════════════════════════════════════════════════════════
-  lv_pspid = get_next_project_number( is_header-profl ).
-
-  IF lv_pspid IS INITIAL.
-    MESSAGE e029(zcj00) WITH 'Failed to get project number'.
-    RETURN.
-  ENDIF.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 2: GET CURRENCY FROM COMPANY CODE
-  "═══════════════════════════════════════════════════════════════════
-  SELECT SINGLE waers FROM t001
-    INTO lv_waers
-    WHERE bukrs = is_header-bukrs.
-
-  IF sy-subrc <> 0.
-    lv_waers = 'USD'.
-  ENDIF.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 3: INITIALIZE BAPI
-  "═══════════════════════════════════════════════════════════════════
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 4: PREPARE PROJECT DEFINITION (From reference check_proj_create)
-  "═══════════════════════════════════════════════════════════════════
-  CLEAR ls_project_new.
-
-  ls_project_new-project_definition = lv_pspid.
-  ls_project_new-description        = is_header-post1.
-  ls_project_new-company_code       = is_header-bukrs.
-  ls_project_new-controlling_area   = is_header-bukrs(4).
-  ls_project_new-profit_ctr         = is_header-prctr.
-  ls_project_new-project_currency   = lv_waers.
-  ls_project_new-start              = sy-datum.
-  ls_project_new-finish             = is_header-plsez.
-  ls_project_new-plant              = is_header-werks.
-  ls_project_new-project_profile    = is_header-profl.
-  ls_project_new-responsible_no     = is_header-vernr.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 5: CREATE PROJECT DEFINITION
-  "═══════════════════════════════════════════════════════════════════
-  CALL FUNCTION 'BAPI_BUS2001_CREATE'
-    EXPORTING
-      i_project_definition = ls_project_new
-    TABLES
-      et_return            = lt_return.
-
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2
-           ls_return-message_v3 ls_return-message_v4.
-    rv_success = abap_false.
-    RETURN.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa>).
+    IF <wa>-stufe = '5'.
+*      lv_pspid_len5 = strlen( <wa>-pspid_new ).
+      APPEND <wa> TO lt_table5.
+    ELSEIF <wa>-stufe = '4'.
+      APPEND <wa> TO lt_table4.
+      DATA(lv_pspid_new4) = <wa>-pspid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new4.
+      lv_pspid_len4 = strlen( lv_pspid_new4 ).
+    ELSEIF <wa>-stufe = '3'.
+      APPEND <wa> TO lt_table3.
+      DATA(lv_pspid_new3) = <wa>-pspid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new3.
+      lv_pspid_len3 = strlen( lv_pspid_new3 ).
+    ELSEIF <wa>-stufe = '2'.
+      APPEND <wa> TO lt_table2.
+      DATA(lv_pspid_new2) = <wa>-pspid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new2.
+      lv_pspid_len2 = strlen( lv_pspid_new2 ).
+    ELSEIF <wa>-stufe = '1'.
+      APPEND <wa> TO lt_table1.
+      DATA(lv_pspid_new1) = <wa>-pspid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new1.
+      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+    ENDIF.
   ENDLOOP.
 
-  lv_level1_posid = lv_pspid.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 6: PREPARE WBS ELEMENTS
-  " (Exact logic from reference check_prps_create)
-  "═══════════════════════════════════════════════════════════════════
-  lt_wbs_sorted = it_wbs_items.
-  
-  " ✓ SORT exactly like reference
-  SORT lt_wbs_sorted BY posid DESCENDING stufe DESCENDING.
-
-  LOOP AT lt_wbs_sorted INTO ls_wbs.
-
-    " Skip Level 1 (already created as project)
-    IF ls_wbs-stufe = 1.
-      CONTINUE.
-    ENDIF.
-
-    " Skip items without budget
-    IF ls_wbs-wert2 IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR: ls_wbs_celement, ls_te_wbs, lv_index, lv_left_level, lv_upper_level.
-
-    lv_index = sy-tabix + 1.
-
-    " Generate WBS element code
-    lv_counter = lv_counter + 1.
-
-    " ═══════════════════════════════════════════════════════════════
-    " POPULATE BAPI_BUS2054_NEW STRUCTURE
-    " (Field names from reference - exact match)
-    " ═══════════════════════════════════════════════════════════════
-    ls_wbs_celement-wbs_element      = |{ lv_pspid }-{ lv_counter }|.
-    ls_wbs_celement-description      = ls_wbs-post1.
-    ls_wbs_celement-company_code     = is_header-bukrs.
-    ls_wbs_celement-business_area    = is_header-bukrs.
-    ls_wbs_celement-controlling_area = is_header-bukrs(4).
-    ls_wbs_celement-profit_ctr       = is_header-prctr.
-    ls_wbs_celement-plant            = is_header-werks.
-
-    " Planning
-    ls_wbs_celement-wbs_planning_element = abap_true.
-
-    " Investment fields
-    ls_wbs_celement-inv_reason       = is_header-izwek.
-    ls_wbs_celement-invest_profile   = ls_wbs-imprf.
-
-    " Responsibility
-    ls_wbs_celement-respsbl_cctr     = ls_wbs-kostl.
-    ls_wbs_celement-responsible_no   = is_header-vernr.
-
-    " Dates
-    ls_wbs_celement-wbs_basic_start_date  = sy-datum.
-    ls_wbs_celement-wbs_basic_finish_date = is_header-plsez.
-
-    " Account assignment
-    ls_wbs_celement-wbs_account_assignment_element = abap_true.
-
-    " ═══════════════════════════════════════════════════════════════
-    " HIERARCHY CALCULATION
-    " (Exact logic from reference - uses pspid_new directly)
-    " ═══════════════════════════════════════════════════════════════
-    " Note: In reference, they use ls_item-pspid_new which already exists
-    " In our case, we need to calculate the new codes dynamically
-    
-    LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_index.
-      
-      " Left Level (sibling - same stufe)
-      IF lv_left_level IS INITIAL AND ls_wbs_temp-stufe = ls_wbs-stufe.
-        " Calculate sibling's WBS code
-        DATA(lv_temp_index) TYPE i.
-        lv_temp_index = 0.
-        LOOP AT lt_wbs_sorted INTO DATA(ls_temp_wbs) WHERE stufe > 1.
-          IF ls_temp_wbs-posid = ls_wbs_temp-posid.
-            EXIT.
-          ENDIF.
-          IF ls_temp_wbs-wert2 IS NOT INITIAL.
-            lv_temp_index = lv_temp_index + 1.
-          ENDIF.
-        ENDLOOP.
-        lv_left_level = |{ lv_pspid }-{ lv_temp_index }|.
+* Build the Total for Level4.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
+    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
+      IF <wa5>-pspid+0(lv_pspid_len4) = <wa4>-pspid+0(lv_pspid_len4).
+        lv_sum4 = lv_sum4 + <wa5>-budget.
       ENDIF.
+    ENDLOOP.
+    IF lv_sum4 IS NOT INITIAL.
+      <wa4>-budget = lv_sum4.
+    ENDIF.
+    lv_index4 = lv_index4 + 1.
+    MODIFY lt_table FROM <wa4> TRANSPORTING budget.
+    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
+    CLEAR: lv_sum4.
+  ENDLOOP.
 
-      " Upper Level (parent - lower stufe)
-      IF ls_wbs_temp-stufe < ls_wbs-stufe.
-        IF ls_wbs_temp-stufe = 1.
-          " Parent is the project itself
-          lv_upper_level = lv_pspid.
-        ELSE.
-          " Parent is another WBS element - calculate its code
-          CLEAR lv_temp_index.
-          LOOP AT lt_wbs_sorted INTO ls_temp_wbs WHERE stufe > 1.
-            IF ls_temp_wbs-posid = ls_wbs_temp-posid.
-              EXIT.
-            ENDIF.
-            IF ls_temp_wbs-wert2 IS NOT INITIAL.
-              lv_temp_index = lv_temp_index + 1.
-            ENDIF.
-          ENDLOOP.
-          lv_upper_level = |{ lv_pspid }-{ lv_temp_index }|.
-        ENDIF.
-        EXIT.
+* Build the Total for Level3.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
+    LOOP AT lt_table4 ASSIGNING <wa4>.
+      IF <wa4>-pspid+0(lv_pspid_len3) = <wa3>-pspid+0(lv_pspid_len3).
+        lv_sum3 = lv_sum3 + <wa4>-budget.
       ENDIF.
-      
+    ENDLOOP.
+    IF lv_sum3 IS NOT INITIAL.
+      <wa3>-budget = lv_sum3.
+    ENDIF.
+    lv_index3 = lv_index3 + 1.
+    MODIFY lt_table FROM <wa3> TRANSPORTING budget.
+    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
+    CLEAR: lv_sum3.
+  ENDLOOP.
+
+* Build the Total for Level2.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
+    LOOP AT lt_table3 ASSIGNING <wa3>.
+      IF <wa3>-pspid+0(lv_pspid_len2) = <wa2>-pspid+0(lv_pspid_len2).
+        lv_sum2 = lv_sum2 + <wa3>-budget.
+      ENDIF.
     ENDLOOP.
 
-    " ✓ Set hierarchy fields (these exist in BAPI_BUS2054_NEW)
-    ls_wbs_celement-wbs_up   = lv_upper_level.
-    ls_wbs_celement-wbs_left = lv_left_level.
-
-    APPEND ls_wbs_celement TO lt_wbs_celement.
-
-    " ═══════════════════════════════════════════════════════════════
-    " EXTENSION FIELDS (From reference)
-    " ═══════════════════════════════════════════════════════════════
-    IF is_header-zunifier_proj = 'X'.
-      CLEAR: ls_te_wbs, ls_extensionin.
-      
-      ls_te_wbs-wbs_element   = ls_wbs_celement-wbs_element.
-      ls_te_wbs-zunifier_proj = 'X'.
-
-      ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
-      ls_extensionin-valuepart1 = ls_te_wbs.
-      ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
-      
-      APPEND ls_extensionin TO lt_extensionin.
+    IF lv_sum2 IS NOT INITIAL.
+      <wa2>-budget = lv_sum2.
     ENDIF.
-
+    lv_index2 = lv_index2 + 1.
+    MODIFY lt_table FROM <wa2> TRANSPORTING budget.
+    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
+    CLEAR: lv_sum2.
   ENDLOOP.
 
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 7: CREATE WBS ELEMENTS
-  " (From reference wbs_request_create)
-  "═══════════════════════════════════════════════════════════════════
-  IF NOT lt_wbs_celement IS INITIAL OR NOT lt_extensionin IS INITIAL.
-
-    CLEAR lt_return.
-
-    CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-      EXPORTING
-        i_project_definition = lv_pspid
-      TABLES
-        it_wbs_element       = lt_wbs_celement
-        et_return            = lt_return
-        extensionin          = lt_extensionin.
-
-    " Check for errors
-    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-        WITH ls_return-message_v1 ls_return-message_v2
-             ls_return-message_v3 ls_return-message_v4.
-      rv_success = abap_false.
-      RETURN.
-    ENDLOOP.
-
-  ENDIF.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 8: PRE-COMMIT (From reference)
-  "═══════════════════════════════════════════════════════════════════
-  CLEAR lt_return.
-
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
-
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2.
-    rv_success = abap_false.
-    RETURN.
-  ENDLOOP.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 9: COMMIT WORK (From reference)
-  "═══════════════════════════════════════════════════════════════════
-  CLEAR ls_return.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait   = 'X'
-    IMPORTING
-      return = ls_return.
-
-  IF ls_return-type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 10: GET CREATED WBS INTERNAL NUMBERS
-  "═══════════════════════════════════════════════════════════════════
-  SELECT SINGLE pspnr FROM proj
-    INTO lv_level1_pspnr
-    WHERE pspid = lv_pspid.
-
-  IF sy-subrc <> 0.
-    MESSAGE e029(zcj00) WITH 'Project not found after creation'.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  " Build output table
-  CLEAR lv_counter.
-  LOOP AT it_wbs_items INTO ls_wbs.
-
-    IF ls_wbs-wert2 IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR ls_wbs_created.
-
-    IF ls_wbs-stufe = 1.
-      ls_wbs_created-posid = lv_pspid.
-      ls_wbs_created-posnr = lv_level1_pspnr.
-    ELSE.
-      lv_counter = lv_counter + 1.
-      ls_wbs_created-posid = |{ lv_pspid }-{ lv_counter }|.
-
-      SELECT SINGLE pspnr FROM prps
-        INTO ls_wbs_created-posnr
-        WHERE posid = ls_wbs_created-posid.
-
-      IF sy-subrc <> 0.
-        CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-          EXPORTING
-            input  = ls_wbs_created-posid
-          IMPORTING
-            output = lv_posid_internal.
-
-        SELECT SINGLE pspnr FROM prps
-          INTO ls_wbs_created-posnr
-          WHERE posid = lv_posid_internal.
+* Build the Total for Level1.
+  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-pspid+0(lv_pspid_len1) = <wa1>-pspid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-budget.
       ENDIF.
+    ENDLOOP.
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-budget = lv_sum1.
     ENDIF.
-
-    ls_wbs_created-stufe = ls_wbs-stufe.
-    ls_wbs_created-post1 = ls_wbs-post1.
-    ls_wbs_created-kostl = ls_wbs-kostl.
-    ls_wbs_created-wert2 = ls_wbs-wert2.
-    ls_wbs_created-zbudget_check = ls_wbs-zbudget_check.
-    ls_wbs_created-imprf = ls_wbs-imprf.
-    ls_wbs_created-prart = ls_wbs-prart.
-    ls_wbs_created-bukrs = is_header-bukrs.
-    ls_wbs_created-werks = is_header-werks.
-
-    APPEND ls_wbs_created TO et_wbs_created.
-
+    MODIFY lt_table FROM <wa1> TRANSPORTING budget.
+    CLEAR: lv_sum1.
   ENDLOOP.
 
-  "═══════════════════════════════════════════════════════════════════
-  " STEP 11: UPDATE HEADER WITH PROJECT NUMBER
-  "═══════════════════════════════════════════════════════════════════
-  UPDATE ztb_a2r_wbshdr
-    SET pspnr = lv_level1_pspnr
-    WHERE zreq_num = is_header-zreq_num.
-
-  COMMIT WORK.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
+ENDFORM.                              " FCODE_Total_up
