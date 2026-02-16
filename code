@@ -1,166 +1,74 @@
-METHOD set_blkd_status_for_higher_wbs.
+REPORT ztest_set_blkd_wbs.
 
-  DATA: ls_item           TYPE ztb_a2r_wbsitem,
-        lv_child_pspnr    TYPE prps-pspnr,
-        lv_parent_pspnr   TYPE prhi-psphi,
-        lv_parent_posid   TYPE prps-posid.
+PARAMETERS:
+  p_wbs   TYPE ps_posid OBLIGATORY,      "e.g. PC.000074 or full POSID
+  p_stat  TYPE c LENGTH 4 DEFAULT 'BLKD',
+  p_undo  TYPE c LENGTH 4.               "optional: status to undo
 
-  DATA: lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
-        ls_user_status TYPE bapi_wbs_mnt_user_status,
-        lt_result      TYPE TABLE OF bapi_status_result.
+DATA:
+  lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+  ls_user_status TYPE bapi_wbs_mnt_user_status,
+  lt_result      TYPE TABLE OF bapi_status_result.
 
-  rv_success = abap_false.
-  CLEAR: lt_user_status, lt_result.
+FIELD-SYMBOLS:
+  <ls_res>     TYPE any,
+  <f_status>   TYPE any,
+  <f_msgid>    TYPE any,
+  <f_msgno>    TYPE any,
+  <f_msgtext>  TYPE any.
 
-  LOOP AT it_wbs_items INTO ls_item.
+START-OF-SELECTION.
 
-    "Get child internal number
-    SELECT SINGLE pspnr
-      INTO @lv_child_pspnr
-      FROM prps
-      WHERE posid = @ls_item-posid.
+  "1) Initialize PS BAPI context (IMPORTANT)
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-    IF sy-subrc <> 0 OR lv_child_pspnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
+  "2) Fill user status table
+  CLEAR ls_user_status.
+  ls_user_status-wbs_element = p_wbs.
 
-    "Get parent internal number from PRHI
-    SELECT SINGLE psphi
-      INTO @lv_parent_pspnr
-      FROM prhi
-      WHERE pspnr = @lv_child_pspnr.
-
-    IF sy-subrc <> 0 OR lv_parent_pspnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    "Get parent POSID
-    SELECT SINGLE posid
-      INTO @lv_parent_posid
-      FROM prps
-      WHERE pspnr = @lv_parent_pspnr.
-
-    IF sy-subrc <> 0 OR lv_parent_posid IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR ls_user_status.
-    ls_user_status-wbs_element    = lv_parent_posid.
-    ls_user_status-set_user_status = 'BLKD'.
-
-    APPEND ls_user_status TO lt_user_status.
-
-  ENDLOOP.
-
-  IF lt_user_status IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
+  IF p_undo IS NOT INITIAL.
+    ls_user_status-undo_user_status = p_undo.
+  ELSE.
+    ls_user_status-set_user_status  = p_stat.
   ENDIF.
 
+  APPEND ls_user_status TO lt_user_status.
+
+  "3) Call BAPI to set/reset status
   CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
+  "4) Commit
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
 
-  rv_success = abap_true.
+  "5) Display result
+  ULINE.
+  WRITE: / 'WBS:', p_wbs, ' SET:', p_stat, ' UNDO:', p_undo.
+  ULINE.
 
-ENDMETHOD.
+  IF lt_result IS INITIAL.
+    WRITE: / 'No messages returned. (Usually OK)'.  "still verify in CJ20N
+  ELSE.
+    LOOP AT lt_result ASSIGNING <ls_res>.
 
+      CLEAR: <f_status>, <f_msgid>, <f_msgno>, <f_msgtext>.
 
+      ASSIGN COMPONENT 'STATUS'       OF STRUCTURE <ls_res> TO <f_status>.
+      ASSIGN COMPONENT 'MESSAGE_ID'   OF STRUCTURE <ls_res> TO <f_msgid>.
+      ASSIGN COMPONENT 'MESSAGE_NO'   OF STRUCTURE <ls_res> TO <f_msgno>.
+      ASSIGN COMPONENT 'MESSAGE_TEXT' OF STRUCTURE <ls_res> TO <f_msgtext>.
 
+      WRITE: / 'STATUS:',  (10) COND string( WHEN <f_status>  IS ASSIGNED THEN <f_status>  ELSE '' ),
+               ' MSGID:',  (10) COND string( WHEN <f_msgid>   IS ASSIGNED THEN <f_msgid>   ELSE '' ),
+               ' MSGNO:',  (10) COND string( WHEN <f_msgno>   IS ASSIGNED THEN <f_msgno>   ELSE '' ).
+      WRITE: / 'TEXT:', (120) COND string( WHEN <f_msgtext> IS ASSIGNED THEN <f_msgtext> ELSE '' ).
+      ULINE.
 
-METHOD assign_budget_cj30.
-
-  DATA: lv_errors_found TYPE oax,
-        lt_bpak         TYPE TABLE OF bpak,
-        ls_bpak         TYPE bpak,
-        ls_item         TYPE ztb_a2r_wbsitem,
-        lv_objnr        TYPE j_objnr,
-        lv_waers        TYPE waers,
-        lt_return       TYPE TABLE OF bapiret2.
-
-  rv_success = abap_false.
-  CLEAR: lt_bpak, lt_return, lv_errors_found.
-
-  lv_waers = get_currency_from_header( is_header ).
-  IF lv_waers IS INITIAL.
-    RETURN.
+    ENDLOOP.
   ENDIF.
 
-  LOOP AT it_wbs_items INTO ls_item.
-
-    "If CJ30 should run only for flagged WBS, uncomment and use your real field
-    "IF ls_item-zbudget_check IS INITIAL.
-    "  CONTINUE.
-    "ENDIF.
-
-    IF ls_item-wert2 IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    SELECT SINGLE objnr
-      FROM prps
-      INTO @lv_objnr
-      WHERE posid = @ls_item-posid.
-
-    IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR ls_bpak.
-    ls_bpak-e_objnr = lv_objnr.
-    ls_bpak-e_versn = '000'.
-    ls_bpak-e_perio = '001'.
-    ls_bpak-e_wrttp = '41'.        "CJ30 Budget
-    ls_bpak-wert    = ls_item-wert2.
-    ls_bpak-twaer   = lv_waers.
-
-    APPEND ls_bpak TO lt_bpak.
-
-  ENDLOOP.
-
-  IF lt_bpak IS INITIAL.
-    "No budget lines, still OK
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-    EXPORTING
-      i_budget_activity = 'KBUD'   "CJ30
-      i_delta_amounts   = 'X'
-      i_rollup_data     = 'X'
-      i_check_plan_data = 'X'
-      i_application     = 'P'
-      i_commit_all      = 'X'
-    IMPORTING
-      e_errors_found    = lv_errors_found
-    TABLES
-      it_bpak           = lt_bpak
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
-
-  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    RETURN.
-  ENDIF.
-
-  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    RETURN.
-  ENDIF.
-
-  "NEW: Call BLKD after CJ30 success
-  IF set_blkd_status_for_higher_wbs( it_wbs_items = it_wbs_items ) = abap_false.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
+  WRITE: / 'Check CJ20N -> WBS -> Extras/Status -> Display to confirm BLKD is active.'.
