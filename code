@@ -1,36 +1,14 @@
-" FIX (Issue 3): Start/Fcst/Finish all = Finish Date
-ls_project_new-start      = is_header-plsez.
-ls_project_new-finish     = is_header-plsez.
-ls_project_new-fcst_start = is_header-plsez.
-ls_project_new-fcst_finish= is_header-plsez.
+DATA(lv_vkokr) = is_header-vkokr.
 
+IF lv_vkokr IS INITIAL.
+  "Take VKOKR from template-derived WBS items (from PRPSS-PKOKR)
+  READ TABLE it_wbs_items INTO DATA(ls_any)
+    WITH KEY stufe = 1.
+  IF sy-subrc <> 0.
+    READ TABLE it_wbs_items INTO ls_any INDEX 1.
+  ENDIF.
 
-
-" FIX (Issue 3): all dates = Finish Date
-ls_wbs_celement-wbs_basic_start_date     = is_header-plsez.
-ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
-ls_wbs_celement-wbs_forecast_start_date  = is_header-plsez.
-ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
-ls_wbs_celement-wbs_actual_start_date    = is_header-plsez.
-ls_wbs_celement-wbs_actual_finish_date   = is_header-plsez.
-
-
-
-" FIX (Issue 1): replace template row in ZTB_A2R_WBSITEM with created POSID/PSPNR
-UPDATE ztb_a2r_wbsitem
-  SET posid = @ls_wbs_created-posid,
-      posnr = @ls_wbs_created-posnr
-  WHERE zreq_num = @is_header-zreq_num
-    AND posid    = @ls_wbs-posid.
-
-
-
-" FIX (Issue 2): also store controlling area + currency
-UPDATE ztb_a2r_wbshdr
-  SET pspnr = @lv_level1_pspnr,
-      pspid = @lv_pspid,
-      kokrs = @is_header-vkokr,   " <-- adjust field name if different
-      waers = @lv_waers           " <-- adjust field name if different
-  WHERE zreq_num = @is_header-zreq_num.
-
-
+  IF sy-subrc = 0 AND ls_any-vkokr IS NOT INITIAL.
+    lv_vkokr = ls_any-vkokr.
+  ENDIF.
+ENDIF.
