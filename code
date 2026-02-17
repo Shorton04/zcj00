@@ -1,3 +1,4 @@
+
 DATA(lv_vkokr) = is_header-vkokr.
 
 IF lv_vkokr IS INITIAL.
@@ -12,3 +13,43 @@ IF lv_vkokr IS INITIAL.
     lv_vkokr = ls_any-vkokr.
   ENDIF.
 ENDIF.
+
+
+
+
+DATA(lv_vkokr) = is_header-vkokr.
+IF lv_vkokr IS INITIAL.
+  READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
+  IF sy-subrc = 0.
+    lv_vkokr = ls_any-vkokr.
+  ENDIF.
+ENDIF.
+ls_header-vkokr = lv_vkokr.
+
+
+
+ls_item-vkokr = lv_vkokr.  "Always the derived controlling area
+
+
+
+ls_project_new-controlling_area = lv_vkokr.
+...
+ls_wbs_celement-controlling_area = lv_vkokr.
+
+
+UPDATE ztb_a2r_wbshdr
+  SET pspnr = @lv_level1_pspnr,
+      pspid = @lv_pspid,
+      vkokr = @lv_vkokr,
+      waers = @lv_waers
+  WHERE zreq_num = @is_header-zreq_num.
+
+
+
+UPDATE ztb_a2r_wbsitem
+  SET posid = @ls_wbs_created-posid,
+      posnr = @ls_wbs_created-posnr,
+      vkokr = @lv_vkokr
+  WHERE zreq_num = @is_header-zreq_num
+    AND bukrs    = @is_header-bukrs
+    AND posid    = @ls_wbs-posid.
