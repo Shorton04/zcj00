@@ -53,3 +53,15 @@ UPDATE ztb_a2r_wbsitem
   WHERE zreq_num = @is_header-zreq_num
     AND bukrs    = @is_header-bukrs
     AND posid    = @ls_wbs-posid.
+
+
+
+
+DATA(lv_vkokr) = is_header-vkokr.
+
+IF lv_vkokr IS INITIAL.
+  READ TABLE it_wbs_items INTO DATA(ls_any_wbs) INDEX 1.
+  IF sy-subrc = 0 AND ls_any_wbs-vkokr IS NOT INITIAL.
+    lv_vkokr = ls_any_wbs-vkokr.
+  ENDIF.
+ENDIF.
