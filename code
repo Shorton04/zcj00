@@ -1,29 +1,71 @@
-DATA: lv_vkokr TYPE kokrs,
-      lv_pspnr TYPE pspnr.
+DATA: lv_vkokr    TYPE kokrs,
+      lv_pspnr    TYPE pspnr,
+      lv_posid    TYPE ps_posid,
+      lv_posid_db TYPE ps_posid.
 
-"1) If header already has it, use it
+"1) Header value
 lv_vkokr = is_header-vkokr.
 
-"2) Else try to get from item table field directly
+"2) If missing -> read from Z table items
 IF lv_vkokr IS INITIAL.
-  READ TABLE it_wbs_items INTO DATA(ls_any_item) INDEX 1.
-  IF sy-subrc = 0 AND ls_any_item-vkokr IS NOT INITIAL.
-    lv_vkokr = ls_any_item-vkokr.
-  ENDIF.
+
+  "Prefer VKOKR directly if your Z table has it
+  SELECT SINGLE vkokr
+    INTO lv_vkokr
+    FROM ztb_a2r_wbsitem
+    WHERE zreq_num = @is_header-zreq_num
+      AND vkokr    IS NOT NULL
+      AND vkokr    <> ''.
+
 ENDIF.
 
-"3) Else derive from PRPSS using PSPNR (POSNR) from item table (most reliable)
+"3) If still missing -> derive via PRPSS using POSNR from Z table
 IF lv_vkokr IS INITIAL.
-  IF ls_any_item IS INITIAL.
-    READ TABLE it_wbs_items INTO ls_any_item INDEX 1.
+
+  SELECT SINGLE posnr
+    INTO lv_pspnr
+    FROM ztb_a2r_wbsitem
+    WHERE zreq_num = @is_header-zreq_num
+      AND posnr    IS NOT NULL
+      AND posnr    <> ''.
+
+  IF lv_pspnr IS NOT INITIAL.
+    SELECT SINGLE pkokr
+      INTO lv_vkokr
+      FROM prpss
+      WHERE pspnr = lv_pspnr.
   ENDIF.
 
-  IF sy-subrc = 0.
+ENDIF.
 
-    "POSNR in your table is PSPNR (internal WBS number)
-    IF ls_any_item-posnr IS NOT INITIAL.
-      lv_pspnr = ls_any_item-posnr.
-    ENDIF.
+"4) If still missing -> derive via PRPS->PRPSS using POSID from Z table
+IF lv_vkokr IS INITIAL.
+
+  SELECT SINGLE posid
+    INTO lv_posid
+    FROM ztb_a2r_wbsitem
+    WHERE zreq_num = @is_header-zreq_num
+      AND posid    IS NOT NULL
+      AND posid    <> ''.
+
+  IF lv_posid IS NOT INITIAL.
+
+    lv_posid_db = lv_posid.
+
+    "Normalize POSID if stored without dots
+    TRY.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+          EXPORTING  input  = lv_posid_db
+          IMPORTING  output = lv_posid_db.
+      CATCH cx_root.
+    ENDTRY.
+
+    "Get PSPNR from PRPS then get KOKRS from PRPSS
+    CLEAR lv_pspnr.
+    SELECT SINGLE pspnr
+      INTO lv_pspnr
+      FROM prps
+      WHERE posid = lv_posid_db.
 
     IF lv_pspnr IS NOT INITIAL.
       SELECT SINGLE pkokr
@@ -32,36 +74,6 @@ IF lv_vkokr IS INITIAL.
         WHERE pspnr = lv_pspnr.
     ENDIF.
 
-  ENDIF.
-ENDIF.
-
-
-
-IF lv_vkokr IS INITIAL AND ls_any_item-posid IS NOT INITIAL.
-
-  DATA: lv_posid_db TYPE ps_posid,
-        lv_pspnr2   TYPE pspnr.
-
-  lv_posid_db = ls_any_item-posid.
-
-  "Normalize POSID (PC000001 -> PC.000001)
-  TRY.
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-        EXPORTING  input  = lv_posid_db
-        IMPORTING  output = lv_posid_db.
-    CATCH cx_root.
-  ENDTRY.
-
-  SELECT SINGLE pspnr
-    INTO lv_pspnr2
-    FROM prps
-    WHERE posid = lv_posid_db.
-
-  IF lv_pspnr2 IS NOT INITIAL.
-    SELECT SINGLE pkokr
-      INTO lv_vkokr
-      FROM prpss
-      WHERE pspnr = lv_pspnr2.
   ENDIF.
 
 ENDIF.
