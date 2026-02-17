@@ -1,222 +1,96 @@
-METHOD create_wbs_elements.
-
-  DATA: lv_pspid        TYPE ps_pspid,
-        ls_wbs          TYPE ztb_a2r_wbsitem,
-        ls_wbs_temp     TYPE ztb_a2r_wbsitem,
-        ls_wbs_created  TYPE ztb_a2r_wbsitem,
-        lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_return       TYPE TABLE OF bapiret2,
-        ls_return       TYPE bapiret2,
-        lt_wbs_celement TYPE TABLE OF bapi_bus2054_new,
-        ls_wbs_celement TYPE bapi_bus2054_new,
-        lv_objnr        TYPE j_objnr,
-        lv_parent_posid TYPE prps-posid,
-        lv_level        TYPE i,
-        lv_posid_new    TYPE prps-posid,
-        lv_level1_pspnr TYPE prps-pspnr.
-
-  FIELD-SYMBOLS: <fs_any> TYPE any.
-
-  CLEAR: et_wbs_created, et_wbs_items.
-
-  "------------------------------------------------------------
-  " STEP 1: Get template WBS structure
-  "------------------------------------------------------------
-  SELECT *
-    FROM ztb_a2r_wbsitem
-    INTO TABLE @et_wbs_items
-    WHERE proj_prof = @is_header-proj_prof
-      AND zreq_num   = @is_header-zreq_num.
-
-  IF et_wbs_items IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  lt_wbs_sorted = et_wbs_items.
-  SORT lt_wbs_sorted BY wbs_element.
-
-  "------------------------------------------------------------
-  " STEP 2: Project Definition from header
-  "------------------------------------------------------------
-  lv_pspid = is_header-pspid.
-
-  "------------------------------------------------------------
-  " STEP 3: Build WBS creation table (BAPI_BUS2054_CREATE_MULTI)
-  "------------------------------------------------------------
-  CLEAR lt_wbs_celement.
-
-  LOOP AT lt_wbs_sorted INTO ls_wbs_temp.
-
-    CLEAR ls_wbs_celement.
-
-    "Main mapping
-    ls_wbs_celement-project_definition = lv_pspid.
-    ls_wbs_celement-wbs_element        = ls_wbs_temp-wbs_element.
-    ls_wbs_celement-wbs_short_id       = ls_wbs_temp-wbs_element.
-    ls_wbs_celement-description        = ls_wbs_temp-description.
-
-    "Hierarchy handling
-    lv_level = strlen( ls_wbs_temp-wbs_element ) - strlen( replace( val = ls_wbs_temp-wbs_element sub = '.' with = '' ) ).
-
-    IF lv_level = 0.
-      CLEAR ls_wbs_celement-parent_wbs_element.
-    ELSE.
-      "derive parent by trimming last ".XX"
-      lv_parent_posid = ls_wbs_temp-wbs_element.
-      FIND ALL OCCURRENCES OF '.' IN lv_parent_posid MATCH COUNT lv_level.
-      IF lv_level > 0.
-        "remove last segment
-        SPLIT lv_parent_posid AT '.' INTO TABLE DATA(lt_parts).
-        DELETE lt_parts INDEX lines( lt_parts ).
-        CLEAR lv_parent_posid.
-        LOOP AT lt_parts INTO DATA(lv_part).
-          IF lv_parent_posid IS INITIAL.
-            lv_parent_posid = lv_part.
-          ELSE.
-            lv_parent_posid = |{ lv_parent_posid }.{ lv_part }|.
-          ENDIF.
-        ENDLOOP.
-        ls_wbs_celement-parent_wbs_element = lv_parent_posid.
-      ENDIF.
-    ENDIF.
-
-    "-----------------------------
-    " ✅ FIX for Issue 1:
-    " Pass Investment Program, Position, Approval Year into BAPI structure
-    " (field names differ per system => use ASSIGN COMPONENT)
-    "-----------------------------
-    IF is_header-invprog IS NOT INITIAL.
-
-      "Investment Program (common field seen in your header: PRNAM)
-      ASSIGN COMPONENT 'PRNAM' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-      IF sy-subrc = 0. <fs_any> = is_header-invprog. ENDIF.
-
-      ASSIGN COMPONENT 'INVESTMENT_PROGRAM' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-      IF sy-subrc = 0. <fs_any> = is_header-invprog. ENDIF.
-
-      ASSIGN COMPONENT 'INVPROG' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-      IF sy-subrc = 0. <fs_any> = is_header-invprog. ENDIF.
-
-      "Position ID (from template item if you store it there)
-      IF ls_wbs_temp-invprogpos IS NOT INITIAL.
-        ASSIGN COMPONENT 'INVPROGPOS' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-        IF sy-subrc = 0. <fs_any> = ls_wbs_temp-invprogpos. ENDIF.
-
-        ASSIGN COMPONENT 'INVESTMENT_PROG_POS' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-        IF sy-subrc = 0. <fs_any> = ls_wbs_temp-invprogpos. ENDIF.
-
-        ASSIGN COMPONENT 'IPPOSID' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-        IF sy-subrc = 0. <fs_any> = ls_wbs_temp-invprogpos. ENDIF.
-      ENDIF.
-
-      "Approval year (take from header if you have it; otherwise sy-datum(4))
-      DATA(lv_appr_year) = sy-datum(4).
-      IF is_header-gjahr IS NOT INITIAL.
-        lv_appr_year = is_header-gjahr.
-      ENDIF.
-
-      ASSIGN COMPONENT 'APPROVAL_YEAR' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-      IF sy-subrc = 0. <fs_any> = lv_appr_year. ENDIF.
-
-      ASSIGN COMPONENT 'GJAHR' OF STRUCTURE ls_wbs_celement TO <fs_any>.
-      IF sy-subrc = 0. <fs_any> = lv_appr_year. ENDIF.
-
-    ENDIF.
-
-    APPEND ls_wbs_celement TO lt_wbs_celement.
-
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  " STEP 4: Create WBS elements
-  "------------------------------------------------------------
-  CLEAR lt_return.
-  CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-    TABLES
-      i_wbs_element   = lt_wbs_celement
-      et_return       = lt_return.
-
-  READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-  IF sy-subrc = 0.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  "------------------------------------------------------------
-  " STEP 5: Read created PRPS (real POSID / PSPNR)
-  "------------------------------------------------------------
-  CLEAR: et_wbs_created.
-  LOOP AT lt_wbs_sorted INTO ls_wbs_temp.
-
-    CLEAR lv_objnr.
-    SELECT SINGLE objnr pspnr posid
-      FROM prps
-      INTO (@lv_objnr, @lv_level1_pspnr, @lv_posid_new)
-      WHERE posid = @ls_wbs_temp-wbs_element.
-
-    IF sy-subrc <> 0.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR ls_wbs_created.
-    ls_wbs_created = ls_wbs_temp.
-
-    "✅ Store the NEW created values, not template-only
-    ls_wbs_created-zreq_num   = is_header-zreq_num.
-    ls_wbs_created-posid      = lv_posid_new.
-    ls_wbs_created-pspid      = is_header-pspid.
-    ls_wbs_created-werks      = is_header-werks.
-    ls_wbs_created-kokrs      = is_header-vkokr.
-    ls_wbs_created-update_indicator = 'X'.
-
-    "keep investment data too
-    ls_wbs_created-invprog    = is_header-invprog.
-    "invprogpos stays from template (if template has it)
-    "ls_wbs_created-invprogpos = ls_wbs_temp-invprogpos.
-
-    APPEND ls_wbs_created TO et_wbs_created.
-
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  " ✅ FIX for Issue 2:
-  " Update ZTB_A2R_WBSITEM with created WBS (not template)
-  "------------------------------------------------------------
-  DELETE FROM ztb_a2r_wbsitem
-    WHERE zreq_num = @is_header-zreq_num.
-
-  IF et_wbs_created IS NOT INITIAL.
-    INSERT ztb_a2r_wbsitem FROM TABLE @et_wbs_created.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " ✅ FIX for Issue 3:
-  " Update header with PSPNR/PSPID + VKOKR/WAERS
-  "------------------------------------------------------------
-  "find one WBS level 1 PSPNR if you need it
-  SELECT SINGLE pspnr
-    FROM proj
-    INTO @lv_level1_pspnr
-    WHERE pspid = @is_header-pspid.
-
-  UPDATE ztb_a2r_wbshdr
-    SET pspnr = @lv_level1_pspnr,
-        pspid = @is_header-pspid,
-        vkokr = @is_header-vkokr,
-        waers = @is_header-waers
-    WHERE zreq_num = @is_header-zreq_num.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  "------------------------------------------------------------
-  " STEP 10: CREATE SETTLEMENT RULES - DEBUG VERSION
-  " ⚠️ KEEP YOUR EXISTING BDC CODE HERE (UNCHANGED)
-  "------------------------------------------------------------
-  " >>> DO NOT REMOVE / DO NOT CHANGE YOUR SETTLEMENT RULE BDC BLOCK <<<
-
-ENDMETHOD.
+WBS_ELEMENT
+DESCRIPTION
+RESPONSIBLE_NO
+APPLICANT_NO
+COMPANY_CODE
+BUSINESS_AREA
+CONTROLLING_AREA
+PROFIT_CTR
+PROJ_TYPE
+WBS_PLANNING_ELEMENT
+WBS_ACCOUNT_ASSIGNMENT_ELEMENT
+WBS_BILLING_ELEMENT
+CSTG_SHEET
+OVERHEAD_KEY
+RES_ANAL_KEY
+REQUEST_CCTR_CONTROLLING_AREA
+REQUEST_CCTR
+RESPSBL_CCTR_CONTROLLING_AREA
+RESPSBL_CCTR
+CALENDAR
+PRIORITY
+EQUIPMENT
+FUNCT_LOC
+CURRENCY
+CURRENCY_ISO
+PLANT
+USER_FIELD_KEY
+USER_FIELD_CHAR20_1
+USER_FIELD_CHAR20_2
+USER_FIELD_CHAR10_1
+USER_FIELD_CHAR10_2
+USER_FIELD_QUAN1
+USER_FIELD_UNIT1
+USER_FIELD_UNIT1_ISO
+USER_FIELD_QUAN2
+USER_FIELD_UNIT2
+USER_FIELD_UNIT2_ISO
+USER_FIELD_CURR1
+USER_FIELD_CUKY1
+USER_FIELD_CUKY1_ISO
+USER_FIELD_CURR2
+USER_FIELD_CUKY2
+USER_FIELD_CUKY2_ISO
+USER_FIELD_DATE1
+USER_FIELD_DATE2
+USER_FIELD_FLAG1
+USER_FIELD_FLAG2
+WBS_CCTR_POSTED_ACTUAL
+WBS_SUMMARIZATION
+OBJECTCLASS
+STATISTICAL
+TAXJURCODE
+INTEREST_PROF
+INVEST_PROFILE
+EVGEW
+CHANGE_NO
+SUBPROJECT
+PLANINTEGRATED
+INV_REASON
+SCALE
+ENVIR_INVEST
+REQUEST_COMP_CODE
+WBS_MRP_ELEMENT
+LOCATION
+VENTURE
+REC_IND
+EQUITY_TYP
+JV_OTYPE
+JV_JIBCL
+JV_JIBSA
+WBS_BASIC_START_DATE
+WBS_BASIC_FINISH_DATE
+WBS_FORECAST_START_DATE
+WBS_FORECAST_FINISH_DATE
+WBS_ACTUAL_START_DATE
+WBS_ACTUAL_FINISH_DATE
+WBS_BASIC_DURATION
+WBS_BASIC_DUR_UNIT
+WBS_BASIC_DUR_UNIT_ISO
+WBS_FORECAST_DURATION
+WBS_FORCAST_DUR_UNIT
+WBS_FORECAST_DUR_UNIT_ISO
+WBS_ACTUAL_DURATION
+WBS_ACTUAL_DUR_UNIT
+WBS_FORECAST_START_DATE
+WBS_FORECAST_FINISH_DATE
+WBS_ACTUAL_START_DATE
+WBS_ACTUAL_FINISH_DATE
+WBS_BASIC_DURATION
+WBS_BASIC_DUR_UNIT
+WBS_BASIC_DUR_UNIT_ISO
+WBS_FORECAST_DURATION
+WBS_FORCAST_DUR_UNIT
+WBS_FORECAST_DUR_UNIT_ISO
+WBS_ACTUAL_DURATION
+WBS_ACTUAL_DUR_UNIT
