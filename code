@@ -1,76 +1,24 @@
-FORM total_up_wbs_tc.
+DATA: lt_parts TYPE STANDARD TABLE OF string,
+      lv_part  TYPE string,
+      lv_lines TYPE i.
 
-  DATA: lt_work TYPE TABLE OF ty_wbs_display,
-        lv_max  TYPE ps_stufe,
-        lv_child TYPE ps_posid,
-        lv_parent TYPE ps_posid,
-        lv_off TYPE i,
-        lv_len TYPE i.
+SPLIT lv_child AT '.' INTO TABLE lt_parts.
 
-  FIELD-SYMBOLS: <ls> TYPE ty_wbs_display,
-                 <pa> TYPE ty_wbs_display.
+DESCRIBE TABLE lt_parts LINES lv_lines.
 
-  "Work on a copy
-  lt_work = gt_wbs_display.
+IF lv_lines <= 1.
+  CONTINUE.
+ENDIF.
 
-  "1) Default blank approved budget to 0 (your request)
-  LOOP AT lt_work ASSIGNING <ls>.
-    IF <ls>-zapproved_budg IS INITIAL.
-      <ls>-zapproved_budg = 0.
-    ENDIF.
-    IF <ls>-stufe > lv_max.
-      lv_max = <ls>-stufe.
-    ENDIF.
-  ENDLOOP.
+"Remove last segment
+DELETE lt_parts INDEX lv_lines.
 
-  IF lv_max < 2.
-    gt_wbs_display = lt_work.
-    EXIT.
+CLEAR lv_parent.
+
+LOOP AT lt_parts INTO lv_part.
+  IF lv_parent IS INITIAL.
+    lv_parent = lv_part.
+  ELSE.
+    CONCATENATE lv_parent lv_part INTO lv_parent SEPARATED BY '.'.
   ENDIF.
-
-  "2) Bottom-up total: max -> 2
-  WHILE lv_max > 1.
-
-    "Reset parents at level (lv_max-1)
-    LOOP AT lt_work ASSIGNING <ls> WHERE stufe = lv_max - 1.
-      <ls>-zapproved_budg = 0.
-    ENDLOOP.
-
-    "Sum children into correct parent (based on POSID path)
-    LOOP AT lt_work ASSIGNING <ls> WHERE stufe = lv_max.
-
-      lv_child = <ls>-posid.
-
-      "Normalize format like old system style (CALL FUNCTION)
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-        EXPORTING  input  = lv_child
-        IMPORTING  output = lv_child
-        EXCEPTIONS OTHERS = 1.
-
-      "Parent = POSID without last segment ".xxx"
-      FIND REGEX '\.[^\.]+$' IN lv_child MATCH OFFSET lv_off MATCH LENGTH lv_len.
-      IF sy-subrc <> 0 OR lv_off <= 0.
-        CONTINUE.
-      ENDIF.
-      lv_parent = lv_child( lv_off ).
-
-      "Normalize parent too (CALL FUNCTION)
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-        EXPORTING  input  = lv_parent
-        IMPORTING  output = lv_parent
-        EXCEPTIONS OTHERS = 1.
-
-      READ TABLE lt_work ASSIGNING <pa> WITH KEY posid = lv_parent.
-      IF sy-subrc = 0.
-        <pa>-zapproved_budg = <pa>-zapproved_budg + <ls>-zapproved_budg.
-      ENDIF.
-
-    ENDLOOP.
-
-    lv_max = lv_max - 1.
-  ENDWHILE.
-
-  "3) Copy back to the global table for TC display
-  gt_wbs_display = lt_work.
-
-ENDFORM.
+ENDLOOP.
