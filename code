@@ -6,25 +6,43 @@ METHOD set_blkd_status_for_higher_wbs.
     lt_result      TYPE TABLE OF bapi_status_result,
     ls_result      TYPE bapi_status_result.
 
+  "helper tables
+  DATA: lt_all_posid    TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line,
+        lt_parent_posid TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line.
+
   rv_success = abap_false.
 
-  "Initialize PS context (MANDATORY in your system)
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
+  "Collect all POSIDs from input
   LOOP AT it_wbs_items INTO DATA(ls_item).
-
     IF ls_item-posid IS INITIAL.
       CONTINUE.
     ENDIF.
+    INSERT ls_item-posid INTO TABLE lt_all_posid.
+  ENDLOOP.
 
+  "Identify parents: a POSID is parent if any other POSID starts with it + '.'
+  LOOP AT lt_all_posid INTO DATA(lv_posid).
+    LOOP AT lt_all_posid INTO DATA(lv_child)
+         WHERE table_line <> lv_posid.
+      IF lv_child CP ( lv_posid && '.*' ).
+        INSERT lv_posid INTO TABLE lt_parent_posid.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+  ENDLOOP.
+
+  "Build status only for parents (higher level WBS)
+  LOOP AT lt_parent_posid INTO DATA(lv_parent).
     CLEAR ls_user_status.
-    ls_user_status-wbs_element     = ls_item-posid.
+    ls_user_status-wbs_element     = lv_parent.
     ls_user_status-set_user_status = 'BLKD'.
     APPEND ls_user_status TO lt_user_status.
-
   ENDLOOP.
 
   IF lt_user_status IS INITIAL.
+    rv_success = abap_true.
     RETURN.
   ENDIF.
 
@@ -33,16 +51,17 @@ METHOD set_blkd_status_for_higher_wbs.
       i_wbs_user_status = lt_user_status
       e_result          = lt_result.
 
-  "Required in your system
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
 
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
       wait = 'X'.
 
-  "Check result
+  "Check result: treat any error-type message as failure
   LOOP AT lt_result INTO ls_result.
-    IF ls_result-message_id IS NOT INITIAL.
+    IF ls_result-message_type = 'E'
+    OR ls_result-message_type = 'A'
+    OR ls_result-message_type = 'X'.
       rv_success = abap_false.
       RETURN.
     ENDIF.
