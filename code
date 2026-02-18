@@ -1,142 +1,40 @@
-WHEN 'SUM'.
-  READ TABLE gt_wbs_display INTO DATA(ls_table) WITH KEY stufe = '1'.
-  IF sy-subrc = 0.
-    SELECT SINGLE * FROM prps INTO @DATA(ls_prps_uni) WHERE posid = @ls_table-posid.
-    IF ( lv_type = 1 OR sy-subrc = 0 ) AND ls_prps_uni-zmaint_sys NE 'UN'.
-      PERFORM fcode_total_up.
-    ENDIF.
+"------------------------------------------------------------
+" AFTER CJB2 settlement-rule BDC + COMMIT
+" Next step: execute PLAN VALUES (CJ40 via KBPP_EXTERN_UPDATE_CO)
+" IMPORTANT: use ET_WBS_CREATED (created POSID), not IT_WBS_ITEMS (template)
+"------------------------------------------------------------
+
+DATA: lt_created_items TYPE tt_wbs_items,
+      lv_plan_ok       TYPE abap_bool.
+
+"Convert generic et_wbs_created -> typed table (if your et_wbs_created is STANDARD TABLE generic)
+lt_created_items = CORRESPONDING #( et_wbs_created ).
+
+"Optional: auto-populate blank budget to 0.00 so entries are consistent
+"NOTE: your assign_plan_values currently CONTINUE when WERT2 IS INITIAL,
+"so 0.00 will still be treated as initial. Keep this only if you want DB consistency.
+LOOP AT lt_created_items ASSIGNING FIELD-SYMBOL(<ls_ci>).
+  IF <ls_ci>-wert2 IS INITIAL.
+    <ls_ci>-wert2 = 0.
   ENDIF.
+ENDLOOP.
 
+lv_plan_ok = assign_plan_values(
+  is_header    = is_header
+  it_wbs_items = lt_created_items
+).
 
+IF lv_plan_ok = abap_false.
+  "Stop here if plan values failed
+  MESSAGE e026(zcj00). "Adjust to your message class/number for plan values error
+  rv_success = abap_false.
+  RETURN.
+ENDIF.
 
-FORM fcode_total_up.
-
-  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
-        lv_index4 TYPE sy-index,
-        lv_index3 TYPE sy-index,
-        lv_index2 TYPE sy-index,
-        lv_index1 TYPE sy-index.
-
-  DATA: lv_pspid_len5 TYPE numc2.
-  DATA: lv_pspid_len4 TYPE numc2.
-  DATA: lv_pspid_len3 TYPE numc2.
-  DATA: lv_pspid_len2 TYPE numc2.
-  DATA: lv_pspid_len1 TYPE numc2.
-
-  "Auto-populate blank budget = 0 (so totals still update)
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
-    IF <wa0>-zapproved_budg IS INITIAL.
-      <wa0>-zapproved_budg = 0.
-    ENDIF.
-  ENDLOOP.
-
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
-    IF <wa>-stufe = '5'.
-      APPEND <wa> TO lt_table5.
-
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO lt_table4.
-      DATA(lv_pspid_new4) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new4.
-      lv_pspid_len4 = strlen( lv_pspid_new4 ).
-
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO lt_table3.
-      DATA(lv_pspid_new3) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new3.
-      lv_pspid_len3 = strlen( lv_pspid_new3 ).
-
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO lt_table2.
-      DATA(lv_pspid_new2) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new2.
-      lv_pspid_len2 = strlen( lv_pspid_new2 ).
-
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO lt_table1.
-      DATA(lv_pspid_new1) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new1.
-      lv_pspid_len1 = strlen( lv_pspid_new1 ).
-    ENDIF.
-  ENDLOOP.
-
-* Build the Total for Level4.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
-    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
-        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum4 IS NOT INITIAL.
-      <wa4>-zapproved_budg = lv_sum4.
-    ENDIF.
-    lv_index4 = lv_index4 + 1.
-    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
-    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
-  ENDLOOP.
-
-* Build the Total for Level3.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
-    LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
-        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum3 IS NOT INITIAL.
-      <wa3>-zapproved_budg = lv_sum3.
-    ENDIF.
-    lv_index3 = lv_index3 + 1.
-    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
-    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
-  ENDLOOP.
-
-* Build the Total for Level2.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
-    LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
-        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_sum2 IS NOT INITIAL.
-      <wa2>-zapproved_budg = lv_sum2.
-    ENDIF.
-    lv_index2 = lv_index2 + 1.
-    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
-    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
-  ENDLOOP.
-
-* Build the Total for Level1.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
-    LOOP AT lt_table2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
-        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum1 IS NOT INITIAL.
-      <wa1>-zapproved_budg = lv_sum1.
-    ENDIF.
-    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
-    CLEAR: lv_sum1.
-  ENDLOOP.
-
-ENDFORM.  "FCODE_TOTAL_UP
+"Optional: if you actually want the FULL flow (Plan + IM52 + CJ30), use this instead:
+"* IF post_plan_im52_cj30_flow(
+"*      is_header    = is_header
+"*      it_wbs_items = lt_created_items ) = abap_false.
+"*   rv_success = abap_false.
+"*   RETURN.
+"* ENDIF.
