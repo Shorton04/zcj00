@@ -1,74 +1,14 @@
-  METHOD assign_plan_values.
+DATA(lv_posid_db) = ls_item-posid.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          ls_item         TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lv_waers        TYPE waers,
-          lt_return       TYPE TABLE OF bapiret2.
+SELECT SINGLE objnr
+  FROM prps
+  INTO @lv_objnr
+  WHERE posid = @lv_posid_db.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
-
-    lv_waers = get_currency_from_header( is_header ).
-    IF lv_waers IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    LOOP AT it_wbs_items INTO ls_item.
-      IF ls_item-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      SELECT SINGLE objnr
-        FROM prps
-        INTO @lv_objnr
-        WHERE posid = @ls_item-posid.
-
-      IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '01'.         "PLAN
-      ls_bpak-wert    = ls_item-wert2.
-      ls_bpak-twaer   = lv_waers.     "MANDATORY
-
-      APPEND ls_bpak TO lt_bpak.
-    ENDLOOP.
-
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
-
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-      EXPORTING
-        i_budget_activity = 'KSTP'    "CJ40
-        i_delta_amounts   = 'X'
-        i_rollup_data     = 'X'
-        i_check_plan_data = 'X'
-        i_application     = 'P'
-        i_commit_all      = 'X'
-      IMPORTING
-        e_errors_found    = lv_errors_found
-      TABLES
-        it_bpak           = lt_bpak
-        it_return         = lt_return.
-
-    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-      RETURN.
-    ENDIF.
-
-    READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
-    IF sy-subrc = 0.
-      RETURN.
-    ENDIF.
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
+IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+  REPLACE ALL OCCURRENCES OF '.' IN lv_posid_db WITH ''.
+  SELECT SINGLE objnr
+    FROM prps
+    INTO @lv_objnr
+    WHERE posid = @lv_posid_db.
+ENDIF.
