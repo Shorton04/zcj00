@@ -1,19 +1,93 @@
-"Identify parents: a POSID is parent if any other POSID starts with parent + '.'
-DATA: lv_pattern TYPE string.
+METHOD set_blkd_status_for_higher_wbs.
 
-LOOP AT lt_all_posid INTO DATA(lv_posid).
+  DATA: lv_psphi      TYPE prhi-psphi,
+        lv_proj_pspnr TYPE proj-pspnr,
+        lt_prhi       TYPE TABLE OF prhi,
+        ls_prhi       TYPE prhi,
+        lt_user_stat  TYPE TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_stat  TYPE bapi_wbs_mnt_user_status,
+        lt_result     TYPE TABLE OF bapi_status_result,
+        ls_result     TYPE bapi_status_result.
 
-  LOOP AT lt_all_posid INTO DATA(lv_child)
-       WHERE table_line <> lv_posid.
+  rv_success = abap_false.
 
-    CLEAR lv_pattern.
-    CONCATENATE lv_posid '.' '*' INTO lv_pattern.   " => e.g. PC.000114.00.*
+  "Init PS BAPIs
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-    IF lv_child CP lv_pattern.
-      INSERT lv_posid INTO TABLE lt_parent_posid.
-      EXIT.
+  "------------------------------------------------------------
+  "Step 1 (FDS): Determine hierarchy key and get PRHI-UP
+  "Get PROJ-PSPNR via PSPID (project definition)
+  "------------------------------------------------------------
+  "Use the project definition from the items/header (pick what you have)
+  "If you have is_header-pspid use that, else take first item-pspid.
+  DATA(lv_pspid) = is_header-pspid.
+  IF lv_pspid IS INITIAL.
+    READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
+    IF sy-subrc = 0.
+      lv_pspid = ls_any-pspid.
     ENDIF.
+  ENDIF.
 
+  IF lv_pspid IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE pspnr
+    INTO @lv_proj_pspnr
+    FROM proj
+    WHERE pspid = @lv_pspid.
+
+  IF sy-subrc <> 0 OR lv_proj_pspnr IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "Now read PRHI rows for this project hierarchy
+  SELECT *
+    FROM prhi
+    INTO TABLE @lt_prhi
+    WHERE psphi = @lv_proj_pspnr.
+
+  IF lt_prhi IS INITIAL.
+    "No hierarchy -> nothing to BLKD
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  "------------------------------------------------------------
+  "Step 2 (FDS): Activate BLKD for PRHI-UP
+  "------------------------------------------------------------
+  LOOP AT lt_prhi INTO ls_prhi.
+    CLEAR ls_user_stat.
+    ls_user_stat-wbs_element     = ls_prhi-up.     "FDS: WBS_ELEMENT = PRHI-UP
+    ls_user_stat-set_user_status = 'BLKD'.
+    APPEND ls_user_stat TO lt_user_stat.
   ENDLOOP.
 
-ENDLOOP.
+  "Optional: remove duplicates
+  SORT lt_user_stat BY wbs_element.
+  DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
+
+  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+    TABLES
+      i_wbs_user_status = lt_user_stat
+      e_result          = lt_result.
+
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  "Check results
+  LOOP AT lt_result INTO ls_result.
+    IF ls_result-message_type = 'E'
+    OR ls_result-message_type = 'A'
+    OR ls_result-message_type = 'X'.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+  ENDLOOP.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
