@@ -1,16 +1,22 @@
-DATA: lv_posid_db TYPE ps_posid.
+DATA: lv_waers TYPE waers,
+      lv_waers_iso TYPE waers_iso.
 
-lv_posid_db = ls_item-posid.
+"1) Primary: read from header table (since you confirmed it’s stored there)
+SELECT SINGLE currency currency_iso
+  INTO (lv_waers, lv_waers_iso)
+  FROM ztb_a2r_wbshdr
+  WHERE zreq_num = @is_header-zreq_num.
 
-CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-  EXPORTING
-    input  = lv_posid_db
-  IMPORTING
-    output = lv_posid_db
-  EXCEPTIONS
-    OTHERS = 1.
+"2) Fallback: from is_header if already passed in
+IF lv_waers IS INITIAL.
+  lv_waers = is_header-currency.
+  lv_waers_iso = is_header-currency_iso.
+ENDIF.
 
-SELECT SINGLE objnr
-  FROM prps
-  INTO @lv_objnr
-  WHERE posid = @lv_posid_db.
+"3) Fallback: derive from company code (T001) if still initial
+IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+  SELECT SINGLE waers
+    INTO lv_waers
+    FROM t001
+    WHERE bukrs = @is_header-bukrs.
+ENDIF.
