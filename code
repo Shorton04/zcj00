@@ -1,40 +1,74 @@
-"------------------------------------------------------------
-" AFTER CJB2 settlement-rule BDC + COMMIT
-" Next step: execute PLAN VALUES (CJ40 via KBPP_EXTERN_UPDATE_CO)
-" IMPORTANT: use ET_WBS_CREATED (created POSID), not IT_WBS_ITEMS (template)
-"------------------------------------------------------------
+  METHOD assign_plan_values.
 
-DATA: lt_created_items TYPE tt_wbs_items,
-      lv_plan_ok       TYPE abap_bool.
+    DATA: lv_errors_found TYPE oax,
+          lt_bpak         TYPE TABLE OF bpak,
+          ls_bpak         TYPE bpak,
+          ls_item         TYPE ztb_a2r_wbsitem,
+          lv_objnr        TYPE j_objnr,
+          lv_waers        TYPE waers,
+          lt_return       TYPE TABLE OF bapiret2.
 
-"Convert generic et_wbs_created -> typed table (if your et_wbs_created is STANDARD TABLE generic)
-lt_created_items = CORRESPONDING #( et_wbs_created ).
+    rv_success = abap_false.
+    CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-"Optional: auto-populate blank budget to 0.00 so entries are consistent
-"NOTE: your assign_plan_values currently CONTINUE when WERT2 IS INITIAL,
-"so 0.00 will still be treated as initial. Keep this only if you want DB consistency.
-LOOP AT lt_created_items ASSIGNING FIELD-SYMBOL(<ls_ci>).
-  IF <ls_ci>-wert2 IS INITIAL.
-    <ls_ci>-wert2 = 0.
-  ENDIF.
-ENDLOOP.
+    lv_waers = get_currency_from_header( is_header ).
+    IF lv_waers IS INITIAL.
+      RETURN.
+    ENDIF.
 
-lv_plan_ok = assign_plan_values(
-  is_header    = is_header
-  it_wbs_items = lt_created_items
-).
+    LOOP AT it_wbs_items INTO ls_item.
+      IF ls_item-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
 
-IF lv_plan_ok = abap_false.
-  "Stop here if plan values failed
-  MESSAGE e026(zcj00). "Adjust to your message class/number for plan values error
-  rv_success = abap_false.
-  RETURN.
-ENDIF.
+      SELECT SINGLE objnr
+        FROM prps
+        INTO @lv_objnr
+        WHERE posid = @ls_item-posid.
 
-"Optional: if you actually want the FULL flow (Plan + IM52 + CJ30), use this instead:
-"* IF post_plan_im52_cj30_flow(
-"*      is_header    = is_header
-"*      it_wbs_items = lt_created_items ) = abap_false.
-"*   rv_success = abap_false.
-"*   RETURN.
-"* ENDIF.
+      IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_bpak.
+      ls_bpak-e_objnr = lv_objnr.
+      ls_bpak-e_versn = '000'.
+      ls_bpak-e_perio = '001'.
+      ls_bpak-e_wrttp = '01'.         "PLAN
+      ls_bpak-wert    = ls_item-wert2.
+      ls_bpak-twaer   = lv_waers.     "MANDATORY
+
+      APPEND ls_bpak TO lt_bpak.
+    ENDLOOP.
+
+    IF lt_bpak IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+      EXPORTING
+        i_budget_activity = 'KSTP'    "CJ40
+        i_delta_amounts   = 'X'
+        i_rollup_data     = 'X'
+        i_check_plan_data = 'X'
+        i_application     = 'P'
+        i_commit_all      = 'X'
+      IMPORTING
+        e_errors_found    = lv_errors_found
+      TABLES
+        it_bpak           = lt_bpak
+        it_return         = lt_return.
+
+    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+
+    READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
