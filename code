@@ -13,18 +13,27 @@ METHOD set_blkd_status_for_higher_wbs.
 
   "Get PSPID from first item
   READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
-  IF sy-subrc <> 0 OR ls_any-pspid IS INITIAL.
+  IF sy-subrc <> 0 OR ls_any-posid IS INITIAL.
     RETURN.
   ENDIF.
-  lv_pspid = ls_any-pspid.
+  lv_pspid = ls_any-posid.
 
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+  DATA lv_pspid_db TYPE ps_pspid.
+
+  lv_pspid_db = lv_pspid.
+
+  CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+  EXPORTING
+    input = lv_pspid_db
+    IMPORTING
+      output = lv_pspid_db.
 
   "FDS Step 1: Get PROJ-PSPNR using PSPID
   SELECT SINGLE pspnr
     INTO @lv_proj_pspnr
     FROM proj
-    WHERE pspid = @lv_pspid.
+    WHERE pspid = @lv_pspid_db.
 
   IF sy-subrc <> 0 OR lv_proj_pspnr IS INITIAL.
     RETURN.
@@ -63,16 +72,13 @@ METHOD set_blkd_status_for_higher_wbs.
     EXPORTING
       wait = 'X'.
 
-  "Check results
+  "Check result
   LOOP AT lt_result INTO ls_result.
-    IF ls_result-message_type = 'E'
-    OR ls_result-message_type = 'A'
-    OR ls_result-message_type = 'X'.
+    IF ls_result-message_id IS NOT INITIAL.
       rv_success = abap_false.
       RETURN.
     ENDIF.
   ENDLOOP.
-
   rv_success = abap_true.
 
 ENDMETHOD.
