@@ -1,6 +1,6 @@
 METHOD set_blkd_status_for_higher_wbs.
 
-  DATA: lv_psphi      TYPE prhi-psphi,
+  DATA: lv_pspid      TYPE ps_pspid,
         lv_proj_pspnr TYPE proj-pspnr,
         lt_prhi       TYPE TABLE OF prhi,
         ls_prhi       TYPE prhi,
@@ -11,27 +11,16 @@ METHOD set_blkd_status_for_higher_wbs.
 
   rv_success = abap_false.
 
-  "Init PS BAPIs
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  "------------------------------------------------------------
-  "Step 1 (FDS): Determine hierarchy key and get PRHI-UP
-  "Get PROJ-PSPNR via PSPID (project definition)
-  "------------------------------------------------------------
-  "Use the project definition from the items/header (pick what you have)
-  "If you have is_header-pspid use that, else take first item-pspid.
-  DATA(lv_pspid) = is_header-pspid.
-  IF lv_pspid IS INITIAL.
-    READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
-    IF sy-subrc = 0.
-      lv_pspid = ls_any-pspid.
-    ENDIF.
-  ENDIF.
-
-  IF lv_pspid IS INITIAL.
+  "Get PSPID from first item
+  READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
+  IF sy-subrc <> 0 OR ls_any-pspid IS INITIAL.
     RETURN.
   ENDIF.
+  lv_pspid = ls_any-pspid.
 
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
+  "FDS Step 1: Get PROJ-PSPNR using PSPID
   SELECT SINGLE pspnr
     INTO @lv_proj_pspnr
     FROM proj
@@ -41,29 +30,25 @@ METHOD set_blkd_status_for_higher_wbs.
     RETURN.
   ENDIF.
 
-  "Now read PRHI rows for this project hierarchy
+  "FDS Step 1: Get PRHI-UP where PRHI-PSPHI = PROJ-PSPNR
   SELECT *
     FROM prhi
     INTO TABLE @lt_prhi
     WHERE psphi = @lv_proj_pspnr.
 
   IF lt_prhi IS INITIAL.
-    "No hierarchy -> nothing to BLKD
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  "Step 2 (FDS): Activate BLKD for PRHI-UP
-  "------------------------------------------------------------
+  "FDS Step 2: Set BLKD for PRHI-UP
   LOOP AT lt_prhi INTO ls_prhi.
     CLEAR ls_user_stat.
-    ls_user_stat-wbs_element     = ls_prhi-up.     "FDS: WBS_ELEMENT = PRHI-UP
+    ls_user_stat-wbs_element     = ls_prhi-up.     "WBS_ELEMENT = PRHI-UP
     ls_user_stat-set_user_status = 'BLKD'.
     APPEND ls_user_stat TO lt_user_stat.
   ENDLOOP.
 
-  "Optional: remove duplicates
   SORT lt_user_stat BY wbs_element.
   DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
 
