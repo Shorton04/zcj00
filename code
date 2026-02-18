@@ -1,14 +1,16 @@
-DATA(lv_posid_db) = ls_item-posid.
+DATA: lv_posid_db TYPE ps_posid.
+
+lv_posid_db = ls_item-posid.
+
+CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+  EXPORTING
+    input  = lv_posid_db
+  IMPORTING
+    output = lv_posid_db
+  EXCEPTIONS
+    OTHERS = 1.
 
 SELECT SINGLE objnr
   FROM prps
   INTO @lv_objnr
   WHERE posid = @lv_posid_db.
-
-IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-  REPLACE ALL OCCURRENCES OF '.' IN lv_posid_db WITH ''.
-  SELECT SINGLE objnr
-    FROM prps
-    INTO @lv_objnr
-    WHERE posid = @lv_posid_db.
-ENDIF.
