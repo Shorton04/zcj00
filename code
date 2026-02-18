@@ -1,3 +1,13 @@
+    WHEN 'SUM'.
+      READ TABLE lt_table INTO ls_table WITH KEY stufe = '1'.
+      IF sy-subrc = 0.
+        SELECT SINGLE * FROM prps INTO @DATA(ls_prps_uni) WHERE posid = @ls_table-pspid.
+        IF ( lv_type = 1 OR sy-subrc = 0 ) AND ls_prps_uni-zmaint_sys NE 'UN'.
+          PERFORM fcode_total_up.
+        ENDIF.
+      ENDIF.
+
+
 FORM fcode_total_up."  USING    p_tc_name TYPE dynfnam
   "p_table_name
   "p_mark_name.
