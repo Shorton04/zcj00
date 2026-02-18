@@ -1,41 +1,66 @@
-  METHOD assign_plan_values.
+METHOD assign_budget_cj30.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          ls_item         TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lt_return       TYPE TABLE OF bapiret2.
-    DATA: lv_waers     TYPE waers.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lt_return       TYPE TABLE OF bapiret2,
+        lv_posid_db     TYPE ps_posid,
+        lv_has_error    TYPE abap_bool.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
+  rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-    "1) Primary: read from header table (since you confirmed it’s stored there)
+  "Currency
+  SELECT SINGLE waers
+    INTO @lv_waers
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = @is_header-zreq_num.
+
+  IF lv_waers IS INITIAL.
+    lv_waers = is_header-waers.
+  ENDIF.
+
+  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
     SELECT SINGLE waers
       INTO @lv_waers
-      FROM ztb_a2r_wbshdr
-      WHERE zreq_num = @is_header-zreq_num.
+      FROM t001
+      WHERE bukrs = @is_header-bukrs.
+  ENDIF.
 
-    "2) Fallback: from is_header if already passed in
-    IF lv_waers IS INITIAL.
-      lv_waers = is_header-waers.
+  IF lv_waers IS INITIAL.
+    "No currency -> KBPP will not behave correctly
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  LOOP AT it_wbs_items INTO ls_item.
+
+    "1) Only flagged rows (keep this if required by your design)
+    IF ls_item-zbudget_check IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    "3) Fallback: derive from company code (T001) if still initial
-    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-      SELECT SINGLE waers
-        INTO @lv_waers
-        FROM t001
-        WHERE bukrs = @is_header-bukrs.
+    "2) Budget check:
+    "   If you want CJ30 ONLY when user entered > 0 budget:
+    IF ls_item-wert2 IS INITIAL OR ls_item-wert2 = 0.
+      CONTINUE.
     ENDIF.
 
-    LOOP AT it_wbs_items INTO ls_item.
-      IF ls_item-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
+    "3) Get OBJNR (prefer PSPNR if available)
+    CLEAR lv_objnr.
 
-      DATA: lv_posid_db TYPE ps_posid.
+    IF ls_item-posnr IS NOT INITIAL.
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE pspnr = @ls_item-posnr.
+    ENDIF.
+
+    "Fallback: by POSID (convert external -> internal)
+    IF lv_objnr IS INITIAL AND ls_item-posid IS NOT INITIAL.
 
       lv_posid_db = ls_item-posid.
 
@@ -48,44 +73,76 @@
           OTHERS = 1.
 
       SELECT SINGLE objnr
-        FROM prps
         INTO @lv_objnr
+        FROM prps
         WHERE posid = @lv_posid_db.
 
-      IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '01'.         "PLAN
-      ls_bpak-wert    = ls_item-wert2.
-      ls_bpak-twaer   = lv_waers.     "MANDATORY
-
-      APPEND ls_bpak TO lt_bpak.
-    ENDLOOP.
-
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
     ENDIF.
 
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-      EXPORTING
-        i_budget_activity = 'KSTP'    "CJ40
-        i_delta_amounts   = 'X'
-        i_rollup_data     = 'X'
-        i_check_plan_data = 'X'
-        i_application     = 'P'
-        i_commit_all      = 'X'
-      IMPORTING
-        e_errors_found    = lv_errors_found
-      TABLES
-        it_bpak           = lt_bpak
-        it_return         = lt_return.
+    IF lv_objnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
+    "4) Build BPAK line
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.          "CJ30 Budget
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.
+
+    APPEND ls_bpak TO lt_bpak.
+
+  ENDLOOP.
+
+  IF lt_bpak IS INITIAL.
+    "No budget lines to post (either none flagged or all zero)
     rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
-  ENDMETHOD.
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity = 'KBUD'
+      i_delta_amounts   = 'X'
+      i_rollup_data     = 'X'
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak
+      it_return         = lt_return
+    EXCEPTIONS
+      no_update         = 1
+      OTHERS            = 2.
+
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  "Also check return messages (if any)
+  lv_has_error = abap_false.
+  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
+       WHERE type = 'E' OR type = 'A' OR type = 'X'.
+    lv_has_error = abap_true.
+    EXIT.
+  ENDLOOP.
+
+  IF lv_has_error = abap_true.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  "After CJ30 success
+  IF set_blkd_status_for_higher_wbs( it_wbs_items = it_wbs_items ) = abap_false.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
