@@ -1,147 +1,52 @@
-METHOD assign_budget_cj30.
+METHOD set_blkd_status_for_higher_wbs.
 
-  DATA: lv_errors_found TYPE oax,
-        lt_bpak         TYPE TABLE OF bpak,
-        ls_bpak         TYPE bpak,
-        ls_item         TYPE ztb_a2r_wbsitem,
-        lv_objnr        TYPE j_objnr,
-        lv_waers        TYPE waers,
-        lt_return       TYPE TABLE OF bapiret2,
-        lv_posid_db     TYPE ps_posid,
-        lv_has_error    TYPE abap_bool.
+  DATA:
+    lt_user_status TYPE TABLE OF bapi_wbs_mnt_user_status,
+    ls_user_status TYPE bapi_wbs_mnt_user_status,
+    lt_result      TYPE TABLE OF bapi_status_result,
+    ls_result      TYPE bapi_status_result.
 
   rv_success = abap_false.
-  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  "Currency
-  SELECT SINGLE waers
-    INTO @lv_waers
-    FROM ztb_a2r_wbshdr
-    WHERE zreq_num = @is_header-zreq_num.
+  "Initialize PS context (MANDATORY in your system)
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-  IF lv_waers IS INITIAL.
-    lv_waers = is_header-waers.
-  ENDIF.
+  LOOP AT it_wbs_items INTO DATA(ls_item).
 
-  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-    SELECT SINGLE waers
-      INTO @lv_waers
-      FROM t001
-      WHERE bukrs = @is_header-bukrs.
-  ENDIF.
-
-  IF lv_waers IS INITIAL.
-    "No currency -> KBPP will not behave correctly
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  LOOP AT it_wbs_items INTO ls_item.
-
-    "1) Only flagged rows (keep this if required by your design)
-    IF ls_item-zbudget_check IS INITIAL.
+    IF ls_item-posid IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    "2) Budget check:
-    "   If you want CJ30 ONLY when user entered > 0 budget:
-    IF ls_item-wert2 IS INITIAL OR ls_item-wert2 = 0.
-      CONTINUE.
-    ENDIF.
-
-    "3) Get OBJNR (prefer PSPNR if available)
-    CLEAR lv_objnr.
-
-    IF ls_item-posnr IS NOT INITIAL.
-      SELECT SINGLE objnr
-        INTO @lv_objnr
-        FROM prps
-        WHERE pspnr = @ls_item-posnr.
-    ENDIF.
-
-    "Fallback: by POSID (convert external -> internal)
-    IF lv_objnr IS INITIAL AND ls_item-posid IS NOT INITIAL.
-
-      lv_posid_db = ls_item-posid.
-
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-        EXPORTING
-          input  = lv_posid_db
-        IMPORTING
-          output = lv_posid_db
-        EXCEPTIONS
-          OTHERS = 1.
-
-      SELECT SINGLE objnr
-        INTO @lv_objnr
-        FROM prps
-        WHERE posid = @lv_posid_db.
-
-    ENDIF.
-
-    IF lv_objnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    "4) Build BPAK line
-    CLEAR ls_bpak.
-    ls_bpak-e_objnr = lv_objnr.
-    ls_bpak-e_versn = '000'.
-    ls_bpak-e_perio = '001'.
-    ls_bpak-e_wrttp = '41'.          "CJ30 Budget
-    ls_bpak-wert    = ls_item-wert2.
-    ls_bpak-twaer   = lv_waers.
-
-    APPEND ls_bpak TO lt_bpak.
+    CLEAR ls_user_status.
+    ls_user_status-wbs_element     = ls_item-posid.
+    ls_user_status-set_user_status = 'BLKD'.
+    APPEND ls_user_status TO lt_user_status.
 
   ENDLOOP.
 
-  IF lt_bpak IS INITIAL.
-    "No budget lines to post (either none flagged or all zero)
-    rv_success = abap_true.
+  IF lt_user_status IS INITIAL.
     RETURN.
   ENDIF.
 
-  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-    EXPORTING
-      i_budget_activity = 'KBUD'
-      i_delta_amounts   = 'X'
-      i_rollup_data     = 'X'
-      i_check_plan_data = 'X'
-      i_application     = 'P'
-      i_commit_all      = 'X'
-    IMPORTING
-      e_errors_found    = lv_errors_found
+  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
     TABLES
-      it_bpak           = lt_bpak
-      it_return         = lt_return
-    EXCEPTIONS
-      no_update         = 1
-      OTHERS            = 2.
+      i_wbs_user_status = lt_user_status
+      e_result          = lt_result.
 
-  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
+  "Required in your system
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'.
 
-  "Also check return messages (if any)
-  lv_has_error = abap_false.
-  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
-       WHERE type = 'E' OR type = 'A' OR type = 'X'.
-    lv_has_error = abap_true.
-    EXIT.
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  "Check result
+  LOOP AT lt_result INTO ls_result.
+    IF ls_result-message_id IS NOT INITIAL.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
   ENDLOOP.
-
-  IF lv_has_error = abap_true.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
-
-  "After CJ30 success
-  IF set_blkd_status_for_higher_wbs( it_wbs_items = it_wbs_items ) = abap_false.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
 
   rv_success = abap_true.
 
