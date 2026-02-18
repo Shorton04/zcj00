@@ -1,35 +1,38 @@
 METHOD set_blkd_status_for_higher_wbs.
 
-  DATA: lv_pspid      TYPE ps_pspid,
-        lv_proj_pspnr TYPE proj-pspnr,
-        lt_prhi       TYPE TABLE OF prhi,
-        ls_prhi       TYPE prhi,
-        lt_user_stat  TYPE TABLE OF bapi_wbs_mnt_user_status,
-        ls_user_stat  TYPE bapi_wbs_mnt_user_status,
-        lt_result     TYPE TABLE OF bapi_status_result,
-        ls_result     TYPE bapi_status_result.
+  DATA: lv_pspid_ext   TYPE ps_pspid,
+        lv_pspid_db    TYPE ps_pspid,
+        lv_proj_pspnr  TYPE proj-pspnr,
+        lt_prhi        TYPE TABLE OF prhi,
+        ls_prhi        TYPE prhi,
+        lt_user_stat   TYPE TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_stat   TYPE bapi_wbs_mnt_user_status,
+        lt_result      TYPE TABLE OF bapi_status_result,
+        ls_result      TYPE bapi_status_result,
+        lv_up_pspnr    TYPE prps-pspnr,
+        lv_up_posid    TYPE prps-posid.
 
   rv_success = abap_false.
 
-  "Get PSPID from first item
+  "1) Get PSPID correctly (from item table PSPID column, not POSID)
   READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
-  IF sy-subrc <> 0 OR ls_any-posid IS INITIAL.
+  IF sy-subrc <> 0 OR ls_any-pspid IS INITIAL.
     RETURN.
   ENDIF.
-  lv_pspid = ls_any-posid.
+
+  lv_pspid_ext = ls_any-pspid.
+  lv_pspid_db  = lv_pspid_ext.
 
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-  DATA lv_pspid_db TYPE ps_pspid.
 
-  lv_pspid_db = lv_pspid.
-
+  "Convert external PSPID -> internal DB format
   CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-  EXPORTING
-    input = lv_pspid_db
+    EXPORTING
+      input  = lv_pspid_db
     IMPORTING
       output = lv_pspid_db.
 
-  "FDS Step 1: Get PROJ-PSPNR using PSPID
+  "2) FDS Step 1: Get PROJ-PSPNR using PSPID
   SELECT SINGLE pspnr
     INTO @lv_proj_pspnr
     FROM proj
@@ -39,7 +42,7 @@ METHOD set_blkd_status_for_higher_wbs.
     RETURN.
   ENDIF.
 
-  "FDS Step 1: Get PRHI-UP where PRHI-PSPHI = PROJ-PSPNR
+  "3) FDS Step 1: Get PRHI-UP where PRHI-PSPHI = PROJ-PSPNR
   SELECT *
     FROM prhi
     INTO TABLE @lt_prhi
@@ -50,13 +53,39 @@ METHOD set_blkd_status_for_higher_wbs.
     RETURN.
   ENDIF.
 
-  "FDS Step 2: Set BLKD for PRHI-UP
+  "4) FDS Step 2: Set BLKD for higher level WBS (parents = PRHI-UP)
+  "   IMPORTANT:
+  "   - root has UP = 00000000 -> skip
+  "   - PRHI-UP is INTERNAL WBS number (PSPNR), BAPI needs external WBS element (POSID)
   LOOP AT lt_prhi INTO ls_prhi.
+
+    lv_up_pspnr = ls_prhi-up.
+
+    IF lv_up_pspnr IS INITIAL OR lv_up_pspnr = '00000000'.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR lv_up_posid.
+    SELECT SINGLE posid
+      INTO @lv_up_posid
+      FROM prps
+      WHERE pspnr = @lv_up_pspnr.
+
+    IF sy-subrc <> 0 OR lv_up_posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
     CLEAR ls_user_stat.
-    ls_user_stat-wbs_element     = ls_prhi-up.     "WBS_ELEMENT = PRHI-UP
+    ls_user_stat-wbs_element     = lv_up_posid.   "external like PC.000136.00
     ls_user_stat-set_user_status = 'BLKD'.
     APPEND ls_user_stat TO lt_user_stat.
+
   ENDLOOP.
+
+  IF lt_user_stat IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
   SORT lt_user_stat BY wbs_element.
   DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
@@ -72,13 +101,26 @@ METHOD set_blkd_status_for_higher_wbs.
     EXPORTING
       wait = 'X'.
 
-  "Check result
+  "5) Check result (treat E/A as failure; also handle your system behavior)
   LOOP AT lt_result INTO ls_result.
+
+    "If your structure has MSGTY/TYPE, check it; otherwise fallback to message_id
+    FIELD-SYMBOLS <f> TYPE any.
+    ASSIGN COMPONENT 'TYPE' OF STRUCTURE ls_result TO <f>.
+    IF sy-subrc = 0 AND <f> IS ASSIGNED.
+      IF <f> = 'E' OR <f> = 'A'.
+        rv_success = abap_false.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
     IF ls_result-message_id IS NOT INITIAL.
       rv_success = abap_false.
       RETURN.
     ENDIF.
+
   ENDLOOP.
+
   rv_success = abap_true.
 
 ENDMETHOD.
