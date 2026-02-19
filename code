@@ -1,33 +1,120 @@
-METHOD set_auc_status_for_level1_wbs.
+METHOD set_user_status_safe.
+  "iv_status  = 'AUC' or 'BLKD'
+  "it_wbs_posid = list of external POSID (PRPS-POSID)
+  "rv_success returns ABAP_TRUE if set ok, else ABAP_FALSE
+
+  DATA: lt_user_stat TYPE STANDARD TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_stat TYPE bapi_wbs_mnt_user_status,
+        lt_result    TYPE STANDARD TABLE OF bapi_status_result,
+        ls_result    TYPE bapi_status_result,
+        lt_return    TYPE STANDARD TABLE OF bapiret2.
+
+  rv_success = abap_false.
+
+  IF it_wbs_posid IS INITIAL OR iv_status IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+
+  CLEAR lt_user_stat.
+  LOOP AT it_wbs_posid INTO DATA(lv_posid).
+    IF lv_posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+    CLEAR ls_user_stat.
+    ls_user_stat-wbs_element     = lv_posid.
+    ls_user_stat-set_user_status = iv_status.
+    APPEND ls_user_stat TO lt_user_stat.
+  ENDLOOP.
+
+  SORT lt_user_stat BY wbs_element.
+  DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
+
+  IF lt_user_stat IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  "Optional retry for lock situations
+  DATA(lv_try) = 0.
+  DATA(lv_max) = 3.
+
+  WHILE lv_try < lv_max.
+    lv_try = lv_try + 1.
+
+    CLEAR lt_result.
+    CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+      TABLES
+        i_wbs_user_status = lt_user_stat
+        e_result          = lt_result.
+
+    "If any hard error -> check if lock, then retry
+    READ TABLE lt_result INTO ls_result WITH KEY message_type = 'E'.
+    IF sy-subrc = 0 AND ls_result-message_text CS 'currently being processed'.
+      WAIT UP TO 2 SECONDS.
+      CONTINUE.
+    ENDIF.
+
+    EXIT.
+  ENDWHILE.
+
+  "Hard stop if any error/abort/exception
+  LOOP AT lt_result INTO ls_result.
+    IF ls_result-message_type CA 'AEX'.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+  ENDLOOP.
+
+  "PRECOMMIT (required to avoid dump)
+  CLEAR lt_return.
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+    TABLES
+      return = lt_return.
+
+  IF line_exists( lt_return[ type = 'E' ] )
+  OR line_exists( lt_return[ type = 'A' ] )
+  OR line_exists( lt_return[ type = 'X' ] ).
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
+
+
+
+
+METHOD set_auc_and_blkd_statuses.
 
   DATA: lv_proj_pspnr TYPE proj-pspnr,
         lv_posid_try  TYPE prps-posid,
         lv_posid_nod  TYPE prps-posid,
         lv_psphi      TYPE prps-psphi.
 
-  DATA: lt_user_stat TYPE STANDARD TABLE OF bapi_wbs_mnt_user_status,
-        ls_user_stat TYPE bapi_wbs_mnt_user_status.
+  "AUC candidates (Level 1 + IMPRF)
+  DATA: lt_auc_posid TYPE STANDARD TABLE OF prps-posid.
 
-  DATA: lt_result TYPE STANDARD TABLE OF bapi_status_result,
-        ls_result TYPE bapi_status_result.
-
-  DATA: lt_return TYPE STANDARD TABLE OF bapiret2,
-        ls_return TYPE bapiret2.
-
-  TYPES: BEGIN OF ty_lvl1,
+  "BLKD candidates (higher WBS)
+  TYPES: BEGIN OF ty_up_posid,
+           up    TYPE prhi-up,
            posid TYPE prps-posid,
-           imprf TYPE prps-imprf,
-         END OF ty_lvl1.
+         END OF ty_up_posid.
 
-  DATA: lt_lvl1 TYPE STANDARD TABLE OF ty_lvl1,
-        ls_lvl1 TYPE ty_lvl1.
+  DATA: lt_up_posid  TYPE STANDARD TABLE OF ty_up_posid,
+        lt_blkd_posid TYPE STANDARD TABLE OF prps-posid.
 
   rv_success = abap_false.
 
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
   "------------------------------------------------------------
-  "1) Determine project PSPHI using any POSID from it_wbs_items
+  "A) Determine project internal PSPHI using any POSID (same as your BLKD)
   "------------------------------------------------------------
   CLEAR lv_proj_pspnr.
 
@@ -74,81 +161,71 @@ METHOD set_auc_status_for_level1_wbs.
   ENDIF.
 
   "------------------------------------------------------------
-  "2) Get Level 1 WBS with Investment Profile
+  "B) Build AUC list: Level 1 WBS with Investment Profile (IMPRF)
   "------------------------------------------------------------
-  CLEAR lt_lvl1.
-  SELECT posid, imprf
+  CLEAR lt_auc_posid.
+  SELECT posid
     FROM prps
-    INTO TABLE @lt_lvl1
+    INTO TABLE @lt_auc_posid
     WHERE psphi = @lv_proj_pspnr
       AND stufe = 1
       AND imprf <> ''.
 
-  IF lt_lvl1 IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
+  "Set AUC first (only if any)
+  IF lt_auc_posid IS NOT INITIAL.
+    IF me->set_user_status_safe(
+         iv_status   = 'AUC'
+         it_wbs_posid = lt_auc_posid ) = abap_false.
+      rv_success = abap_false.
+      RETURN. "stop if lock/error
+    ENDIF.
   ENDIF.
 
   "------------------------------------------------------------
-  "3) Prepare AUC user status set
+  "C) Build BLKD list: higher WBS via PRHI-UP -> PRPS-POSID
   "------------------------------------------------------------
-  CLEAR lt_user_stat.
-  LOOP AT lt_lvl1 INTO ls_lvl1.
-    IF ls_lvl1-posid IS INITIAL.
+  CLEAR lt_up_posid.
+  SELECT prhi~up,
+         prps~posid
+    FROM prhi
+    INNER JOIN prps
+      ON prps~pspnr = prhi~up
+    INTO TABLE @lt_up_posid
+    WHERE prhi~psphi = @lv_proj_pspnr
+      AND prhi~up    <> '00000000'.
+
+  CLEAR lt_blkd_posid.
+  LOOP AT lt_up_posid INTO DATA(ls_up).
+    IF ls_up-posid IS INITIAL.
       CONTINUE.
     ENDIF.
-    CLEAR ls_user_stat.
-    ls_user_stat-wbs_element     = ls_lvl1-posid.
-    ls_user_stat-set_user_status = 'AUC'.  "your user status code
-    APPEND ls_user_stat TO lt_user_stat.
+    APPEND ls_up-posid TO lt_blkd_posid.
   ENDLOOP.
 
-  SORT lt_user_stat BY wbs_element.
-  DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
+  SORT lt_blkd_posid.
+  DELETE ADJACENT DUPLICATES FROM lt_blkd_posid.
 
-  IF lt_user_stat IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  "4) Execute status set
-  "------------------------------------------------------------
-  CLEAR lt_result.
-  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-    TABLES
-      i_wbs_user_status = lt_user_stat
-      e_result          = lt_result.
-
-  "Hard check: if e_result contains error/abort -> stop BEFORE precommit
-  LOOP AT lt_result INTO ls_result.
-    IF ls_result-message_type CA 'AEX'.
+  "Set BLKD
+  IF lt_blkd_posid IS NOT INITIAL.
+    IF me->set_user_status_safe(
+         iv_status   = 'BLKD'
+         it_wbs_posid = lt_blkd_posid ) = abap_false.
       rv_success = abap_false.
       RETURN.
     ENDIF.
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  "5) PS PRECOMMIT (THIS is what your dump complains about)
-  "------------------------------------------------------------
-  CLEAR lt_return.
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      return = lt_return.
-
-  "If precommit returns E/A/X, DO NOT COMMIT
-  LOOP AT lt_return INTO ls_return WHERE type CA 'AEX'.
-    rv_success = abap_false.
-    RETURN.
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  "6) Commit
-  "------------------------------------------------------------
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
+  ENDIF.
 
   rv_success = abap_true.
 
 ENDMETHOD.
+
+
+
+
+
+METHODS set_user_status_safe
+  IMPORTING
+    iv_status     TYPE j_status
+    it_wbs_posid  TYPE STANDARD TABLE OF prps-posid
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
