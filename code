@@ -1,73 +1,72 @@
 "======================================================================
-" STEP X: ASSIGN INVESTMENT PROGRAM/POSITION TO CREATED WBS (CJ02 BDC)
-" Insert this right AFTER CJB2 BDC + COMMIT WORK AND WAIT
+" STEP: ASSIGN INVESTMENT PROGRAM / POSITION TO CREATED WBS (CJ02 BDC)
+" Insert AFTER CJB2 BDC + COMMIT WORK AND WAIT
 "======================================================================
 
-DATA: ls_hdr_im    TYPE ztb_a2r_wbshdr,
-      lv_hdr_prnam TYPE ztb_a2r_wbshdr-prnam,
-      lv_prnam     TYPE impr-prnam,
-      lv_inv_posid TYPE impr-posid,
-      lv_gjahr_im  TYPE impr-gjahr.
+DATA: lv_hdr_prnam   TYPE ztb_a2r_wbshdr-prnam,
+      lv_prnam_im    TYPE impr-prnam,
+      lv_posid_im    TYPE impr-posid,
+      lv_gjahr_im    TYPE impr-gjahr.
 
-DATA: lt_bdc_cj02  TYPE TABLE OF bdcdata,
-      lt_msg_cj02  TYPE TABLE OF bdcmsgcoll,
-      ls_msg_cj02  TYPE bdcmsgcoll,
-      lv_mode_cj02 TYPE c VALUE 'N',
-      lv_upd_cj02  TYPE c VALUE 'S'.
+DATA: lt_bdc_cj02    TYPE STANDARD TABLE OF bdcdata,
+      lt_msg_cj02    TYPE STANDARD TABLE OF bdcmsgcoll,
+      ls_msg_cj02    TYPE bdcmsgcoll.
 
 DATA: lv_wbs_posid_cj02 TYPE prps-posid,
+      lv_cj02_error     TYPE abap_bool,
       lv_try_cj02       TYPE i.
 
-"--- 1) Get PRNAM from your header table (this is stable in your screenshots)
-CLEAR ls_hdr_im.
+"------------------------------------------------------------
+"1) Read PRNAM from your header table (ZTB_A2R_WBSHDR)
+"   (Based on your screenshot: PRNAM = PR01)
+"------------------------------------------------------------
+CLEAR lv_hdr_prnam.
 SELECT SINGLE prnam
   FROM ztb_a2r_wbshdr
   INTO @lv_hdr_prnam
   WHERE zreq_num = @is_header-zreq_num.
 
-IF sy-subrc <> 0 OR lv_hdr_prnam IS INITIAL.
-  "No IM mapping available -> skip assignment
-ELSE.
+IF sy-subrc = 0 AND lv_hdr_prnam IS NOT INITIAL.
 
-  "--- 2) Read IMPR mapping using PRNAM as POSID (matches your IMPR screenshot)
-  CLEAR: lv_prnam, lv_inv_posid, lv_gjahr_im.
-
-  SELECT prnam, posid, gjahr
+  "------------------------------------------------------------
+  "2) Read IMPR using POSID = header PRNAM (your IMPR screenshot shows POSID = PR01)
+  "   Get: PRNAM, POSID, GJAHR for CJ02 popup fields RAIP1-*
+  "------------------------------------------------------------
+  CLEAR: lv_prnam_im, lv_posid_im, lv_gjahr_im.
+  SELECT SINGLE prnam
+                posid
+                gjahr
     FROM impr
-    WHERE posid = @lv_hdr_prnam      "e.g. PR01
-    ORDER BY gjahr DESC
-    INTO (@lv_prnam, @lv_inv_posid, @lv_gjahr_im)
-    UP TO 1 ROWS.
-  ENDSELECT.
+    INTO (@lv_prnam_im, @lv_posid_im, @lv_gjahr_im)
+    WHERE posid = @lv_hdr_prnam.
 
-  IF lv_prnam IS INITIAL OR lv_inv_posid IS INITIAL OR lv_gjahr_im IS INITIAL.
-    "Fallback: try by PRNAM (in case your customizing differs)
-    CLEAR: lv_prnam, lv_inv_posid, lv_gjahr_im.
-
-    SELECT prnam, posid, gjahr
+  "Fallback: if not found, try PRNAM
+  IF sy-subrc <> 0 OR lv_prnam_im IS INITIAL OR lv_posid_im IS INITIAL OR lv_gjahr_im IS INITIAL.
+    CLEAR: lv_prnam_im, lv_posid_im, lv_gjahr_im.
+    SELECT SINGLE prnam
+                  posid
+                  gjahr
       FROM impr
-      WHERE prnam = @lv_hdr_prnam
-      ORDER BY gjahr DESC
-      INTO (@lv_prnam, @lv_inv_posid, @lv_gjahr_im)
-      UP TO 1 ROWS.
-    ENDSELECT.
+      INTO (@lv_prnam_im, @lv_posid_im, @lv_gjahr_im)
+      WHERE prnam = @lv_hdr_prnam.
   ENDIF.
 
-  IF lv_prnam IS INITIAL OR lv_inv_posid IS INITIAL OR lv_gjahr_im IS INITIAL.
-    "Still no mapping -> skip assignment
-  ELSE.
+  IF lv_prnam_im IS NOT INITIAL AND lv_posid_im IS NOT INITIAL AND lv_gjahr_im IS NOT INITIAL.
 
-    "--- 3) Assign via CJ02 for each CREATED WBS (use LT_CREATED_ITEMS, not template)
-    LOOP AT lt_created_items ASSIGNING FIELD-SYMBOL(<ls_ci>).
+    "------------------------------------------------------------
+    "3) Loop created WBS (use YOUR existing table/structure)
+    "   IMPORTANT: this must be the table that holds NEW created WBS,
+    "   not the template table.
+    "------------------------------------------------------------
+    LOOP AT lt_wbs_created INTO ls_wbs_created.
 
-      "CJ02 is for WBS element. Skip project definition row (STUFE = 1).
-      IF <ls_ci>-stufe = 1 OR <ls_ci>-posid IS INITIAL.
+      IF ls_wbs_created-posid IS INITIAL.
         CONTINUE.
       ENDIF.
 
-      lv_wbs_posid_cj02 = <ls_ci>-posid.
+      lv_wbs_posid_cj02 = ls_wbs_created-posid.
 
-      "Normalize to external format if needed (safe for dotted/non-dotted)
+      "Optional normalize (safe if your POSID is stored without dots)
       TRY.
           CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
             EXPORTING
@@ -77,76 +76,69 @@ ELSE.
         CATCH cx_root.
       ENDTRY.
 
-      "Retry 3x in case of lock ("currently being processed by ...")
+      lv_cj02_error = abap_false.
+
+      "Retry 3 times (lock / processed by user)
       DO 3 TIMES.
         lv_try_cj02 = sy-index.
         CLEAR: lt_bdc_cj02, lt_msg_cj02.
 
         "SAPLCJWB 0100
-        bdc_dynpro(
-          EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0100'
-          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-        bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = '*PRPS-POSID'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=LETB'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = '*PRPS-POSID' iv_fval = lv_wbs_posid_cj02
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0100'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = '*PRPS-POSID'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=LETB'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = '*PRPS-POSID' iv_fval = lv_wbs_posid_cj02
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
         "SAPLCJWB 0901 -> AIPP
-        bdc_dynpro(
-          EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
-          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=AIPP'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-        bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=AIPP'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        "SAPLAIPP 0050 -> fill PRNAM/POSID/GJAHR and TAKE
+        bdc_dynpro( EXPORTING iv_program = 'SAPLAIPP' iv_dynpro = '0050'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RAIP1-PRNAM'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=TAKE'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-        "SAPLAIPP 0050
-        bdc_dynpro(
-          EXPORTING iv_program = 'SAPLAIPP' iv_dynpro = '0050'
-          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-        bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RAIP1-PRNAM'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=TAKE'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-        bdc_field( EXPORTING iv_fnam = 'RAIP1-PRNAM' iv_fval = lv_prnam
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'RAIP1-POSID' iv_fval = lv_inv_posid
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'RAIP1-GJAHR' iv_fval = |{ lv_gjahr_im }|
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'RAIP1-PRNAM' iv_fval = lv_prnam_im
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'RAIP1-POSID' iv_fval = lv_posid_im
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'RAIP1-GJAHR' iv_fval = |{ lv_gjahr_im }|
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
         "Back to 0901 -> Save
-        bdc_dynpro(
-          EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
-          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-        bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=BU'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-        bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
-                   CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=BU'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+        bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
+                    CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
         CALL TRANSACTION 'CJ02'
           USING lt_bdc_cj02
-          MODE lv_mode_cj02
-          UPDATE lv_upd_cj02
+          MODE 'N'
+          UPDATE 'S'
           MESSAGES INTO lt_msg_cj02.
 
-        "Check errors
-        DATA(lv_cj02_error) = abap_false.
+        lv_cj02_error = abap_false.
         LOOP AT lt_msg_cj02 INTO ls_msg_cj02.
           IF ls_msg_cj02-msgtyp CA 'AEX'.
             lv_cj02_error = abap_true.
@@ -159,16 +151,15 @@ ELSE.
           EXIT. "success for this WBS
         ENDIF.
 
-        "Retry on error (likely lock), small wait
         IF lv_try_cj02 < 3.
           WAIT UP TO 2 SECONDS.
         ENDIF.
 
       ENDDO.
 
-      "If still error after retries -> stop process (same pattern as your other steps)
       IF lv_cj02_error = abap_true.
-        MESSAGE e029(zcj00) WITH 'CJ02 IM assignment failed for WBS' lv_wbs_posid_cj02.
+        "Stop creation if IM assignment failed
+        MESSAGE e398(00) WITH 'CJ02 IM assignment failed for WBS' lv_wbs_posid_cj02.
         RETURN.
       ENDIF.
 
