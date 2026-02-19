@@ -1,22 +1,30 @@
-METHOD set_rel_status_for_project_wbs.
+METHOD set_auc_status_for_level1_wbs.
 
   DATA: lv_proj_pspnr TYPE proj-pspnr,
         lv_posid_try  TYPE prps-posid,
         lv_posid_nod  TYPE prps-posid,
         lv_psphi      TYPE prps-psphi.
 
-  TYPES: BEGIN OF ty_objnr,
-           objnr TYPE jsto-objnr,
-         END OF ty_objnr.
+  DATA: lt_user_stat TYPE STANDARD TABLE OF bapi_wbs_mnt_user_status,
+        ls_user_stat TYPE bapi_wbs_mnt_user_status.
 
-  DATA: lt_objnr TYPE STANDARD TABLE OF ty_objnr,
-        ls_objnr TYPE ty_objnr.
+  DATA: lt_result TYPE STANDARD TABLE OF bapi_status_result,
+        ls_result TYPE bapi_status_result.
 
-  "FM table STATUS is LIKE JSTAT (STAT + INACT)
-  DATA: lt_status TYPE STANDARD TABLE OF jstat,
-        ls_status TYPE jstat.
+  DATA: lt_return TYPE STANDARD TABLE OF bapiret2,
+        ls_return TYPE bapiret2.
+
+  TYPES: BEGIN OF ty_lvl1,
+           posid TYPE prps-posid,
+           imprf TYPE prps-imprf,
+         END OF ty_lvl1.
+
+  DATA: lt_lvl1 TYPE STANDARD TABLE OF ty_lvl1,
+        ls_lvl1 TYPE ty_lvl1.
 
   rv_success = abap_false.
+
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
   "------------------------------------------------------------
   "1) Determine project PSPHI using any POSID from it_wbs_items
@@ -28,53 +36,37 @@ METHOD set_rel_status_for_project_wbs.
       CONTINUE.
     ENDIF.
 
-    "Try as-is
     lv_posid_try = ls_any-posid.
-    SELECT SINGLE psphi
-      FROM prps
-      INTO @lv_psphi
-      WHERE posid = @lv_posid_try.
+    SELECT SINGLE psphi FROM prps INTO @lv_psphi WHERE posid = @lv_posid_try.
     IF sy-subrc = 0 AND lv_psphi IS NOT INITIAL.
       lv_proj_pspnr = lv_psphi.
       EXIT.
     ENDIF.
 
-    "Try without dots
     lv_posid_nod = ls_any-posid.
     REPLACE ALL OCCURRENCES OF '.' IN lv_posid_nod WITH ''.
     IF lv_posid_nod <> lv_posid_try.
-      SELECT SINGLE psphi
-        FROM prps
-        INTO @lv_psphi
-        WHERE posid = @lv_posid_nod.
+      SELECT SINGLE psphi FROM prps INTO @lv_psphi WHERE posid = @lv_posid_nod.
       IF sy-subrc = 0 AND lv_psphi IS NOT INITIAL.
         lv_proj_pspnr = lv_psphi.
         EXIT.
       ENDIF.
     ENDIF.
 
-    "Try conversion exit ABPSN
     CLEAR lv_posid_nod.
     lv_posid_nod = ls_any-posid.
     CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-      EXPORTING
-        input  = lv_posid_nod
-      IMPORTING
-        output = lv_posid_nod
-      EXCEPTIONS
-        OTHERS = 1.
+      EXPORTING  input  = lv_posid_nod
+      IMPORTING  output = lv_posid_nod
+      EXCEPTIONS OTHERS = 1.
 
     IF lv_posid_nod IS NOT INITIAL.
-      SELECT SINGLE psphi
-        FROM prps
-        INTO @lv_psphi
-        WHERE posid = @lv_posid_nod.
+      SELECT SINGLE psphi FROM prps INTO @lv_psphi WHERE posid = @lv_posid_nod.
       IF sy-subrc = 0 AND lv_psphi IS NOT INITIAL.
         lv_proj_pspnr = lv_psphi.
         EXIT.
       ENDIF.
     ENDIF.
-
   ENDLOOP.
 
   IF lv_proj_pspnr IS INITIAL.
@@ -82,52 +74,80 @@ METHOD set_rel_status_for_project_wbs.
   ENDIF.
 
   "------------------------------------------------------------
-  "2) Get all WBS OBJNR under this project
+  "2) Get Level 1 WBS with Investment Profile
   "------------------------------------------------------------
-  CLEAR lt_objnr.
-  SELECT objnr
+  CLEAR lt_lvl1.
+  SELECT posid, imprf
     FROM prps
-    INTO TABLE @lt_objnr
+    INTO TABLE @lt_lvl1
     WHERE psphi = @lv_proj_pspnr
-      AND objnr <> ''.
+      AND stufe = 1
+      AND imprf <> ''.
 
-  IF lt_objnr IS INITIAL.
+  IF lt_lvl1 IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
-  SORT lt_objnr BY objnr.
-  DELETE ADJACENT DUPLICATES FROM lt_objnr COMPARING objnr.
+  "------------------------------------------------------------
+  "3) Prepare AUC user status set
+  "------------------------------------------------------------
+  CLEAR lt_user_stat.
+  LOOP AT lt_lvl1 INTO ls_lvl1.
+    IF ls_lvl1-posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+    CLEAR ls_user_stat.
+    ls_user_stat-wbs_element     = ls_lvl1-posid.
+    ls_user_stat-set_user_status = 'AUC'.  "your user status code
+    APPEND ls_user_stat TO lt_user_stat.
+  ENDLOOP.
+
+  SORT lt_user_stat BY wbs_element.
+  DELETE ADJACENT DUPLICATES FROM lt_user_stat COMPARING wbs_element.
+
+  IF lt_user_stat IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
   "------------------------------------------------------------
-  "3) Set REL using STATUS_CHANGE_INTERN_VB
-  "   Activate status => INACT = space
+  "4) Execute status set
   "------------------------------------------------------------
-  LOOP AT lt_objnr INTO ls_objnr.
+  CLEAR lt_result.
+  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+    TABLES
+      i_wbs_user_status = lt_user_stat
+      e_result          = lt_result.
 
-    CLEAR lt_status.
-    CLEAR ls_status.
-
-    ls_status-stat  = 'I0002'.  "REL - Released
-    ls_status-inact = space.    "active
-    APPEND ls_status TO lt_status.
-
-    CALL FUNCTION 'STATUS_CHANGE_INTERN_VB'
-      EXPORTING
-        objnr = ls_objnr-objnr
-      TABLES
-        status = lt_status
-      EXCEPTIONS
-        OTHERS = 1.
-
-    IF sy-subrc <> 0.
+  "Hard check: if e_result contains error/abort -> stop BEFORE precommit
+  LOOP AT lt_result INTO ls_result.
+    IF ls_result-message_type CA 'AEX'.
       rv_success = abap_false.
       RETURN.
     ENDIF.
-
   ENDLOOP.
 
-  COMMIT WORK AND WAIT.
+  "------------------------------------------------------------
+  "5) PS PRECOMMIT (THIS is what your dump complains about)
+  "------------------------------------------------------------
+  CLEAR lt_return.
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+    TABLES
+      return = lt_return.
+
+  "If precommit returns E/A/X, DO NOT COMMIT
+  LOOP AT lt_return INTO ls_return WHERE type CA 'AEX'.
+    rv_success = abap_false.
+    RETURN.
+  ENDLOOP.
+
+  "------------------------------------------------------------
+  "6) Commit
+  "------------------------------------------------------------
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
 
   rv_success = abap_true.
 
