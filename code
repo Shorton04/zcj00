@@ -1,172 +1,143 @@
-   "═══════════════════════════════════════════════════════════════════
-    " STEP 10: CREATE SETTLEMENT RULES - DEBUG VERSION
-    "═══════════════════════════════════════════════════════════════════
-    DATA: lt_bdcdata     TYPE TABLE OF bdcdata,
-          lt_bdcmsg      TYPE TABLE OF bdcmsgcoll,
-          ls_bdcmsg      TYPE bdcmsgcoll,
-          lv_pspid_char  TYPE char24,
-          lv_period_char TYPE char24,
-          lv_gjahr_char  TYPE char24,
-          lv_mode        TYPE c VALUE 'N',  " Changed to 'A' for debugging
-          lv_update      TYPE c VALUE 'S'.
+"------------------------------------------------------------
+" Build 2 variants of BDCDATA:
+"   A) With popup 0300 (new session behavior)
+"   B) Without popup 0300 (already-open behavior)
+" Then try A first, if error -> try B
+"------------------------------------------------------------
+DATA: lt_bdcdata_with_popup TYPE TABLE OF bdcdata,
+      lt_bdcdata_no_popup   TYPE TABLE OF bdcdata,
+      lt_bdcmsg_try         TYPE TABLE OF bdcmsgcoll,
+      lv_has_error          TYPE abap_bool.
 
-    " Get current period and fiscal year
-    DATA(lv_period) = sy-datum+4(2).  " Current month (MM)
-    DATA(lv_gjahr) = sy-datum+0(4).   " Current year (YYYY)
+"============================================================
+" Variant A: WITH popup 0300 (your current recording)
+"============================================================
+CLEAR lt_bdcdata_with_popup.
 
-    " Convert to CHAR132
-    lv_period_char = lv_period.
-    lv_gjahr_char = lv_gjahr.
-    lv_vkokr_char  = lv_vkokr.
+bdc_dynpro( EXPORTING iv_program = 'SAPLKAZB'  iv_dynpro = '1000'
+           CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-    " Get Level 1 WBS Element (Project Definition) from lt_wbs_celement
-    READ TABLE lt_wbs_celement INTO ls_wbs_celement INDEX 1.
+bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE' iv_fval = '/EOKKS'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-    IF sy-subrc = 0 AND ls_wbs_celement-wbs_element IS NOT INITIAL.
+bdc_dynpro( EXPORTING iv_program = 'SAPLSPO4' iv_dynpro = '0300'
+           CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-      " Convert to CHAR132
-      lv_pspid_char = ls_wbs_celement-wbs_element.
+bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE' iv_fval = '=FURT'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-*      "  DEBUG: Show what we're passing to CJB2
-*      MESSAGE i025(zcj00) WITH 'Calling CJB2 with:' lv_pspid_char
-*        DISPLAY LIKE 'I'.
-*
-*      IF sy-uname = 'EV92123'.
-      CLEAR lt_bdcdata.
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLKAZB'
-          iv_dynpro  = '1000'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'SVALD-VALUE(01)' iv_fval = CONV #( lv_vkokr_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '/EOKKS'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_dynpro( EXPORTING iv_program = 'SAPLKAZB'  iv_dynpro = '1000'
+           CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
+bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE' iv_fval = '=RUN'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLSPO4'
-          iv_dynpro  = '0300'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR' iv_fval = 'RKAUF-LIST'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '=FURT'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'RKAUF-TEST' iv_fval = ''
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'SVALD-VALUE(01)'
-          iv_fval    = CONV #( lv_vkokr_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'
+                    iv_fval = 'SAPLKAOP                                0570BLOCK1'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
+
+bdc_field( EXPORTING iv_fnam = 'LKP74-PSPID' iv_fval = CONV #( lv_pspid_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
+
+bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'
+                    iv_fval = 'SAPLKAZB                                2100BLOCK2'
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
+
+bdc_field( EXPORTING iv_fnam = 'RKAUF-FROM'  iv_fval = CONV #( lv_period_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
+
+bdc_field( EXPORTING iv_fnam = 'RKAUF-GJAHR' iv_fval = CONV #( lv_gjahr_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_with_popup ).
 
 
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLKAZB'
-          iv_dynpro  = '1000'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+"============================================================
+" Variant B: NO popup 0300 (when screen 1000 comes first)
+"============================================================
+CLEAR lt_bdcdata_no_popup.
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '=RUN'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_dynpro( EXPORTING iv_program = 'SAPLKAZB'  iv_dynpro = '1000'
+           CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_CURSOR'
-          iv_fval    = 'RKAUF-LIST'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+" NOTE: still keep /EOKKS if it is needed to reach controlling area logic;
+" but if /EOKKS is what triggers the popup, it's OK—if popup doesn't show,
+" system remains on 1000 and BDC continues fine.
+bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE' iv_fval = '/EOKKS'
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-TEST'
-          iv_fval    = ''
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_dynpro( EXPORTING iv_program = 'SAPLKAZB'  iv_dynpro = '1000'
+           CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_SUBSCR'
-          iv_fval    = 'SAPLKAOP                                0570BLOCK1'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'BDC_OKCODE' iv_fval = '=RUN'
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'LKP74-PSPID'
-          iv_fval    = CONV #( lv_pspid_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'BDC_CURSOR' iv_fval = 'RKAUF-LIST'
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_SUBSCR'
-          iv_fval    = 'SAPLKAZB                                2100BLOCK2'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'RKAUF-TEST' iv_fval = ''
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-FROM'
-          iv_fval    = CONV #( lv_period_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'
+                    iv_fval = 'SAPLKAOP                                0570BLOCK1'
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-GJAHR'
-          iv_fval    = CONV #( lv_gjahr_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
+bdc_field( EXPORTING iv_fnam = 'LKP74-PSPID' iv_fval = CONV #( lv_pspid_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      " Execute CJB2 in foreground
-      CLEAR lt_bdcmsg.
+bdc_field( EXPORTING iv_fnam = 'BDC_SUBSCR'
+                    iv_fval = 'SAPLKAZB                                2100BLOCK2'
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      CALL TRANSACTION 'CJB2'
-        USING lt_bdcdata
-        MODE lv_mode
-        UPDATE lv_update
-        MESSAGES INTO lt_bdcmsg.
+bdc_field( EXPORTING iv_fnam = 'RKAUF-FROM'  iv_fval = CONV #( lv_period_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      "  DEBUG: Display any error messages
-      LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
-        MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
-          WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
-               ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
-          DISPLAY LIKE 'E'.
-      ENDLOOP.
+bdc_field( EXPORTING iv_fnam = 'RKAUF-GJAHR' iv_fval = CONV #( lv_gjahr_char )
+          CHANGING  ct_bdcdata = lt_bdcdata_no_popup ).
 
-      "  DEBUG: Show success messages too
-      LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp = 'S'.
-        MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
-          WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2
-          DISPLAY LIKE 'S'.
-      ENDLOOP.
+
+"============================================================
+" Execute: try WITH popup first, then fallback to NO popup
+"============================================================
+CLEAR lt_bdcmsg_try.
+CALL TRANSACTION 'CJB2'
+  USING lt_bdcdata_with_popup
+  MODE lv_mode
+  UPDATE lv_update
+  MESSAGES INTO lt_bdcmsg_try.
+
+lv_has_error = abap_false.
+LOOP AT lt_bdcmsg_try INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
+  lv_has_error = abap_true.
+  EXIT.
+ENDLOOP.
+
+IF lv_has_error = abap_true.
+  " Fallback attempt
+  CLEAR lt_bdcmsg_try.
+  CALL TRANSACTION 'CJB2'
+    USING lt_bdcdata_no_popup
+    MODE lv_mode
+    UPDATE lv_update
+    MESSAGES INTO lt_bdcmsg_try.
+ENDIF.
+
+" Finally: show messages from the attempt that actually ran last
+LOOP AT lt_bdcmsg_try INTO ls_bdcmsg WHERE msgtyp = 'E' OR msgtyp = 'A'.
+  MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
+    WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2 ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
+    DISPLAY LIKE 'E'.
+ENDLOOP.
+
+LOOP AT lt_bdcmsg_try INTO ls_bdcmsg WHERE msgtyp = 'S'.
+  MESSAGE ID ls_bdcmsg-msgid TYPE 'I' NUMBER ls_bdcmsg-msgnr
+    WITH ls_bdcmsg-msgv1 ls_bdcmsg-msgv2 ls_bdcmsg-msgv3 ls_bdcmsg-msgv4
+    DISPLAY LIKE 'S'.
+ENDLOOP.
