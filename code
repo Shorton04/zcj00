@@ -1,1267 +1,176 @@
-  METHOD create_wbs_elements.
-*&---------------------------------------------------------------------*
-*& METHOD: CREATE_WBS_ELEMENTS
-*& Creates Project Definition + WBS Elements based on template structure
-*& Reference: FORM wbs_request_create + check_prps_create pattern
-*&---------------------------------------------------------------------*
+IF sy-uname = 'hq75176'.
 
-    DATA: lv_pspid          TYPE ps_pspid,
-          ls_wbs            TYPE ztb_a2r_wbsitem,
-          ls_wbs_temp       TYPE ztb_a2r_wbsitem,
-          ls_wbs_created    TYPE ztb_a2r_wbsitem,
-          lt_wbs_sorted     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          lt_return         TYPE TABLE OF bapiret2,
-          ls_return         TYPE bapiret2,
-          lv_backward_index TYPE i,
-          lt_wbs_celement   TYPE TABLE OF bapi_bus2054_new,
-          ls_wbs_celement   TYPE bapi_bus2054_new,
-          lt_extensionin    TYPE TABLE OF bapiparex,
-          ls_extensionin    TYPE bapiparex,
-          ls_te_wbs         TYPE bapi_te_wbs_element,
-          lv_level1_pspnr   TYPE ps_pspnr,
-          lv_waers          TYPE waers,
-          lv_upper_level    TYPE ps_posid,
-          lv_left_level     TYPE ps_posid,
-          lv_index          TYPE i,
-          lv_error          TYPE char1,
-          ls_project_new    TYPE bapi_bus2001_new.
+  "======================================================================
+  " STEP: ASSIGN INVESTMENT PROGRAM / POSITION TO CREATED WBS (CJ02 BDC)
+  " Rule: POSID = IMPR-POSID where IMPR-PRNAM = header PRNAM and highest PARNR
+  "======================================================================
 
-    rv_success = abap_false.
-    CLEAR lv_error.
-    DATA: lv_vkokr      TYPE kokrs,
-          lv_pspnr      TYPE ps_spsnr,
-          lv_posid      TYPE ps_posid,
-          lv_vkokr_char TYPE char24,
-          lv_posid_db   TYPE ps_posid.
+  DATA: lv_hdr_prnam TYPE ztb_a2r_wbshdr-prnam,
+        lv_prnam     TYPE impr-prnam,
+        lv_posid_im  TYPE impr-posid,
+        lv_gjahr_im  TYPE impr-gjahr,
+        lv_parnr_im  TYPE impr-parnr.
 
-    "1) Header value
-    lv_vkokr = is_header-vkokr.
+  DATA: lt_bdc_cj02 TYPE STANDARD TABLE OF bdcdata,
+        lt_msg_cj02 TYPE STANDARD TABLE OF bdcmsgcoll,
+        ls_msg_cj02 TYPE bdcmsgcoll.
 
-    "2) If missing -> read from Z table items
-    IF lv_vkokr IS INITIAL.
+  DATA: lv_wbs_posid_cj02 TYPE prps-posid,
+        lv_cj02_error     TYPE abap_bool,
+        lv_try_cj02       TYPE i.
 
-      "Prefer VKOKR directly if your Z table has it
-      SELECT SINGLE vkokr
-        INTO @lv_vkokr
-        FROM ztb_a2r_wbsitem
-        WHERE zreq_num = @is_header-zreq_num
-          AND vkokr    IS NOT NULL
-          AND vkokr    <> ''.
+  "------------------------------------------------------------
+  "1) Read PRNAM from header table
+  "------------------------------------------------------------
+  CLEAR lv_hdr_prnam.
+  SELECT SINGLE prnam
+    FROM ztb_a2r_wbshdr
+    INTO @lv_hdr_prnam
+    WHERE zreq_num = @is_header-zreq_num.
 
+  IF lv_hdr_prnam IS INITIAL.
+    "Nothing to assign
+    RETURN.
+  ENDIF.
+
+  lv_prnam = lv_hdr_prnam.
+
+  "------------------------------------------------------------
+  "2) Get IM Position (POSID) by highest PARNR for this PRNAM
+  "   (your requirement: PRNAM = header PRNAM, highest PARNR)
+  "------------------------------------------------------------
+  CLEAR: lv_posid_im, lv_gjahr_im, lv_parnr_im.
+
+  SELECT posid, gjahr, parnr
+    FROM impr
+    WHERE prnam = @lv_prnam
+      AND parnr <> '00000000'       "optional: skip root
+    ORDER BY parnr DESC
+    INTO (@lv_posid_im, @lv_gjahr_im, @lv_parnr_im)
+    UP TO 1 ROWS.
+  ENDSELECT.
+
+  IF lv_posid_im IS INITIAL OR lv_gjahr_im IS INITIAL.
+    "Fallback: at least get any record for PRNAM
+    SELECT SINGLE posid, gjahr
+      FROM impr
+      INTO (@lv_posid_im, @lv_gjahr_im)
+      WHERE prnam = @lv_prnam.
+  ENDIF.
+
+  IF lv_posid_im IS INITIAL OR lv_gjahr_im IS INITIAL.
+    MESSAGE e398(00) WITH 'No IMPR entry found for PRNAM' lv_prnam.
+    RETURN.
+  ENDIF.
+
+  "------------------------------------------------------------
+  "3) Loop created WBS (NEW POSID) then call CJ02 BDC
+  "------------------------------------------------------------
+  LOOP AT et_wbs_created INTO ls_wbs_created.
+
+    IF ls_wbs_created-posid IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    "3) If still missing -> derive via PRPSS using POSNR from Z table
-    IF lv_vkokr IS INITIAL.
+    lv_wbs_posid_cj02 = ls_wbs_created-posid.
 
-      SELECT SINGLE posnr
-        INTO @lv_pspnr
-        FROM ztb_a2r_wbsitem
-        WHERE zreq_num = @is_header-zreq_num
-          AND posnr    IS NOT NULL
-          AND posnr    <> ''.
-
-      IF lv_pspnr IS NOT INITIAL.
-        SELECT SINGLE pkokr
-          INTO lv_vkokr
-          FROM prpss
-          WHERE pspnr = lv_pspnr.
-      ENDIF.
-
-    ENDIF.
-
-    "4) If still missing -> derive via PRPS->PRPSS using POSID from Z table
-    IF lv_vkokr IS INITIAL.
-
-      SELECT SINGLE posid
-        INTO @lv_posid
-        FROM ztb_a2r_wbsitem
-        WHERE zreq_num = @is_header-zreq_num
-          AND posid    IS NOT NULL
-          AND posid    <> ''.
-
-      IF lv_posid IS NOT INITIAL.
-
-        lv_posid_db = lv_posid.
-
-        "Normalize POSID if stored without dots
-        TRY.
-            CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
-              EXPORTING
-                input  = lv_posid_db
-              IMPORTING
-                output = lv_posid_db.
-          CATCH cx_root.
-        ENDTRY.
-
-        "Get PSPNR from PRPS then get KOKRS from PRPSS
-        CLEAR lv_pspnr.
-        SELECT SINGLE pspnr
-          INTO lv_pspnr
-          FROM prps
-          WHERE posid = lv_posid_db.
-
-        IF lv_pspnr IS NOT INITIAL.
-          SELECT SINGLE pkokr
-            INTO lv_vkokr
-            FROM prpss
-            WHERE pspnr = lv_pspnr.
-        ENDIF.
-
-      ENDIF.
-
-    ENDIF.
-
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 1: GET NEXT PROJECT NUMBER
-    "═══════════════════════════════════════════════════════════════════
-    lv_pspid = get_next_project_number( is_header-profl ).
-
-    IF lv_pspid IS INITIAL.
-      MESSAGE e029(zcj00) WITH 'Failed to get project number'.
-      RETURN.
-    ENDIF.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 2: GET CURRENCY FROM COMPANY CODE
-    "═══════════════════════════════════════════════════════════════════
-    SELECT SINGLE waers FROM t001
-      INTO lv_waers
-      WHERE bukrs = is_header-bukrs.
-
-    IF sy-subrc <> 0.
-      lv_waers = 'USD'.
-    ENDIF.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 3: INITIALIZE BAPI
-    "═══════════════════════════════════════════════════════════════════
-    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 4: CREATE PROJECT DEFINITION (Level 1)
-    " Reference: FORM check_proj_create
-    "═══════════════════════════════════════════════════════════════════
-    CLEAR ls_project_new.
-
-    " Use the generated project number
-    ls_project_new-project_definition = lv_pspid.
-
-    " Map from header (following reference pattern)
-    ls_project_new-description        = is_header-post1.
-    ls_project_new-company_code       = is_header-bukrs.
-    ls_project_new-controlling_area   = lv_vkokr.
-    ls_project_new-profit_ctr         = is_header-prctr.
-    ls_project_new-start              = is_header-plsez.
-    ls_project_new-finish             = is_header-plsez.
-    ls_project_new-fcst_start         = is_header-plsez.
-    ls_project_new-fcst_finish        = is_header-plsez.
-    ls_project_new-plant              = is_header-werks.
-    ls_project_new-project_profile    = is_header-profl.
-    ls_project_new-responsible_no     = is_header-vernr.
-    ls_project_new-project_currency   = lv_waers.
-
-    " Optional fields from reference
-    IF is_header-vkokr IS NOT INITIAL.
-      ls_project_new-controlling_area = lv_vkokr.
-    ENDIF.
-
-    " Create Project Definition via BAPI
-    CALL FUNCTION 'BAPI_BUS2001_CREATE'
-      EXPORTING
-        i_project_definition = ls_project_new
-      TABLES
-        et_return            = lt_return.
-
-    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
-      lv_error = 'X'.
-      EXIT.
-    ENDLOOP.
-
-    IF lv_error = 'X'.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      MESSAGE e029(zcj00) WITH 'Project creation failed'.
-      RETURN.
-    ENDIF.
-
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 5: BUILD WBS ELEMENTS FROM TEMPLATE STRUCTURE
-    " Reference: FORM check_prps_create
-    " Critical: Maintain template hierarchy and naming from IT_WBS_ITEMS
-    "═══════════════════════════════════════════════════════════════════
-    DATA lv_level1_assigned TYPE abap_bool VALUE abap_false.
-    " Sort by STUFE DESCENDING (reference pattern)
-    lt_wbs_sorted = it_wbs_items.
-    SORT lt_wbs_sorted BY stufe DESCENDING posid DESCENDING.
-    CLEAR: lt_wbs_celement, lt_extensionin.
-
-    LOOP AT lt_wbs_sorted INTO ls_wbs.
-
-      " Skip Level 1 (already created as project definition)
-      IF ls_wbs-stufe = 1.
-        CONTINUE.
-      ENDIF.
-
-*    " Skip items without budget (optional based on requirements)
-*    IF ls_wbs-zbudget_check = 'X' AND ls_wbs-wert2 IS INITIAL.
-*      CONTINUE.
-*    ENDIF.
-
-      CLEAR: ls_wbs_celement, ls_te_wbs, lv_upper_level, lv_left_level.
-      lv_index = sy-tabix + 1.
-
-      "───────────────────────────────────────────────────────────────
-      " WBS ELEMENT ID: Critical - Build from new project number + template suffix
-      " Template: PC.000003.00, PC.000003.00.1, PC.000003.00.2, etc.
-      " New:      PC.000011.00, PC.000011.00.1, PC.000011.00.2, etc.
-      "───────────────────────────────────────────────────────────────
-
-      " Extract suffix from template POSID
-      " Template POSID format: PC.000003.00.1
-      " We need: .00.1 part
-      DATA: lv_template_posid TYPE ps_posid,
-            lv_new_posid      TYPE ps_posid,
-            lv_suffix         TYPE string,
-            lv_template_len   TYPE i,
-            lv_project_len    TYPE i.
-
-      lv_template_posid = ls_wbs-posid.
-
-      " Find where project number ends in template
-      " Template project should be in STUFE = 1 item or from COPY_TEMPLATE_STRUCTURE
-      " Assuming template format: PC.NNNNNN.XX.Y where PC.NNNNNN is project
-      " and .XX.Y is WBS hierarchy suffix
-
-      " Simple approach: Replace template project ID with new project ID
-      " Template: PC.000003.00.1 → Find 'PC.000003' and replace with new 'PC.000011'
-
-      " Get template project ID (should be first 9 or 10 chars depending on format)
-      " For safety, we'll use the Level 1 WBS POSID as template project
-      DATA: lv_template_project TYPE ps_pspid.
-
-      " Read Level 1 from sorted list to get template project ID
-      READ TABLE lt_wbs_sorted INTO DATA(ls_level1) WITH KEY stufe = 1.
-      IF sy-subrc = 0.
-        lv_template_project = ls_level1-posid.
-      ELSE.
-        " Fallback: Extract from first Level 2 WBS
-        " Format: PC.000003.00 → Extract PC.000003
-        IF strlen( lv_template_posid ) >= 10.
-          lv_template_project = lv_template_posid(10).  " 'PC.000003'
-        ENDIF.
-      ENDIF.
-
-      " Build new WBS POSID by replacing template project with new project
-      IF lv_template_project IS NOT INITIAL AND
-         lv_template_posid CS lv_template_project.
-
-        " Replace template project ID with new project ID
-        lv_new_posid = lv_template_posid.
-        REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
-
-      ELSE.
-        " Fallback: Use template POSID as-is (shouldn't happen)
-        lv_new_posid = lv_template_posid.
-      ENDIF.
-
-      ls_wbs_celement-wbs_element = lv_new_posid.
-
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-        EXPORTING
-          input  = lv_new_posid
-        IMPORTING
-          output = lv_new_posid.
-
-      ls_wbs_celement-wbs_element = lv_new_posid.
-
-      "───────────────────────────────────────────────────────────────
-      " BASIC FIELDS (Reference: check_prps_create)
-      "───────────────────────────────────────────────────────────────
-      ls_wbs_celement-description      = ls_wbs-post1.
-      ls_wbs_celement-company_code     = is_header-bukrs.
-*    ls_wbs_celement-business_area    = is_header-bukrs.
-*    ls_wbs_celement-controlling_area = is_header-bukrs(4).
-      ls_wbs_celement-profit_ctr       = is_header-prctr.
-      ls_wbs_celement-plant            = is_header-werks.
-
-      "───────────────────────────────────────────────────────────────
-      " PLANNING & INVESTMENT FIELDS
-      "───────────────────────────────────────────────────────────────
-      ls_wbs_celement-wbs_planning_element = abap_true.
-      ls_wbs_celement-inv_reason           = is_header-izwek.
-*    ls_wbs_celement-invest_profile       = ls_wbs-imprf.
-      ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
-      ls_wbs_celement-responsible_no       = is_header-vernr.
-
-      "───────────────────────────────────────────────────────────────
-      " DATES
-      "───────────────────────────────────────────────────────────────
-      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
-      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
-      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
-      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
-
-*    " Applicant numbers from reference
-*    IF is_header-vernr IS NOT INITIAL.
-*      ls_wbs_celement-applicant_no = is_header-vernr.
-*    ENDIF.
-
-      "───────────────────────────────────────────────────────────────
-      " ACCOUNT ASSIGNMENT
-      "───────────────────────────────────────────────────────────────
-      ls_wbs_celement-wbs_account_assignment_element = abap_true.
-
-      "───────────────────────────────────────────────────────────────
-      " HIERARCHY: WBS_UP and WBS_LEFT (CRITICAL - Reference pattern)
-      "───────────────────────────────────────────────────────────────
-
-      " Find UPPER level (parent) - same logic with new project ID
-      DATA: lv_parent_template TYPE ps_posid,
-            lv_parent_new      TYPE ps_posid.
-      "---------------------------------------------------
-      " Find UPPER level (parent) - CORRECT LOGIC
-      "---------------------------------------------------
-      CLEAR lv_upper_level.
-
-      DATA(lv_back_index) = sy-tabix - 1.
-
-      WHILE lv_back_index > 0.
-        READ TABLE lt_wbs_sorted INTO ls_wbs_temp INDEX lv_back_index.
-        IF sy-subrc <> 0.
-          EXIT.
-        ENDIF.
-
-        IF ls_wbs_temp-stufe < ls_wbs-stufe.
-
-          IF ls_wbs_temp-stufe = 1.
-            " Parent is project
-            lv_upper_level = lv_pspid.
-          ELSE.
-            " Parent is another WBS
-            lv_parent_new = ls_wbs_temp-posid.
-            REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
-            lv_upper_level = lv_parent_new.
-          ENDIF.
-
-          EXIT.
-        ENDIF.
-
-        lv_back_index = lv_back_index - 1.
-      ENDWHILE.
-
-      " Find LEFT level (left sibling) - same logic
-      CLEAR lv_left_level.
-      DATA: lv_search_index TYPE i.
-      lv_search_index = sy-tabix + 1.
-
-      LOOP AT lt_wbs_sorted INTO ls_wbs_temp FROM lv_search_index.
-        IF lv_left_level IS INITIAL AND
-           ls_wbs_temp-stufe = ls_wbs-stufe.
-          " Found left sibling
-          DATA: lv_left_template TYPE ps_posid,
-                lv_left_new      TYPE ps_posid.
-
-          lv_left_template = ls_wbs_temp-posid.
-          lv_left_new = lv_left_template.
-
-          IF lv_template_project IS NOT INITIAL.
-            REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
-          ENDIF.
-
-          lv_left_level = lv_left_new.
-          EXIT.
-        ENDIF.
-      ENDLOOP.
-
-      " Set hierarchy pointers
-      "---------------------------------------------------
-      " Convert and assign WBS_ELEMENT
-      "---------------------------------------------------
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-        EXPORTING
-          input  = lv_new_posid
-        IMPORTING
-          output = ls_wbs_celement-wbs_element.
-
-      "---------------------------------------------------
-      " Convert and assign WBS_UP
-      "---------------------------------------------------
-      IF lv_upper_level IS NOT INITIAL.
+    "Optional normalize (safe if stored without dots / inconsistent)
+    TRY.
         CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
           EXPORTING
-            input  = lv_upper_level
+            input  = lv_wbs_posid_cj02
           IMPORTING
-            output = ls_wbs_celement-wbs_up.
-      ENDIF.
+            output = lv_wbs_posid_cj02.
+      CATCH cx_root.
+    ENDTRY.
 
-      "---------------------------------------------------
-      " Convert and assign WBS_LEFT
-      "---------------------------------------------------
-      IF lv_left_level IS NOT INITIAL.
-        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-          EXPORTING
-            input  = lv_left_level
-          IMPORTING
-            output = ls_wbs_celement-wbs_left.
-      ENDIF.
-                                                            "ev92123
-      DATA(lv_child) = ls_wbs_celement-wbs_element.
-      DATA(lv_pos)   = 0.
-      FIND ALL OCCURRENCES OF '.' IN lv_child MATCH OFFSET lv_pos.
-      IF sy-subrc = 0.
-        ls_wbs_celement-wbs_up = lv_child(lv_pos).
-      ELSE.
-        ls_wbs_celement-wbs_up = ''.
-      ENDIF.
-                                                            "ev92123
-      APPEND ls_wbs_celement TO lt_wbs_celement.
+    lv_cj02_error = abap_false.
 
-      "───────────────────────────────────────────────────────────────
-      " EXTENSION FIELDS (Reference pattern)STEP 6
-      "───────────────────────────────────────────────────────────────
-      IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
-        CLEAR: ls_te_wbs, ls_extensionin.
+    DO 3 TIMES.
+      lv_try_cj02 = sy-index.
+      CLEAR: lt_bdc_cj02, lt_msg_cj02.
 
-        ls_te_wbs-wbs_element   = ls_wbs_celement-wbs_element.
-        ls_te_wbs-zunifier_proj = 'X'.
+      "SAPLCJWB 0100
+      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0100'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'PRPS-POSID'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=LETB'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'PRPS-POSID'  iv_fval = lv_wbs_posid_cj02
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-        ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
-        ls_extensionin-valuepart1 = ls_te_wbs.
-        ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
+      "SAPLCJWB 0901 -> AIPP
+      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=AIPP'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
+                            iv_fval = 'SAPLCJWB                                0902LISTE'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
+                            iv_fval = 'SAPLCJWB                                3993BUTTONS'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-        APPEND ls_extensionin TO lt_extensionin.
-      ENDIF.
+      "SAPLAIPP 0050 -> fill PRNAM/POSID/GJAHR and TAKE
+      bdc_dynpro( EXPORTING iv_program = 'SAPLAIPP' iv_dynpro = '0050'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RAIP1-PRNAM'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=TAKE'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-    ENDLOOP.
+      bdc_field(  EXPORTING iv_fnam = 'RAIP1-PRNAM' iv_fval = CONV #( lv_prnam )
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'RAIP1-POSID' iv_fval = CONV #( lv_posid_im )
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'RAIP1-GJAHR' iv_fval = |{ lv_gjahr_im }|
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 6: CREATE ALL WBS ELEMENTS IN ONE BAPI CALL
-    "═══════════════════════════════════════════════════════════════════
+      "Back to 0901 -> Save
+      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=BU'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
+                            iv_fval = 'SAPLCJWB                                0902LISTE'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
+      bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
+                            iv_fval = 'SAPLCJWB                                3993BUTTONS'
+                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
 
-    CLEAR lt_wbs_celement.
+      CALL TRANSACTION 'CJ02'
+        USING lt_bdc_cj02
+        MODE  'N'
+        UPDATE 'S'
+        MESSAGES INTO lt_msg_cj02.
 
-    " Sort by POSID DESCENDING, STUFE DESCENDING
-    lt_wbs_sorted = it_wbs_items.
-    SORT lt_wbs_sorted BY posid ASCENDING stufe ASCENDING.
-
-    LOOP AT lt_wbs_sorted INTO ls_wbs.
-
-      " CLEAR ALL variables including work variables
-      CLEAR: ls_wbs_celement,
-             ls_te_wbs,
-             lv_upper_level,
-             lv_left_level,
-             lv_left_new,
-             lv_parent_new,
-             lv_backward_index.
-
-      lv_index = sy-tabix + 1.
-
-      "───────────────────────────────────────────────────────────────
-      " WBS ELEMENT ID
-      "───────────────────────────────────────────────────────────────
-
-      lv_template_posid = ls_wbs-posid.
-
-      " Get template project ID (Level 1)
-      READ TABLE lt_wbs_sorted INTO ls_level1 WITH KEY stufe = 1.
-      IF sy-subrc = 0.
-        lv_template_project = ls_level1-posid.
-      ENDIF.
-
-      " Build new WBS POSID
-      IF ls_wbs-stufe = 1.
-        lv_new_posid = lv_pspid.
-        REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
-      ELSE.
-        IF lv_template_project IS NOT INITIAL AND
-           lv_template_posid CS lv_template_project.
-          lv_new_posid = lv_template_posid.
-          REPLACE lv_template_project IN lv_new_posid WITH lv_pspid.
-        ELSE.
-          lv_new_posid = lv_template_posid.
-        ENDIF.
-        REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
-      ENDIF.
-
-      ls_wbs_celement-wbs_element = lv_new_posid.
-
-      "───────────────────────────────────────────────────────────────
-      " BASIC FIELDS
-      "───────────────────────────────────────────────────────────────
-      ls_wbs_celement-description      = ls_wbs-post1.
-      ls_wbs_celement-company_code     = is_header-bukrs.
-      ls_wbs_celement-profit_ctr       = is_header-prctr.
-      ls_wbs_celement-controlling_area = is_header-vkokr.
-      ls_wbs_celement-plant            = is_header-werks.
-
-      ls_wbs_celement-wbs_planning_element = abap_true.
-      ls_wbs_celement-inv_reason           = is_header-izwek.
-
-      IF ls_wbs-stufe = 1.
-        ls_wbs_celement-invest_profile = ls_wbs-imprf.
-      ELSE.
-        CLEAR ls_wbs_celement-invest_profile.
-      ENDIF.
-
-      ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
-      ls_wbs_celement-inv_reason     = is_header-izwek.
-      ls_wbs_celement-responsible_no = is_header-vernr.
-
-      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
-      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
-      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
-      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
-
-      ls_wbs_celement-wbs_account_assignment_element = abap_true.
-
-      "───────────────────────────────────────────────────────────────
-      " HIERARCHY: WBS_UP and WBS_LEFT
-      "───────────────────────────────────────────────────────────────
-
-      "------------------------------------------------------------
-      " WBS_LEFT: Search FORWARD for same-level sibling
-      "   from the next row after current (lv_index + 1) to the end
-      "------------------------------------------------------------
-      DATA: lv_forward_index TYPE sy-tabix.
-
-      CLEAR: lv_left_new, lv_left_level.
-      lv_forward_index = lv_index + 1.
-
-      WHILE lv_forward_index <= lines( lt_wbs_sorted ).
-        READ TABLE lt_wbs_sorted INDEX lv_forward_index INTO ls_wbs_temp.
-        IF sy-subrc = 0 AND ls_wbs_temp-stufe = ls_wbs-stufe.
-
-          " Found the next sibling - rebuild with new project id
-          lv_left_new = ls_wbs_temp-posid.
-          IF lv_template_project IS NOT INITIAL.
-            REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
-          ENDIF.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
-          lv_left_level = lv_left_new.
-          EXIT.
-
-        ENDIF.
-        lv_forward_index = lv_forward_index + 1.
-      ENDWHILE.
-
-
-      "------------------------------------------------------------
-      " WBS_UP: Search BACKWARD for parent (nearest upper level)
-      "   from the previous row (lv_index - 1) up to the top
-      "------------------------------------------------------------
-
-      CLEAR: lv_parent_new, lv_upper_level.
-      lv_backward_index = lv_index - 1.
-
-      WHILE lv_backward_index >= 1.
-        READ TABLE lt_wbs_sorted INDEX lv_backward_index INTO ls_wbs_temp.
-        IF sy-subrc = 0 AND ls_wbs_temp-stufe < ls_wbs-stufe.
-
-          IF ls_wbs_temp-stufe = 1.
-            lv_parent_new = lv_pspid.
-          ELSE.
-            lv_parent_new = ls_wbs_temp-posid.
-            IF lv_template_project IS NOT INITIAL.
-              REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
-            ENDIF.
-          ENDIF.
-
-          REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
-          lv_upper_level = lv_parent_new.
-          EXIT.
-
-        ENDIF.
-        lv_backward_index = lv_backward_index - 1.
-      ENDWHILE.
-
-
-      " Set results to the current element
-      ls_wbs_celement-wbs_up   = lv_upper_level.
-      ls_wbs_celement-wbs_left = lv_left_level.
-      CLEAR: ls_wbs_celement-wbs_left, lv_left_level.
-      APPEND ls_wbs_celement TO lt_wbs_celement.
-
-      "───────────────────────────────────────────────────────────────
-      " EXTENSION FIELDS
-      "───────────────────────────────────────────────────────────────
-      IF ls_wbs-stufe = 2 AND is_header-zunifier_proj = 'X'.
-        CLEAR: ls_te_wbs, ls_extensionin.
-
-        ls_te_wbs-wbs_element   = lv_new_posid.
-        ls_te_wbs-zunifier_proj = 'X'.
-
-        ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
-        ls_extensionin-valuepart1 = ls_te_wbs.
-        ls_extensionin-valuepart2+49(01) = ls_te_wbs-zunifier_proj.
-
-        APPEND ls_extensionin TO lt_extensionin.
-      ENDIF.
-
-    ENDLOOP.
-
-    " Create ALL WBS elements in ONE BAPI call
-    IF lt_wbs_celement IS NOT INITIAL OR NOT lt_extensionin IS INITIAL.
-
-      CLEAR lt_return.
-
-      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-        EXPORTING
-          i_project_definition = lv_pspid
-        TABLES
-          it_wbs_element       = lt_wbs_celement
-          et_return            = lt_return
-          extensionin          = lt_extensionin.
-
-      LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
-        lv_error = 'X'.
+      lv_cj02_error = abap_false.
+      LOOP AT lt_msg_cj02 INTO ls_msg_cj02 WHERE msgtyp CA 'AEX'.
+        lv_cj02_error = abap_true.
         EXIT.
       ENDLOOP.
 
-      IF lv_error = 'X'.
-        MESSAGE e029(zcj00) WITH 'WBS creation failed'.
-        RETURN.
-      ENDIF.
-
-    ENDIF.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 7: PRE-COMMIT (Call ONCE after all WBS created)
-    "═══════════════════════════════════════════════════════════════════
-    CLEAR lt_return.
-
-    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-      TABLES
-        et_return = lt_return.
-
-    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
-      lv_error = 'X'.
-      EXIT.
-    ENDLOOP.
-
-    IF lv_error = 'X'.
-      MESSAGE e029(zcj00) WITH 'WBS prrecommit failed'.
-      RETURN.
-    ENDIF.
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 8: COMMIT WORK
-    "═══════════════════════════════════════════════════════════════════
-
-    CLEAR ls_return.
-
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait   = 'X'
-      IMPORTING
-        return = ls_return.
-
-    IF ls_return-type CA 'EA'.
-      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-        WITH ls_return-message_v1 ls_return-message_v2.
-      RETURN.
-    ENDIF.
-
-    WAIT UP TO 1 SECONDS.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 9: GET CREATED WBS INTERNAL NUMBERS
-    "═══════════════════════════════════════════════════════════════════
-
-    " Get project internal number
-    SELECT SINGLE pspnr FROM proj
-      INTO lv_level1_pspnr
-      WHERE pspid = lv_pspid.
-
-    " Build output table with created WBS elements
-    LOOP AT it_wbs_items INTO ls_wbs.
-
-      IF ls_wbs-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_wbs_created.
-
-      IF ls_wbs-stufe = 1.
-        " Level 1 = Project
-        ls_wbs_created-posid = lv_pspid.
-        ls_wbs_created-posnr = lv_level1_pspnr.
-      ELSE.
-        " Level 2+ = WBS Element - rebuild POSID with new project number
-        DATA: lv_created_posid TYPE ps_posid.
-
-        lv_created_posid = ls_wbs-posid.
-
-        " Replace template project with new project
-        READ TABLE lt_wbs_sorted INTO ls_level1 WITH KEY stufe = 1.
-        IF sy-subrc = 0.
-          REPLACE ls_level1-posid IN lv_created_posid WITH lv_pspid.
-        ENDIF.
-
-        ls_wbs_created-posid = lv_created_posid.
-
-        " Get internal number from PRPS
-        SELECT SINGLE pspnr FROM prps
-          INTO ls_wbs_created-posnr
-          WHERE posid = ls_wbs_created-posid.
-
-      ENDIF.
-
-      " Copy other fields
-      ls_wbs_created-stufe          = ls_wbs-stufe.
-      ls_wbs_created-post1          = ls_wbs-post1.
-      ls_wbs_created-kostl          = ls_wbs-kostl.
-      ls_wbs_created-wert2          = ls_wbs-wert2.
-      ls_wbs_created-zbudget_check  = ls_wbs-zbudget_check.
-      ls_wbs_created-imprf          = ls_wbs-imprf.
-      ls_wbs_created-prart          = ls_wbs-prart.
-      ls_wbs_created-bukrs          = is_header-bukrs.
-      ls_wbs_created-werks          = is_header-werks.
-
-      UPDATE ztb_a2r_wbsitem
-        SET posid = @ls_wbs_created-posid,
-          posnr = @ls_wbs_created-posnr
-        WHERE zreq_num = @is_header-zreq_num
-          AND posid    = @ls_wbs-posid.
-
-
-      APPEND ls_wbs_created TO et_wbs_created.
-
-    ENDLOOP.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 10: UPDATE HEADER WITH PROJECT NUMBER
-    "═══════════════════════════════════════════════════════════════════
-    UPDATE ztb_a2r_wbshdr
-      SET pspnr = @lv_level1_pspnr,
-      pspid = @lv_pspid,
-      vkokr = @is_header-vkokr,
-      waers = @lv_waers
-      WHERE zreq_num = @is_header-zreq_num.
-
-    "═══════════════════════════════════════════════════════════════════
-    " STEP 10: CREATE SETTLEMENT RULES - DEBUG VERSION
-    "═══════════════════════════════════════════════════════════════════
-    DATA: lt_bdcdata     TYPE TABLE OF bdcdata,
-          lt_bdcmsg      TYPE STANDARD TABLE OF bdcmsgcoll,
-          ls_bdcmsg      TYPE bdcmsgcoll,
-          lv_pspid_char  TYPE char24,
-          lv_period_char TYPE char24,
-          lv_gjahr_char  TYPE char24,
-          lv_has_error   TYPE abap_bool,
-          lv_mode        TYPE c VALUE 'N',  " Changed to 'A' for debugging
-          lv_update      TYPE c VALUE 'S'.
-
-    " Get current period and fiscal year
-    DATA(lv_period) = sy-datum+4(2).  " Current month (MM)
-    DATA(lv_gjahr) = sy-datum+0(4).   " Current year (YYYY)
-
-    " Convert to CHAR132
-    lv_period_char = lv_period.
-    lv_gjahr_char = lv_gjahr.
-    lv_vkokr_char  = lv_vkokr.
-
-    " Get Level 1 WBS Element (Project Definition) from lt_wbs_celement
-    READ TABLE lt_wbs_celement INTO ls_wbs_celement INDEX 1.
-
-    IF sy-subrc = 0 AND ls_wbs_celement-wbs_element IS NOT INITIAL.
-
-      " Convert to CHAR132
-      lv_pspid_char = ls_wbs_celement-wbs_element.
-
-*      "  DEBUG: Show what we're passing to CJB2
-*      MESSAGE i025(zcj00) WITH 'Calling CJB2 with:' lv_pspid_char
-*        DISPLAY LIKE 'I'.
-*
-*      IF sy-uname = 'EV92123'.
-      CLEAR lt_bdcdata.
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLKAZB'
-          iv_dynpro  = '1000'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '/EOKKS'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLSPO4'
-          iv_dynpro  = '0300'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '=FURT'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'SVALD-VALUE(01)'
-          iv_fval    = CONV #( lv_vkokr_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-
-      bdc_dynpro(
-        EXPORTING
-          iv_program = 'SAPLKAZB'
-          iv_dynpro  = '1000'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_OKCODE'
-          iv_fval    = '=RUN'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_CURSOR'
-          iv_fval    = 'RKAUF-LIST'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-TEST'
-          iv_fval    = ''
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_SUBSCR'
-          iv_fval    = 'SAPLKAOP                                0570BLOCK1'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'LKP74-PSPID'
-          iv_fval    = CONV #( lv_pspid_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'BDC_SUBSCR'
-          iv_fval    = 'SAPLKAZB                                2100BLOCK2'
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-FROM'
-          iv_fval    = CONV #( lv_period_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      bdc_field(
-        EXPORTING
-          iv_fnam    = 'RKAUF-GJAHR'
-          iv_fval    = CONV #( lv_gjahr_char )
-        CHANGING
-          ct_bdcdata = lt_bdcdata
-      ).
-
-      " Execute CJB2 in foreground
-      CLEAR lt_bdcmsg.
-
-      CALL TRANSACTION 'CJB2'
-        USING lt_bdcdata
-        MODE lv_mode
-        UPDATE lv_update
-        MESSAGES INTO lt_bdcmsg.
-      CLEAR lv_error.
-      LOOP AT lt_bdcmsg TRANSPORTING NO FIELDS WHERE msgtyp CA 'EA'.
-        lv_error = 'X'.
+      IF lv_cj02_error = abap_false.
+        COMMIT WORK AND WAIT.
         EXIT.
-      ENDLOOP.
-
-      IF lv_error = 'X'.
-        CLEAR lt_bdcdata.
-
-        bdc_dynpro(
-          EXPORTING
-            iv_program = 'SAPLSPO4'
-            iv_dynpro  = '0300'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_CURSOR'
-            iv_fval    = 'SVALD-VALUE(01)'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_OKCODE'
-            iv_fval    = '=FURT'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'SVALD-VALUE(01)'
-            iv_fval    = CONV #( lv_vkokr_char )
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-
-        bdc_dynpro(
-          EXPORTING
-            iv_program = 'SAPLKAZB'
-            iv_dynpro  = '1000'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_OKCODE'
-            iv_fval    = '=RUN'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_CURSOR'
-            iv_fval    = 'RKAUF-LIST'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'RKAUF-TEST'
-            iv_fval    = ''
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_SUBSCR'
-            iv_fval    = 'SAPLKAOP                                0570BLOCK1'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'LKP74-PSPID'
-            iv_fval    = CONV #( lv_pspid_char )
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'BDC_SUBSCR'
-            iv_fval    = 'SAPLKAZB                                2100BLOCK2'
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'RKAUF-FROM'
-            iv_fval    = CONV #( lv_period_char )
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        bdc_field(
-          EXPORTING
-            iv_fnam    = 'RKAUF-GJAHR'
-            iv_fval    = CONV #( lv_gjahr_char )
-          CHANGING
-            ct_bdcdata = lt_bdcdata
-        ).
-
-        " Execute CJB2 in foreground
-        CLEAR lt_bdcmsg.
-
-        CALL TRANSACTION 'CJB2'
-          USING lt_bdcdata
-          MODE lv_mode
-          UPDATE lv_update
-          MESSAGES INTO lt_bdcmsg.
-
-        COMMIT WORK AND WAIT.
-        WAIT UP TO 1 SECONDS.
-
-      ELSE.
-        COMMIT WORK AND WAIT.
-        WAIT UP TO 1 SECONDS.
       ENDIF.
+
+      IF lv_try_cj02 < 3.
+        WAIT UP TO 2 SECONDS.
+      ENDIF.
+
+    ENDDO.
+
+    IF lv_cj02_error = abap_true.
+      MESSAGE e398(00) WITH 'CJ02 IM assignment failed for WBS' lv_wbs_posid_cj02.
+      RETURN.
     ENDIF.
 
+  ENDLOOP.
 
-    IF sy-uname = 'hq75176'.
-      "======================================================================
-      " STEP: ASSIGN INVESTMENT PROGRAM / POSITION TO CREATED WBS (CJ02 BDC)
-      " Insert AFTER CJB2 BDC + COMMIT WORK AND WAIT
-      "======================================================================
-
-      DATA: lv_hdr_prnam  TYPE ztb_a2r_wbshdr-prnam,
-            lv_prnam_im   TYPE impr-prnam,
-            lv_prnam_im_c TYPE fnam_____4,
-            lv_posid_im   TYPE impr-posid,
-            lv_posid_im_c TYPE fnam_____4,
-            lv_gjahr_im   TYPE impr-gjahr.
-
-      DATA: lt_bdc_cj02 TYPE STANDARD TABLE OF bdcdata,
-            lt_msg_cj02 TYPE STANDARD TABLE OF bdcmsgcoll,
-            ls_msg_cj02 TYPE bdcmsgcoll.
-
-      DATA: lv_wbs_posid_cj02_c TYPE fnam_____4,
-            lv_wbs_posid_cj02   TYPE prps-posid,
-            lv_cj02_error       TYPE abap_bool,
-            lv_try_cj02         TYPE i.
-
-
-      "------------------------------------------------------------
-      "1) Read PRNAM from your header table (ZTB_A2R_WBSHDR)
-      "   (Based on your screenshot: PRNAM = PR01)
-      "------------------------------------------------------------
-      CLEAR lv_hdr_prnam.
-      SELECT SINGLE prnam
-        FROM ztb_a2r_wbshdr
-        INTO @lv_hdr_prnam
-        WHERE zreq_num = @is_header-zreq_num.
-
-      IF sy-subrc = 0 AND lv_hdr_prnam IS NOT INITIAL.
-
-        "------------------------------------------------------------
-        "2) Read IMPR using POSID = header PRNAM (your IMPR screenshot shows POSID = PR01)
-        "   Get: PRNAM, POSID, GJAHR for CJ02 popup fields RAIP1-*
-        "------------------------------------------------------------
-        CLEAR: lv_prnam_im_c, lv_posid_im_c, lv_gjahr_im.
-        SELECT SINGLE prnam,
-                      posid,
-                      gjahr
-          FROM impr
-          INTO (@lv_prnam_im_c, @lv_posid_im_c, @lv_gjahr_im)
-          WHERE posid = @lv_hdr_prnam.
-
-        "Fallback: if not found, try PRNAM
-        IF sy-subrc <> 0 OR lv_prnam_im_c IS INITIAL OR lv_posid_im_c IS INITIAL OR lv_gjahr_im IS INITIAL.
-          CLEAR: lv_prnam_im_c, lv_posid_im_c, lv_gjahr_im.
-          SELECT SINGLE prnam,
-                        posid,
-                        gjahr
-            FROM impr
-            INTO (@lv_prnam_im_c, @lv_posid_im_c, @lv_gjahr_im)
-            WHERE prnam = @lv_hdr_prnam.
-        ENDIF.
-
-        IF lv_prnam_im_c IS NOT INITIAL AND lv_posid_im_c IS NOT INITIAL AND lv_gjahr_im IS NOT INITIAL.
-
-          "------------------------------------------------------------
-          "3) Loop created WBS (use YOUR existing table/structure)
-          "   IMPORTANT: this must be the table that holds NEW created WBS,
-          "   not the template table.
-          "------------------------------------------------------------
-          LOOP AT et_wbs_created INTO ls_wbs_created.
-
-            IF ls_wbs_created-posid IS INITIAL.
-              CONTINUE.
-            ENDIF.
-
-            lv_wbs_posid_cj02_c = ls_wbs_created-posid.
-
-            "Optional normalize (safe if your POSID is stored without dots)
-            TRY.
-                CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-                  EXPORTING
-                    input  = lv_wbs_posid_cj02_c
-                  IMPORTING
-                    output = lv_wbs_posid_cj02_c.
-              CATCH cx_root.
-            ENDTRY.
-
-            lv_cj02_error = abap_false.
-
-            "Retry 3 times (lock / processed by user)
-            DO 3 TIMES.
-              lv_try_cj02 = sy-index.
-              CLEAR: lt_bdc_cj02, lt_msg_cj02.
-
-              lv_wbs_posid_cj02_c = lv_wbs_posid_cj02.
-              lv_prnam_im_c = lv_prnam_im.
-              lv_posid_im_c = lv_posid_im.
-
-              "SAPLCJWB 0100
-              bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0100'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = '*PRPS-POSID'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=LETB'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = '*PRPS-POSID' iv_fval = lv_wbs_posid_cj02_c
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-              "SAPLCJWB 0901 -> AIPP
-              bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=AIPP'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-              "SAPLAIPP 0050 -> fill PRNAM/POSID/GJAHR and TAKE
-              bdc_dynpro( EXPORTING iv_program = 'SAPLAIPP' iv_dynpro = '0050'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RAIP1-PRNAM'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=TAKE'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-              bdc_field(  EXPORTING iv_fnam = 'RAIP1-PRNAM' iv_fval = lv_prnam_im_c
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'RAIP1-POSID' iv_fval = lv_posid_im_c
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'RAIP1-GJAHR' iv_fval = |{ lv_gjahr_im }|
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-              "Back to 0901 -> Save
-              bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB' iv_dynpro = '0901'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=BU'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 0902LISTE'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = 'RCWBS-IDENT(01)'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-              bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'  iv_fval = 'SAPLCJWB 3993BUTTONS'
-                          CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-              CALL TRANSACTION 'CJ02'
-                USING lt_bdc_cj02
-                MODE 'N'
-                UPDATE 'S'
-                MESSAGES INTO lt_msg_cj02.
-
-              lv_cj02_error = abap_false.
-              LOOP AT lt_msg_cj02 INTO ls_msg_cj02.
-                IF ls_msg_cj02-msgtyp CA 'AEX'.
-                  lv_cj02_error = abap_true.
-                  EXIT.
-                ENDIF.
-              ENDLOOP.
-
-              IF lv_cj02_error = abap_false.
-                COMMIT WORK AND WAIT.
-                EXIT. "success for this WBS
-              ENDIF.
-
-              IF lv_try_cj02 < 3.
-                WAIT UP TO 2 SECONDS.
-              ENDIF.
-
-            ENDDO.
-
-            IF lv_cj02_error = abap_true.
-              "Stop creation if IM assignment failed
-              MESSAGE e398(00) WITH 'CJ02 IM assignment failed for WBS' lv_wbs_posid_cj02_c.
-              RETURN.
-            ENDIF.
-
-          ENDLOOP.
-
-        ENDIF.
-      ENDIF.
-    ENDIF.
-
-    "------------------------------------------------------------
-    " AFTER CJB2 settlement-rule BDC + COMMIT
-    " Next step: execute PLAN VALUES (CJ40 via KBPP_EXTERN_UPDATE_CO)
-    " IMPORTANT: use ET_WBS_CREATED (created POSID), not IT_WBS_ITEMS (template)
-    "------------------------------------------------------------
-
-    DATA: lt_created_items TYPE tt_wbs_items,
-          lv_plan_ok       TYPE abap_bool,
-          lv_blkd_ok       TYPE abap_bool,
-          lv_cj30_ok       TYPE abap_bool,
-          lv_im52_ok       TYPE abap_bool,
-          lv_auc_ok        TYPE abap_bool,
-          lv_rel_ok        TYPE abap_bool.
-
-    "Convert generic et_wbs_created -> typed table (if your et_wbs_created is STANDARD TABLE generic)
-    lt_created_items = CORRESPONDING #( et_wbs_created ).
-
-    "NOTE: your assign_plan_values currently CONTINUE when WERT2 IS INITIAL,
-    "so 0.00 will still be treated as initial. Keep this only if you want DB consistency.
-    LOOP AT lt_created_items ASSIGNING FIELD-SYMBOL(<ls_ci>).
-      IF <ls_ci>-wert2 IS INITIAL.
-        <ls_ci>-wert2 = 0.
-      ENDIF.
-    ENDLOOP.
-
-    lv_plan_ok = assign_plan_values(
-      is_header    = is_header
-      it_wbs_items = lt_created_items
-    ).
-
-    lv_cj30_ok = assign_budget_cj30(
-         is_header    = is_header
-         it_wbs_items = lt_created_items
-    ).
-    IF sy-uname = 'hq75176'.
-      lv_im52_ok = distribute_budget_im52(
-           is_header    = is_header
-           it_wbs_items = lt_created_items
-      ).
-    ENDIF.
-
-    COMMIT WORK AND WAIT.
-    WAIT UP TO 2 SECONDS.
-
-    lv_blkd_ok = set_blkd_status_for_higher_wbs(
-         it_wbs_items = lt_created_items
-    ).
-
-*    lv_rel_ok = set_rel_status_for_project_wbs(
-*         it_wbs_items = lt_created_items
-*    ).
-
-    rv_success = abap_true.
-
-  ENDMETHOD.
+ENDIF.
