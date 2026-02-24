@@ -1,99 +1,119 @@
-  METHOD assign_plan_values.
+METHOD assign_plan_values.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          ls_item         TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lv_rollup       TYPE c,
-          lv_delta        TYPE c,
-          lt_return       TYPE TABLE OF bapiret2.
-    DATA: lv_waers     TYPE waers.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_rollup       TYPE c,
+        lv_delta        TYPE c,
+        lt_return       TYPE TABLE OF bapiret2.
+  DATA: lv_waers        TYPE waers.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
+  ">>> NEW: max stufe
+  DATA: lv_max_stufe    TYPE ztb_a2r_wbsitem-stufe.
 
-    lv_rollup = 'X'.
-    lv_delta  = 'X'.
+  rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-    "1) Primary: read from header table (since you confirmed it’s stored there)
+  lv_rollup = 'X'.
+  lv_delta  = 'X'.
+
+  "1) Primary: read from header table
+  SELECT SINGLE waers
+    INTO @lv_waers
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = @is_header-zreq_num.
+
+  "2) Fallback: from is_header if already passed in
+  IF lv_waers IS INITIAL.
+    lv_waers = is_header-waers.
+  ENDIF.
+
+  "3) Fallback: derive from company code (T001) if still initial
+  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
     SELECT SINGLE waers
       INTO @lv_waers
-      FROM ztb_a2r_wbshdr
-      WHERE zreq_num = @is_header-zreq_num.
+      FROM t001
+      WHERE bukrs = @is_header-bukrs.
+  ENDIF.
 
-    "2) Fallback: from is_header if already passed in
-    IF lv_waers IS INITIAL.
-      lv_waers = is_header-waers.
+  ">>> NEW: get highest level (max STUFE) from the passed WBS items
+  lv_max_stufe = 0.
+  LOOP AT it_wbs_items INTO ls_item WHERE stufe IS NOT INITIAL.
+    IF ls_item-stufe > lv_max_stufe.
+      lv_max_stufe = ls_item-stufe.
+    ENDIF.
+  ENDLOOP.
+
+  "If no stufe found, nothing to do (or you can decide to proceed as before)
+  IF lv_max_stufe = 0.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  LOOP AT it_wbs_items INTO ls_item.
+
+    ">>> NEW: only highest level
+    IF ls_item-stufe <> lv_max_stufe.
+      CONTINUE.
     ENDIF.
 
-    "3) Fallback: derive from company code (T001) if still initial
-    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-      SELECT SINGLE waers
-        INTO @lv_waers
-        FROM t001
-        WHERE bukrs = @is_header-bukrs.
+    IF ls_item-wert2 IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    LOOP AT it_wbs_items INTO ls_item.
-      IF ls_item-wert2 IS INITIAL.
-        CONTINUE.
-      ENDIF.
+    DATA: lv_posid_db TYPE ps_posid.
+    lv_posid_db = ls_item-posid.
 
-      DATA: lv_posid_db TYPE ps_posid.
-
-      lv_posid_db = ls_item-posid.
-
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-        EXPORTING
-          input  = lv_posid_db
-        IMPORTING
-          output = lv_posid_db.
-
-      SELECT SINGLE objnr
-        FROM prps
-        INTO @lv_objnr
-        WHERE posid = @lv_posid_db.
-
-      IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '01'.         "PLAN
-      ls_bpak-wert    = ls_item-wert2.
-      ls_bpak-twaer   = lv_waers.     "MANDATORY
-
-      APPEND ls_bpak TO lt_bpak.
-    ENDLOOP.
-
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
-
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
       EXPORTING
-        i_budget_activity = 'KSTP'    "CJ40
-        i_delta_amounts   = lv_delta
-        i_rollup_data     = lv_rollup
-        i_check_plan_data = 'X'
-        i_application     = 'P'
-        i_commit_all      = 'X'
+        input  = lv_posid_db
       IMPORTING
-        e_errors_found    = lv_errors_found
-      TABLES
-        it_bpak           = lt_bpak
-        it_return         = lt_return.
+        output = lv_posid_db.
 
+    SELECT SINGLE objnr
+      FROM prps
+      INTO @lv_objnr
+      WHERE posid = @lv_posid_db.
 
-
-    IF lv_errors_found EQ abap_false.
-      rv_success = abap_true.
-      COMMIT WORK AND WAIT.
+    IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-  ENDMETHOD.
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '01'.         "PLAN
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.     "MANDATORY
+
+    APPEND ls_bpak TO lt_bpak.
+  ENDLOOP.
+
+  IF lt_bpak IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity = 'KSTP'    "CJ40
+      i_delta_amounts   = lv_delta
+      i_rollup_data     = lv_rollup
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak
+      it_return         = lt_return.
+
+  IF lv_errors_found EQ abap_false.
+    rv_success = abap_true.
+    COMMIT WORK AND WAIT.
+  ENDIF.
+
+ENDMETHOD.
