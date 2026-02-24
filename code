@@ -1,103 +1,145 @@
-"═══════════════════════════════════════════════════════════════════
-" STEP XX: RELEASE PROJECT (CJ02 BDC)
-" - Releases Project Definition (System Status REL)
-" - Uses CJ02 -> Project Definition -> Status Subscreen
-"═══════════════════════════════════════════════════════════════════
+METHOD assign_budget_cj30.
 
-DATA: lt_bdc_rel TYPE STANDARD TABLE OF bdcdata,
-      lt_msg_rel TYPE STANDARD TABLE OF bdcmsgcoll,
-      ls_msg_rel TYPE bdcmsgcoll.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        ls_item         TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lt_return       TYPE TABLE OF bapiret2,
+        lv_posid_db     TYPE ps_posid,
+        lv_has_error    TYPE abap_bool.
 
-DATA: lv_proj_pspid      TYPE proj-pspid,
-      lv_proj_pspid_c    TYPE fnam_____4, "same type you used for POSID char passing
-      lv_rel_error        TYPE abap_bool.
+  rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-CLEAR: lt_bdc_rel, lt_msg_rel, lv_rel_error.
+  "Currency
+  SELECT SINGLE waers
+    INTO @lv_waers
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = @is_header-zreq_num.
 
-"Project definition ID (PSPID) you want to release
-"Use the created project's PSPID (example: is_header-pspid or returned project)
-lv_proj_pspid   = is_header-pspid. "<<< adjust to your variable
-lv_proj_pspid_c = lv_proj_pspid.
+  IF lv_waers IS INITIAL.
+    lv_waers = is_header-waers.
+  ENDIF.
 
-"------------------------------------------------------------
-" CJ02 initial: enter PSPID then go in
-"------------------------------------------------------------
-bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                      iv_dynpro  = '0100'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'  iv_fval = '*PROJ-PSPID'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'  iv_fval = '=LETB'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = '*PROJ-PSPID' iv_fval = lv_proj_pspid_c
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+    SELECT SINGLE waers
+      INTO @lv_waers
+      FROM t001
+      WHERE bukrs = @is_header-bukrs.
+  ENDIF.
 
-"------------------------------------------------------------
-" Go to Status area (matches your SHDB: SAPLCJWB 0998 with 0700STATUS)
-" Some systems land on 0901 first; we drive it to 0998 by forcing subscreen.
-"------------------------------------------------------------
-bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                      iv_dynpro  = '0998'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+  IF lv_waers IS INITIAL.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
 
-"Important: the Status subscreen you recorded
-bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
-                     iv_fval = 'SAPLCJWB                                0700STATUS'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+  LOOP AT it_wbs_items INTO ls_item.
 
-bdc_field(  EXPORTING iv_fnam = 'BDC_CURSOR'
-                     iv_fval = 'PROJ-PSPID'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+    ">>> ONLY STUFE = 1
+    IF ls_item-stufe <> 1.
+      CONTINUE.
+    ENDIF.
 
-"------------------------------------------------------------
-" Trigger RELEASE
-"   >>> Replace =REL with the exact OKCODE from your SHDB if different
-"------------------------------------------------------------
-bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'
-                     iv_fval = '=REL'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+    "1) Only flagged rows (keep this if required by your design)
+    IF ls_item-zbudget_check IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
-"------------------------------------------------------------
-" Optional: confirm popup (some systems ask "Release? Yes/No")
-"------------------------------------------------------------
-bdc_dynpro( EXPORTING iv_program = 'SAPLSPO1'
-                      iv_dynpro  = '0100'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'
-                     iv_fval = '=YES'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+    "2) Budget check:
+    IF ls_item-wert2 IS INITIAL OR ls_item-wert2 = 0.
+      CONTINUE.
+    ENDIF.
 
-"------------------------------------------------------------
-" Save (like your SHDB uses =BU)
-"------------------------------------------------------------
-bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                      iv_dynpro  = '0998'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = 'BDC_SUBSCR'
-                     iv_fval = 'SAPLCJWB                                0700STATUS'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
-bdc_field(  EXPORTING iv_fnam = 'BDC_OKCODE'
-                     iv_fval = '=BU'
-            CHANGING  ct_bdcdata = lt_bdc_rel ).
+    "3) Get OBJNR (prefer PSPNR if available)
+    CLEAR lv_objnr.
 
-"------------------------------------------------------------
-" Execute
-"------------------------------------------------------------
-CALL TRANSACTION 'CJ02'
-  USING lt_bdc_rel
-  MODE  lv_mode
-  UPDATE lv_update
-  MESSAGES INTO lt_msg_rel.
+    IF ls_item-posnr IS NOT INITIAL.
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE pspnr = @ls_item-posnr.
+    ENDIF.
 
-lv_rel_error = abap_false.
-LOOP AT lt_msg_rel INTO ls_msg_rel WHERE msgtyp CA 'AEX'.
-  lv_rel_error = abap_true.
-  EXIT.
-ENDLOOP.
+    "Fallback: by POSID (convert external -> internal)
+    IF lv_objnr IS INITIAL AND ls_item-posid IS NOT INITIAL.
 
-IF lv_rel_error = abap_true.
-  MESSAGE e398(00) WITH 'CJ02 Project release failed for PSPID' lv_proj_pspid.
-ELSE.
-  COMMIT WORK AND WAIT.
-  WAIT UP TO 2 SECONDS.
-ENDIF.
+      lv_posid_db = ls_item-posid.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = lv_posid_db
+        IMPORTING
+          output = lv_posid_db
+        EXCEPTIONS
+          OTHERS = 1.
+
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE posid = @lv_posid_db.
+
+    ENDIF.
+
+    IF lv_objnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    "4) Build BPAK line
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.          "CJ30 Budget
+    ls_bpak-wert    = ls_item-wert2.
+    ls_bpak-twaer   = lv_waers.
+
+    APPEND ls_bpak TO lt_bpak.
+
+  ENDLOOP.
+
+  IF lt_bpak IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity             = 'KBUD'
+      i_budget_distribution_allowed = 'X'
+      i_delta_amounts               = 'X'
+      i_rollup_data                 = 'X'
+      i_check_plan_data             = 'X'
+      i_application                 = 'P'
+      i_commit_all                  = 'X'
+    IMPORTING
+      e_errors_found                = lv_errors_found
+    TABLES
+      it_bpak                       = lt_bpak
+      it_return                     = lt_return
+    EXCEPTIONS
+      no_update                     = 1
+      OTHERS                        = 2.
+
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  "Also check return messages (if any)
+  lv_has_error = abap_false.
+  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
+       WHERE type = 'E' OR type = 'A' OR type = 'X'.
+    lv_has_error = abap_true.
+    EXIT.
+  ENDLOOP.
+
+  IF lv_has_error = abap_true.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
