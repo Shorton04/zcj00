@@ -1,164 +1,76 @@
-METHOD assign_budget_cj30.
+DATA: gv_header_initialized TYPE abap_bool.
 
-  DATA: lv_errors_found TYPE oax,
-        lt_bpak         TYPE TABLE OF bpak,
-        ls_bpak         TYPE bpak,
-        lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        ls_wbs_db       TYPE ztb_a2r_wbsitem,
-        lv_objnr        TYPE j_objnr,
-        lv_waers        TYPE waers,
-        lv_delta        TYPE c,
-        lv_rollup       TYPE c,
-        lt_return       TYPE TABLE OF bapiret2,
-        lv_posid_db     TYPE ps_posid,
-        lv_has_error    TYPE abap_bool,
-        lv_max_stufe    TYPE ztb_a2r_wbsitem-stufe.
 
-  rv_success = abap_false.
-  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  lv_delta  = ''.
-  lv_rollup = 'X'.
+FORM prepare_screen2.
+  " Only initialize once - don't overwrite user changes on re-entry
+  CHECK gv_header_initialized = abap_false.
 
-*---------------------------------------------------------------------*
-* 1) Get Currency
-*---------------------------------------------------------------------*
-  SELECT SINGLE waers
-    INTO @lv_waers
-    FROM ztb_a2r_wbshdr
-    WHERE zreq_num = @is_header-zreq_num.
+  PERFORM get_additional_im_data USING p_posnr.
 
-  IF lv_waers IS INITIAL.
-    lv_waers = is_header-waers.
-  ENDIF.
-
-  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-    SELECT SINGLE waers
-      INTO @lv_waers
-      FROM t001
-      WHERE bukrs = @is_header-bukrs.
-  ENDIF.
-
-  IF lv_waers IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 2) Read ONLY flagged WBS from DB
-*---------------------------------------------------------------------*
-  SELECT *
-    FROM ztb_a2r_wbsitem
-    INTO TABLE @lt_wbs_db
-    WHERE zreq_num      = @is_header-zreq_num
-      AND zbudget_check = 'X'
-      AND wert2         > 0.
-
-  IF lt_wbs_db IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* NEW: Determine highest STUFE (lowest level)
-*---------------------------------------------------------------------*
-  CLEAR lv_max_stufe.
-  LOOP AT lt_wbs_db INTO ls_wbs_db.
-    IF ls_wbs_db-stufe > lv_max_stufe.
-      lv_max_stufe = ls_wbs_db-stufe.
-    ENDIF.
-  ENDLOOP.
-
-  IF lv_max_stufe IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 3) Build BPAK from DB records (only lowest level: highest STUFE)
-*---------------------------------------------------------------------*
-  CLEAR lt_bpak.
-  LOOP AT lt_wbs_db INTO ls_wbs_db.
-
-    "Only process lowest level (highest STUFE)
-    IF ls_wbs_db-stufe <> lv_max_stufe.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR lv_objnr.
-
-    "Convert POSID external -> internal
-    lv_posid_db = ls_wbs_db-posid.
-
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-      EXPORTING
-        input  = lv_posid_db
-      IMPORTING
-        output = lv_posid_db
-      EXCEPTIONS
-        OTHERS = 1.
-
-    SELECT SINGLE objnr
-      INTO @lv_objnr
-      FROM prps
-      WHERE posid = @lv_posid_db.
-
-    IF lv_objnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    CLEAR ls_bpak.
-    ls_bpak-e_objnr = lv_objnr.
-    ls_bpak-e_versn = '000'.
-    ls_bpak-e_perio = '001'.
-    ls_bpak-e_wrttp = '41'.     "CJ30 Budget
-    ls_bpak-wert    = ls_wbs_db-wert2.
-    ls_bpak-twaer   = lv_waers.
-
-    APPEND ls_bpak TO lt_bpak.
-
-  ENDLOOP.
-
-  IF lt_bpak IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 4) Call FM
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+  CALL METHOD go_builder->copy_template_structure
     EXPORTING
-      i_budget_activity             = 'KBUD'
-      i_budget_distribution_allowed = 'X'
-      i_delta_amounts               = lv_delta
-      i_rollup_data                 = lv_rollup
-      i_check_plan_data             = 'X'
-      i_application                 = 'P'
-      i_commit_all                  = 'X'
-    IMPORTING
-      e_errors_found                = lv_errors_found
-    TABLES
-      it_bpak                       = lt_bpak
-      it_return                     = lt_return.
+      iv_pspid     = p_pspid
+      iv_kostl     = p_kostl
+    CHANGING
+      ct_wbs_items = gt_wbs_items.
+  PERFORM load_template_to_wbs_items USING p_pspid p_kostl.
+  PERFORM convert_to_display.
+  PERFORM set_wbs_default_values.
+  PERFORM populate_header_structure.
 
-  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    RETURN.
+  gv_header_initialized = abap_true.  " Mark as done
+ENDFORM.
+
+
+
+FORM save_request.
+  DATA: lv_reqnum TYPE char10.
+
+  " Sync editable screen fields back to gs_header BEFORE saving
+  " (Do NOT call POPULATE_HEADER_STRUCTURE here - it overwrites user input)
+  PERFORM sync_screen_to_header.   " <-- new form, see below
+  PERFORM convert_from_display.
+
+  CALL METHOD go_builder->save_request
+    EXPORTING
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    RECEIVING
+      rv_reqnum    = lv_reqnum.
+
+  IF lv_reqnum IS NOT INITIAL.
+    gv_request_number = lv_reqnum.
+    MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
+    COMMIT WORK.
+  ELSE.
+    MESSAGE e013.
   ENDIF.
+ENDFORM.
 
-*---------------------------------------------------------------------*
-* 5) Check Return Messages
-*---------------------------------------------------------------------*
-  lv_has_error = abap_false.
-  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
-       WHERE type CA 'AEX'.
-    lv_has_error = abap_true.
-    EXIT.
-  ENDLOOP.
 
-  IF lv_has_error = abap_true.
-    RETURN.
-  ENDIF.
 
-  rv_success = abap_true.
 
-ENDMETHOD.
+FORM sync_screen_to_header.
+  " Only sync fields that the user can actually edit on screen 100
+  " DO NOT re-derive auto-populated fields from source tables
+
+  " Example: if POST1, VERNR, PLSEZ, PRCTR, KOSTL are editable on screen 100
+  " they must be bound to gs_header-* directly in the dynpro field list
+  " If they're bound to p_* variables, sync them here:
+  gs_header-post1  = p_post1.
+  gs_header-vernr  = p_verna.
+  gs_header-plsez  = p_plsez.
+  gs_header-prctr  = p_prctr.
+  gs_header-kostl  = p_kostl.
+  " Add any other user-editable fields from screen 100
+  " Do NOT re-set: bukrs, werks, izwek, profl, posnr, prnam
+  " (those are auto-populated and should not be overwritten)
+ENDFORM.
+
+
+
+
+WHEN 'BACK'.
+  gv_header_initialized = abap_false.  " Allow re-init if they go back and change IM
+  LEAVE TO SCREEN 200.
