@@ -1,105 +1,142 @@
-MODULE user_command_0100 INPUT.
+  METHOD assign_budget_cj30.
 
-  "------------------------------------------------------------------
-  "1) Persist user input into GS_HEADER and mark user overrides
-  "   (Put this BEFORE CASE sy-ucomm / validations)
-  "------------------------------------------------------------------
+    DATA: lv_errors_found TYPE oax,
+          lt_bpak         TYPE TABLE OF bpak,
+          ls_bpak         TYPE bpak,
+          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          ls_wbs_db       TYPE ztb_a2r_wbsitem,
+          lv_objnr        TYPE j_objnr,
+          lv_waers        TYPE waers,
+          lv_delta        TYPE c,
+          lv_rollup       TYPE c,
+          lt_return       TYPE TABLE OF bapiret2,
+          lv_posid_db     TYPE ps_posid,
+          lv_has_error    TYPE abap_bool.
 
-  IF p_post1 <> gs_header-post1.
-    gs_header-post1 = p_post1.
-    gv_u_post1 = abap_true.
-  ENDIF.
+    rv_success = abap_false.
+    CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  IF p_vernr <> gs_header-vernr.
-    gs_header-vernr = p_vernr.
-    gv_u_vernr = abap_true.
-  ENDIF.
+    lv_delta = ''.
+    lv_rollup = 'X'.
 
-  IF p_plsez <> gs_header-plsez.
-    gs_header-plsez = p_plsez.
-    gv_u_plsez = abap_true.
-  ENDIF.
+*---------------------------------------------------------------------*
+* 1) Get Currency
+*---------------------------------------------------------------------*
+    SELECT SINGLE waers
+      INTO @lv_waers
+      FROM ztb_a2r_wbshdr
+      WHERE zreq_num = @is_header-zreq_num.
 
-  "IM Position: if your input is POSNR keep it here; if user edits POSID field, adapt accordingly
-  "Example if user edits POSNR:
-  IF p_posnr <> gs_header-posnr.
-    gs_header-posnr = p_posnr.
-    gv_u_posid = abap_true.
-  ENDIF.
+    IF lv_waers IS INITIAL.
+      lv_waers = is_header-waers.
+    ENDIF.
 
-  IF p_prctr <> gs_header-prctr.
-    gs_header-prctr = p_prctr.
-    gv_u_prctr = abap_true.
-  ENDIF.
+    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+      SELECT SINGLE waers
+        INTO @lv_waers
+        FROM t001
+        WHERE bukrs = @is_header-bukrs.
+    ENDIF.
 
-  IF p_kostl <> gs_header-kostl.
-    gs_header-kostl = p_kostl.
-    gv_u_kostl = abap_true.
-  ENDIF.
+    IF lv_waers IS INITIAL.
+      RETURN.
+    ENDIF.
 
-  "------------------------------------------------------------------
-  "2) Your existing OKCODE logic continues here
-  "------------------------------------------------------------------
-  " ok_code = sy-ucomm.
-  " CASE sy-ucomm.
-  " ...
-  " ENDCASE.
+*---------------------------------------------------------------------*
+* 2) Read ONLY flagged WBS from DB
+*---------------------------------------------------------------------*
+    SELECT *
+      FROM ztb_a2r_wbsitem
+      INTO TABLE @lt_wbs_db
+      WHERE zreq_num      = @is_header-zreq_num
+        AND zbudget_check = 'X'
+        AND wert2         > 0.
 
-ENDMODULE.
+    IF lt_wbs_db IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
 
+*---------------------------------------------------------------------*
+* 3) Build BPAK from DB records
+*---------------------------------------------------------------------*
+    LOOP AT lt_wbs_db INTO ls_wbs_db.
 
+      CLEAR lv_objnr.
 
-MODULE set_header_display_values OUTPUT.
+      "Convert POSID external -> internal
+      lv_posid_db = ls_wbs_db-posid.
 
-  "------------------------------------------------------------------
-  "0) Derive defaults (example variables)
-  "   - put your existing derivation PERFORMs/SELECTs here if you have them
-  "------------------------------------------------------------------
-  "DATA: lv_post1_def TYPE ...
-  "      lv_vernr_def TYPE ...
-  "      lv_plsez_def TYPE ...
-  "      lv_prctr_def TYPE ...
-  "      lv_kostl_def TYPE ...
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = lv_posid_db
+        IMPORTING
+          output = lv_posid_db
+        EXCEPTIONS
+          OTHERS = 1.
 
-  "------------------------------------------------------------------
-  "1) Protect user-entered fields: only default if not overridden
-  "------------------------------------------------------------------
-  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
-    gs_header-post1 = lv_post1_def.
-  ENDIF.
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE posid = @lv_posid_db.
 
-  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
-    gs_header-vernr = lv_vernr_def.
-  ENDIF.
+      IF lv_objnr IS INITIAL.
+        CONTINUE.
+      ENDIF.
 
-  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
-    gs_header-plsez = lv_plsez_def.
-  ENDIF.
+      CLEAR ls_bpak.
+      ls_bpak-e_objnr = lv_objnr.
+      ls_bpak-e_versn = '000'.
+      ls_bpak-e_perio = '001'.
+      ls_bpak-e_wrttp = '41'.     "CJ30 Budget
+      ls_bpak-wert    = ls_wbs_db-wert2.
+      ls_bpak-twaer   = lv_waers.
 
-  "IM Position protection:
-  "If auto-fill sets POSNR, guard it similarly:
-  IF gv_u_posid IS INITIAL AND gs_header-posnr IS INITIAL.
-    gs_header-posnr = lv_posnr_def.
-  ENDIF.
+      APPEND ls_bpak TO lt_bpak.
 
-  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
-    gs_header-prctr = lv_prctr_def.
-  ENDIF.
+    ENDLOOP.
 
-  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
-    gs_header-kostl = lv_kostl_def.
-  ENDIF.
+    IF lt_bpak IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
 
-  "------------------------------------------------------------------
-  "2) Your existing display-only logic stays as-is (requestor, reqtype,
-  "   gv_im_posid_display, available budget, currency)
-  "------------------------------------------------------------------
-  "... existing code you already have ...
-ENDMODULE.
+*---------------------------------------------------------------------*
+* 4) Call FM
+*---------------------------------------------------------------------*
+    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+      EXPORTING
+        i_budget_activity             = 'KBUD'
+        i_budget_distribution_allowed = 'X'
+        i_delta_amounts               = lv_delta
+        i_rollup_data                 = lv_rollup
+        i_check_plan_data             = 'X'
+        i_application                 = 'P'
+        i_commit_all                  = 'X'
+      IMPORTING
+        e_errors_found                = lv_errors_found
+      TABLES
+        it_bpak                       = lt_bpak
+        it_return                     = lt_return.
 
+    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+      RETURN.
+    ENDIF.
 
+*---------------------------------------------------------------------*
+* 5) Check Return Messages
+*---------------------------------------------------------------------*
+    lv_has_error = abap_false.
+    LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
+         WHERE type CA 'AEX'.
+      lv_has_error = abap_true.
+      EXIT.
+    ENDLOOP.
 
-gs_header = ls_return-fieldval.
+    IF lv_has_error = abap_true.
+      RETURN.
+    ENDIF.
 
+    rv_success = abap_true.
 
-
+  ENDMETHOD.
