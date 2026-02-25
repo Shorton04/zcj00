@@ -1,167 +1,215 @@
-FORM prepare_screen2.
+FORM load_tree_hierarchy.
 
-  "Always get IM data (safe, doesn't overwrite screen2 edits)
-  PERFORM get_additional_im_data USING p_posnr.
+  DATA:
+    lv_pspnr_templ TYPE ps_pspnr,
+    lv_parent_key  TYPE lvc_nkey,
+    ls_node        TYPE treev_node,
+    ls_item        TYPE cnpb_h_treeitm,
+    lv_last_key    TYPE lvc_nkey VALUE 0,
+    lt_pspnr_list  TYPE STANDARD TABLE OF ps_pspnr,
+    lv_level       TYPE i,
+    lv_max_levels  TYPE i VALUE 10.
 
-  "✅ Initialize screen2 ONCE only
-  IF gv_header_initialized = abap_true.
-    "Screen2 re-entry: DO NOT rebuild template, DO NOT reset defaults, DO NOT clear header
-    RETURN.
-  ENDIF.
+*  FIELD-SYMBOLS: <fs_prpss> TYPE prpss.
 
-  "------------------------------------------------------------
-  "FIRST ENTRY ONLY
-  "------------------------------------------------------------
+  TYPES: BEGIN OF ty_node_map,
+           pspnr    TYPE ps_pspnr,
+           node_key TYPE lvc_nkey,
+         END OF ty_node_map.
 
-  "✅ Build WBS items in correct PRHIS order
-  CLEAR gt_wbs_items.
-  CALL METHOD go_builder->copy_template_structure
-    EXPORTING
-      iv_pspid     = p_pspid
-      iv_kostl     = p_kostl
-    CHANGING
-      ct_wbs_items = gt_wbs_items.
+  DATA: lt_node_map TYPE STANDARD TABLE OF ty_node_map,
+        ls_node_map TYPE ty_node_map.
 
-  "🚫 IMPORTANT: Do NOT call load_template_to_wbs_items anymore
-  "PERFORM load_template_to_wbs_items USING p_pspid p_kostl.
+  CHECK p_pspid IS NOT INITIAL.
+  CHECK lo_tree_preview IS NOT INITIAL.
 
-  PERFORM convert_to_display.
-  PERFORM set_wbs_default_values.      "will be fixed below to not overwrite user edits
-  PERFORM populate_header_structure.   "will be fixed below to not clear on re-entry
+  TRY.
+      CLEAR: gt_treev_node, gt_treeitm, lt_node_map.
 
-  gv_header_initialized = abap_true.
+      " Get template from PROJS
+      SELECT SINGLE pspid, post1, pspnr
+         FROM projs
+         INTO @DATA(ls_projs)
+        WHERE pspid = @p_pspid.
 
-ENDFORM.
+      IF sy-subrc <> 0.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+          EXPORTING
+            input  = p_pspid
+          IMPORTING
+            output = p_pspid.
 
+        SELECT SINGLE pspid, post1, pspnr
+          FROM projs
+          INTO @ls_projs
+          WHERE pspid = @p_pspid.
 
+        IF sy-subrc <> 0.
+          MESSAGE 'Template project not found in PROJS table'(m01) TYPE 'S' DISPLAY LIKE 'W'.
+          RETURN.
+        ENDIF.
+      ENDIF.
 
-FORM set_wbs_default_values.
+      lv_pspnr_templ = ls_projs-pspnr.
 
-  LOOP AT gt_wbs_display INTO gs_wbs_display.
+      " ★ CORRECTED: Get ALL levels recursively
+      " Step 1: Direct children (Level 1 & 2 from screenshot)
+      SELECT pspnr, posid, post1, psphi, stufe
+        FROM prpss
+        INTO TABLE @DATA(lt_prpss_all)
+        WHERE psphi = @lv_pspnr_templ
+        ORDER BY stufe, posid.
 
-    "Default KOSTL only if empty (don't overwrite user edit)
-    IF gs_wbs_display-kostl IS INITIAL.
-      gs_wbs_display-kostl = p_kostl.
-    ENDIF.
+      IF sy-subrc <> 0.
+        MESSAGE 'No WBS elements found for template'(m02) TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
 
-    "Budget check default for STUFE=1 only if initial
-    IF gs_wbs_display-stufe = 1 AND gs_wbs_display-zbudget_check IS INITIAL.
-      gs_wbs_display-zbudget_check = gc_x.
-    ENDIF.
+      " Step 2: Get children of children recursively (Level 3+)
+      lv_level = 1.
+      WHILE lv_level < lv_max_levels.
 
-    "Level 1 description default only if user didn't type anything
-    IF gs_wbs_display-stufe = 1 AND gs_wbs_display-post1 IS INITIAL.
-      gs_wbs_display-post1 = p_post1.
-    ENDIF.
+        CLEAR lt_pspnr_list.
+        LOOP AT lt_prpss_all ASSIGNING FIELD-SYMBOL(<fs_prpss>).
+          APPEND <fs_prpss>-pspnr TO lt_pspnr_list.
+        ENDLOOP.
 
-    MODIFY gt_wbs_display FROM gs_wbs_display.
+        IF lt_pspnr_list IS INITIAL.
+          EXIT.
+        ENDIF.
 
-  ENDLOOP.
+        IF lt_pspnr_list IS NOT INITIAL.
+          SELECT pspnr, posid, post1, psphi, stufe
+            FROM prpss
+            INTO TABLE @DATA(lt_prpss_level)
+            FOR ALL ENTRIES IN @lt_pspnr_list
+            WHERE psphi = @lt_pspnr_list-table_line.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
 
-ENDFORM.
+          APPEND LINES OF lt_prpss_level TO lt_prpss_all.
+          lv_level = lv_level + 1.
+        ENDIF.
+      ENDWHILE.
 
+      SORT lt_prpss_all BY stufe posid.
 
+      " Build tree structure
+      lv_last_key = lv_last_key + 1.
+      CLEAR ls_node.
+      ls_node-node_key    = lv_last_key.
+      ls_node-relatkey    = ''.
+      ls_node-relatship   = cl_gui_column_tree=>relat_last_child.
+      ls_node-hidden      = space.
+      ls_node-disabled    = space.
+      ls_node-isfolder    = abap_true.
+      ls_node-expander    = abap_true.
+      APPEND ls_node TO gt_treev_node.
 
-FORM populate_header_structure.
+      CLEAR ls_item.
+      ls_item-node_key = lv_last_key.
+      ls_item-item_name = lc_hierarchy_short_text.
+      ls_item-class = cl_gui_column_tree=>item_class_text.
+      CONCATENATE 'Template:'(m04) ls_projs-post1 INTO ls_item-text SEPARATED BY space.
+      APPEND ls_item TO gt_treeitm.
 
-  "🚫 Do NOT CLEAR gs_header here
+      CLEAR ls_item.
+      ls_item-node_key = lv_last_key.
+      ls_item-item_name = lc_hierarchy_technical_key.
+      ls_item-class = cl_gui_column_tree=>item_class_text.
+      ls_item-text = ls_projs-pspid.
+      APPEND ls_item TO gt_treeitm.
 
-  "IM Data
-  IF gs_header-posnr IS INITIAL. gs_header-posnr = p_posnr. ENDIF.
-  IF gs_header-prnam IS INITIAL. gs_header-prnam = p_prnam. ENDIF.
+      ls_node_map-pspnr = lv_pspnr_templ.
+      ls_node_map-node_key = lv_last_key.
+      APPEND ls_node_map TO lt_node_map.
 
-  "Project description (user input)
-  IF gs_header-post1 IS INITIAL. gs_header-post1 = p_post1. ENDIF.
+      " Add WBS nodes with correct parent tracking
+      LOOP AT lt_prpss_all INTO DATA(ls_prpss).
 
-  "Responsible
-  IF gs_header-vernr IS INITIAL. gs_header-vernr = p_verna. ENDIF.
+        lv_last_key = lv_last_key + 1.
 
-  "Dates
-  IF gs_header-plsez IS INITIAL. gs_header-plsez = p_plsez. ENDIF.
-  IF gs_header-erdat IS INITIAL. gs_header-erdat = sy-datum. ENDIF.
+        " Find parent by PSPHI
+        CLEAR lv_parent_key.
+        READ TABLE lt_node_map INTO ls_node_map
+          WITH KEY pspnr = ls_prpss-psphi.
 
-  "Org
-  IF gs_header-bukrs IS INITIAL. gs_header-bukrs = gv_bukrs. ENDIF.
-  IF gs_header-werks IS INITIAL. gs_header-werks = gv_werks. ENDIF.
+        IF sy-subrc = 0.
+          lv_parent_key = ls_node_map-node_key.
+        ELSE.
+          lv_parent_key = 1. " Fallback to root
+        ENDIF.
 
-  "Finance
-  IF gs_header-prctr IS INITIAL. gs_header-prctr = p_prctr. ENDIF.
-  IF gs_header-kostl IS INITIAL. gs_header-kostl = p_kostl. ENDIF.
+        CLEAR ls_node.
+        ls_node-node_key    = lv_last_key.
+        ls_node-relatkey    = lv_parent_key.
+        ls_node-relatship   = cl_gui_column_tree=>relat_last_child.
+        ls_node-hidden      = space.
+        ls_node-disabled    = space.
+        ls_node-isfolder    = abap_false.
+        ls_node-expander    = space.
+        APPEND ls_node TO gt_treev_node.
 
-  "Investment
-  IF gs_header-izwek IS INITIAL. gs_header-izwek = gv_izwek. ENDIF.
-  IF gs_header-profl IS INITIAL. gs_header-profl = p_profl. ENDIF.
+        CLEAR ls_item.
+        ls_item-node_key = lv_last_key.
+        ls_item-item_name = lc_hierarchy_short_text.
+        ls_item-class = cl_gui_column_tree=>item_class_text.
+        ls_item-text = ls_prpss-post1.
+        APPEND ls_item TO gt_treeitm.
 
-  "Flags
-  IF gs_header-zunifier_proj IS INITIAL. gs_header-zunifier_proj = p_usr10. ENDIF.
-  IF gs_header-usr008 IS INITIAL. gs_header-usr008 = gv_usr008. ENDIF.
+        CLEAR ls_item.
+        ls_item-node_key = lv_last_key.
+        ls_item-item_name = lc_hierarchy_technical_key.
+        ls_item-class = cl_gui_column_tree=>item_class_text.
+        ls_item-text = ls_prpss-posid.
+        APPEND ls_item TO gt_treeitm.
 
-  "User/type
-  IF gs_header-ernam IS INITIAL. gs_header-ernam = sy-uname. ENDIF.
-  IF gs_header-z_reqtype IS INITIAL. gs_header-z_reqtype = gv_request_type. ENDIF.
+        ls_node_map-pspnr = ls_prpss-pspnr.
+        ls_node_map-node_key = lv_last_key.
+        APPEND ls_node_map TO lt_node_map.
 
-  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
-    gs_header-z_remarks = gv_z_remarks.
-  ENDIF.
+      ENDLOOP.
 
-  IF gv_im_posid_display IS INITIAL.
-    PERFORM get_im_posid_for_display USING p_posnr CHANGING gv_im_posid_display.
-  ENDIF.
+      " Display tree
+      CALL METHOD lo_tree_preview->delete_all_nodes.
 
-ENDFORM.
+      CALL METHOD lo_tree_preview->hierarchy_header_set_text
+        EXPORTING
+          text = 'Project Structure: Description' ##NO_TEXT.
 
+      CALL METHOD lo_tree_preview->add_nodes_and_items
+        EXPORTING
+          node_table                = gt_treev_node
+          item_table                = gt_treeitm
+          item_table_structure_name = 'CNPB_H_TREEITM' ##NO_TEXT.
 
+      CALL METHOD lo_tree_preview->expand_root_nodes
+        EXPORTING
+          level_count    = 0
+          expand_subtree = abap_true.
 
-FORM enrich_wbs_items USING iv_kostl TYPE kostl.
+      CALL METHOD lo_tree_preview->hierarchy_header_set_width
+        EXPORTING
+          width     = 50
+          width_pix = space.
 
-  LOOP AT gt_wbs_items INTO gs_wbs_item.
-    IF gs_wbs_item-kostl IS INITIAL.
-      gs_wbs_item-kostl = iv_kostl.
-    ENDIF.
-    IF gs_wbs_item-bukrs IS INITIAL.
-      gs_wbs_item-bukrs = gv_bukrs.
-    ENDIF.
-    IF gs_wbs_item-werks IS INITIAL.
-      gs_wbs_item-werks = gv_werks.
-    ENDIF.
-    MODIFY gt_wbs_items FROM gs_wbs_item.
-  ENDLOOP.
+      CALL METHOD lo_tree_preview->column_set_width
+        EXPORTING
+          column_name = lc_hierarchy_technical_key
+          width       = 25
+          width_pix   = space.
 
-ENDFORM.
+      CALL METHOD cl_gui_cfw=>flush
+        EXCEPTIONS
+          cntl_system_error = 1
+          cntl_error        = 2.
 
+      IF sy-subrc = 0.
+        lv_tree_loaded = abap_true.
+      ENDIF.
 
-
-FORM convert_to_display.
-
-  DATA lv_posid_external TYPE ps_posid.
-
-  FREE gt_wbs_display.
-
-  LOOP AT gt_wbs_items INTO gs_wbs_item.
-    CLEAR: gs_wbs_display, lv_posid_external.
-
-    gs_wbs_display-stufe = gs_wbs_item-stufe.
-    gs_wbs_display-post1 = gs_wbs_item-post1.
-    gs_wbs_display-kostl = gs_wbs_item-kostl.
-    gs_wbs_display-posnr = gs_wbs_item-posnr.
-    gs_wbs_display-zapproved_budg = gs_wbs_item-wert2.
-    gs_wbs_display-zbudget_check = gs_wbs_item-zbudget_check.
-    gs_wbs_display-bukrs = gs_wbs_item-bukrs.
-    gs_wbs_display-imprf = gs_wbs_item-imprf.
-    gs_wbs_display-prart = gs_wbs_item-prart.
-
-    IF gs_wbs_item-posid IS NOT INITIAL.
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
-        EXPORTING input  = gs_wbs_item-posid
-        IMPORTING output = lv_posid_external
-        EXCEPTIONS OTHERS = 1.
-
-      gs_wbs_display-posid = COND #( WHEN sy-subrc = 0 AND lv_posid_external IS NOT INITIAL
-                                     THEN lv_posid_external
-                                     ELSE gs_wbs_item-posid ).
-    ENDIF.
-
-    APPEND gs_wbs_display TO gt_wbs_display.
-  ENDLOOP.
-
+    CATCH cx_root INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
 ENDFORM.
