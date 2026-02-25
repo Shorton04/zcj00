@@ -1,20 +1,20 @@
 FORM load_tree_hierarchy.
 
   TYPES: BEGIN OF ty_prhis,
-           pspnr TYPE ps_pspnr,
-           psphi TYPE ps_pspnr,
-           up    TYPE ps_pspnr,
-           down  TYPE ps_pspnr,
-           left  TYPE ps_pspnr,
-           right TYPE ps_pspnr,
+           posnr TYPE prhis-posnr,
+           psphi TYPE prhis-psphi,
+           up    TYPE prhis-up,
+           down  TYPE prhis-down,
+           left  TYPE prhis-left,
+           right TYPE prhis-right,
          END OF ty_prhis.
 
   TYPES: BEGIN OF ty_prpss,
-           pspnr TYPE ps_pspnr,
-           psphi TYPE ps_pspnr,
-           stufe TYPE ps_stufe,
-           posid TYPE ps_posid,
-           post1 TYPE ps_post1,
+           pspnr TYPE prpss-pspnr,
+           psphi TYPE prpss-pspnr,
+           stufe TYPE prpss-stufe,
+           posid TYPE prpss-posid,
+           post1 TYPE prpss-post1,
          END OF ty_prpss.
 
   TYPES: BEGIN OF ty_node_map,
@@ -30,7 +30,7 @@ FORM load_tree_hierarchy.
     lv_posid_disp  TYPE ps_posid,
 
     lt_prhis       TYPE STANDARD TABLE OF ty_prhis,
-    lt_prhis_h     TYPE HASHED TABLE OF ty_prhis WITH UNIQUE KEY pspnr,
+    lt_prhis_h     TYPE HASHED TABLE OF ty_prhis WITH UNIQUE KEY posnr,
     lt_prpss       TYPE STANDARD TABLE OF ty_prpss,
     lt_prpss_h     TYPE HASHED TABLE OF ty_prpss WITH UNIQUE KEY pspnr,
 
@@ -83,7 +83,7 @@ FORM load_tree_hierarchy.
       "------------------------------------------------------------
       " 2) Read PRHIS edges for correct ordering
       "------------------------------------------------------------
-      SELECT pspnr, psphi, up, down, left, right
+      SELECT posnr, psphi, up, down, left, right
         FROM prhis
         INTO TABLE @lt_prhis
         WHERE psphi = @lv_pspnr_templ.
@@ -99,14 +99,14 @@ FORM load_tree_hierarchy.
       CLEAR lv_root_pspnr.
       LOOP AT lt_prhis ASSIGNING FIELD-SYMBOL(<l_prhis>).
         IF <l_prhis>-up IS INITIAL.
-          lv_root_pspnr = <l_prhis>-pspnr.
+          lv_root_pspnr = <l_prhis>-posnr.
           EXIT.
         ENDIF.
       ENDLOOP.
 
       IF lv_root_pspnr IS INITIAL.
         READ TABLE lt_prhis INTO DATA(ls_prhis_any) INDEX 1.
-        lv_root_pspnr = ls_prhis_any-pspnr.
+        lv_root_pspnr = ls_prhis_any-posnr.
       ENDIF.
 
       "------------------------------------------------------------
@@ -130,7 +130,7 @@ FORM load_tree_hierarchy.
       CLEAR lt_has_child.
       LOOP AT lt_prhis ASSIGNING <l_prhis>.
         IF <l_prhis>-down IS NOT INITIAL.
-          INSERT <l_prhis>-pspnr INTO TABLE lt_has_child.
+          INSERT <l_prhis>-posnr INTO TABLE lt_has_child.
         ENDIF.
       ENDLOOP.
 
@@ -178,7 +178,7 @@ FORM load_tree_hierarchy.
         READ TABLE lt_stack INTO lv_node INDEX lines( lt_stack ).
         DELETE lt_stack INDEX lines( lt_stack ).
 
-        READ TABLE lt_prhis_h ASSIGNING <fs_prhis> WITH KEY pspnr = lv_node.
+        READ TABLE lt_prhis_h ASSIGNING <fs_prhis> WITH KEY posnr = lv_node.
         IF sy-subrc <> 0.
           CONTINUE.
         ENDIF.
@@ -265,13 +265,13 @@ FORM load_tree_hierarchy.
       lo_tree_preview->delete_all_nodes( ).
 
       lo_tree_preview->hierarchy_header_set_text(
-        EXPORTING text = 'Project Structure: Description' ##NO_TEXT ).
+        EXPORTING text = 'Project Structure: Description'
 
       lo_tree_preview->add_nodes_and_items(
         EXPORTING
           node_table                = gt_treev_node
           item_table                = gt_treeitm
-          item_table_structure_name = 'CNPB_H_TREEITM' ##NO_TEXT ).
+          item_table_structure_name = 'CNPB_H_TREEITM'
 
       lo_tree_preview->expand_root_nodes(
         EXPORTING level_count = 0 expand_subtree = abap_true ).
