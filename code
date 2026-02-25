@@ -10,23 +10,17 @@ METHOD assign_budget_cj30.
         lv_delta        TYPE c,
         lv_rollup       TYPE c,
         lt_return       TYPE TABLE OF bapiret2,
-        lv_has_error    TYPE abap_bool.
+        lv_has_error    TYPE abap_bool,
+        lv_max_stufe    TYPE ztb_a2r_wbsitem-stufe.
 
-  "Flag/lowest logic
-  DATA: lt_flagged TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_lowest  TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lv_prefix  TYPE string,
-        lv_has_lower_flagged TYPE abap_bool.
-
-  "OBJNR lookup (correct)
   DATA: lv_pspnr     TYPE prps-pspnr,
         lv_posid_ext TYPE ps_posid.
 
   rv_success = abap_false.
   CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  lv_delta  = 'X'.   "DELTA = X
-  lv_rollup = 'X'.   "ROLLUP = X
+  lv_delta  = 'X'.
+  lv_rollup = 'X'.
 
 *---------------------------------------------------------------------*
 * 1) Get Currency
@@ -52,12 +46,14 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2) Read WBS from DB for this request
+* 2) Read FLAGGED WBS only
 *---------------------------------------------------------------------*
   SELECT *
     FROM ztb_a2r_wbsitem
     INTO TABLE @lt_wbs_db
-    WHERE zreq_num = @is_header-zreq_num.
+    WHERE zreq_num      = @is_header-zreq_num
+      AND zbudget_check = 'X'
+      AND wert2         > 0.
 
   IF lt_wbs_db IS INITIAL.
     rv_success = abap_true.
@@ -65,64 +61,35 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2.1) Candidates = flagged + amount + has posid
+* 3) Get HIGHEST STUFE (deepest level)
 *---------------------------------------------------------------------*
-  CLEAR lt_flagged.
+  lv_max_stufe = 0.
+
   LOOP AT lt_wbs_db INTO ls_wbs_db.
-    IF ls_wbs_db-zbudget_check = 'X'
-       AND ls_wbs_db-wert2 > 0
-       AND ls_wbs_db-posid IS NOT INITIAL.
-      APPEND ls_wbs_db TO lt_flagged.
+    IF ls_wbs_db-stufe > lv_max_stufe.
+      lv_max_stufe = ls_wbs_db-stufe.
     ENDIF.
   ENDLOOP.
 
-  IF lt_flagged IS INITIAL.
+  IF lv_max_stufe = 0.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2.2) LOWEST FLAGGED using STUFE
-*      Keep a flagged record if there is NO deeper flagged descendant.
-*---------------------------------------------------------------------*
-  CLEAR lt_lowest.
-
-  LOOP AT lt_flagged INTO ls_wbs_db.
-
-    lv_has_lower_flagged = abap_false.
-    lv_prefix = |{ ls_wbs_db-posid }.|.  "descendants start with 'thisPOSID.'
-
-    LOOP AT lt_flagged ASSIGNING FIELD-SYMBOL(<f>).
-      "deeper level only
-      IF <f>-stufe > ls_wbs_db-stufe
-         AND <f>-posid CP ( lv_prefix && '*' ).
-        lv_has_lower_flagged = abap_true.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_has_lower_flagged = abap_false.
-      APPEND ls_wbs_db TO lt_lowest.
-    ENDIF.
-
-  ENDLOOP.
-
-  IF lt_lowest IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 3) Build BPAK ONLY from LOWEST FLAGGED rows
+* 4) Build BPAK only for deepest STUFE
 *---------------------------------------------------------------------*
   CLEAR lt_bpak.
 
-  LOOP AT lt_lowest INTO ls_wbs_db.
+  LOOP AT lt_wbs_db INTO ls_wbs_db.
 
-    CLEAR: lv_objnr, lv_pspnr.
+    IF ls_wbs_db-stufe <> lv_max_stufe.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR: lv_pspnr, lv_objnr.
     lv_posid_ext = ls_wbs_db-posid.
 
-    "Convert external POSID -> internal PSPNR
     CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
       EXPORTING
         input  = lv_posid_ext
@@ -147,8 +114,8 @@ METHOD assign_budget_cj30.
     CLEAR ls_bpak.
     ls_bpak-e_objnr = lv_objnr.
     ls_bpak-e_versn = '000'.
-    ls_bpak-e_perio = '000'.   "Overall (recommended)
-    ls_bpak-e_wrttp = '41'.    "Original Budget (CJ30)
+    ls_bpak-e_perio = '000'.
+    ls_bpak-e_wrttp = '41'.
     ls_bpak-wert    = ls_wbs_db-wert2.
     ls_bpak-twaer   = lv_waers.
 
@@ -162,7 +129,7 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 4) Call FM (DELTA + ROLLUP = X)
+* 5) Call FM
 *---------------------------------------------------------------------*
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
@@ -180,20 +147,6 @@ METHOD assign_budget_cj30.
       it_return                     = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 5) Check Return Messages
-*---------------------------------------------------------------------*
-  lv_has_error = abap_false.
-  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
-       WHERE type CA 'AEX'.
-    lv_has_error = abap_true.
-    EXIT.
-  ENDLOOP.
-
-  IF lv_has_error = abap_true.
     RETURN.
   ENDIF.
 
