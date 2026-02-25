@@ -1,23 +1,51 @@
-DATA: lv_posid_im TYPE impr-posnr,
-      lv_prnam    TYPE impr-prnam,
-      lv_gjahr_im TYPE impr-gjahr.
+  METHOD copy_template_structure.
 
-"1) Read POSNR + PRNAM from your request header (ZCJ00 source of truth)
-SELECT SINGLE posnr, prnam
-  INTO (@lv_posid_im, @lv_prnam)
-  FROM ztb_a2r_wbshdr
- WHERE zreq_num = @iv_zreq_num.   " <-- use your request number / key
+    DATA: lt_prpss TYPE TABLE OF prpss,
+          ls_prpss TYPE prpss,
+          ls_wbs   TYPE ztb_a2r_wbsitem,
+          lv_pspnr TYPE ps_pspnr.
 
-IF sy-subrc <> 0.
-  MESSAGE 'Header (ZTB_A2R_WBSHDR) not found for request' TYPE 'E'.
-ENDIF.
+    " CORRECTED: Get project internal number from template PSPID
+    " Use PROJS table (screenshot 4 shows standard structure)
+    SELECT SINGLE pspnr FROM projs
+    INTO lv_pspnr
+    WHERE pspid = iv_pspid.
 
-"2) Read GJAHR from IMPR (still from IM master, as requested)
-SELECT SINGLE gjahr
-  INTO @lv_gjahr_im
-  FROM impr
- WHERE posnr = @lv_posid_im.
+    IF sy-subrc <> 0.
+      " Fallback to PROJ
+      SELECT SINGLE pspnr FROM proj
+      INTO lv_pspnr
+      WHERE pspid = iv_pspid.
+    ENDIF.
 
-IF sy-subrc <> 0 OR lv_gjahr_im IS INITIAL.
-  MESSAGE 'IM Approval Year (IMPR-GJAHR) not found for POSNR' TYPE 'E'.
-ENDIF.
+    IF sy-subrc = 0.
+      " Get all WBS elements using PRPSS (screenshot 5 confirms this)
+      SELECT * FROM prpss
+      INTO TABLE lt_prpss
+      WHERE psphi = lv_pspnr
+      ORDER BY stufe posid.
+
+
+      IF sy-subrc = 0.
+        LOOP AT lt_prpss INTO ls_prpss.
+          CLEAR ls_wbs.
+
+          ls_wbs-stufe = ls_prpss-stufe.
+          ls_wbs-posid = ls_prpss-posid.
+          ls_wbs-post1 = ls_prpss-post1.
+          ls_wbs-posnr = ls_prpss-pspnr.    " PSPNR = internal WBS number
+          ls_wbs-kostl = iv_kostl.          " Inherit from header
+          ls_wbs-imprf = ls_prpss-imprf.
+          ls_wbs-vkokr = ls_prpss-pkokr.
+          ls_wbs-prart = ls_prpss-prart.
+          ls_wbs-bukrs = ls_prpss-pbukr.
+          ls_wbs-bukrs = ls_prpss-pbukr.    " PBUKR = Company Code in WBS
+
+          APPEND ls_wbs TO ct_wbs_items.
+        ENDLOOP.
+      ENDIF.
+
+
+    ENDIF.
+
+  ENDMETHOD.
