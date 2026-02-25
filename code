@@ -10,16 +10,14 @@ METHOD assign_budget_cj30.
         lv_delta        TYPE c,
         lv_rollup       TYPE c,
         lt_return       TYPE TABLE OF bapiret2,
+        lv_posid_db     TYPE ps_posid,
         lv_has_error    TYPE abap_bool,
         lv_max_stufe    TYPE ztb_a2r_wbsitem-stufe.
-
-  DATA: lv_pspnr     TYPE prps-pspnr,
-        lv_posid_ext TYPE ps_posid.
 
   rv_success = abap_false.
   CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  lv_delta  = 'X'.
+  lv_delta  = ''.
   lv_rollup = 'X'.
 
 *---------------------------------------------------------------------*
@@ -46,7 +44,7 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2) Read FLAGGED WBS only
+* 2) Read ONLY flagged WBS from DB
 *---------------------------------------------------------------------*
   SELECT *
     FROM ztb_a2r_wbsitem
@@ -61,51 +59,48 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 3) Get HIGHEST STUFE (deepest level)
+* NEW: Determine highest STUFE (lowest level)
 *---------------------------------------------------------------------*
-  lv_max_stufe = 0.
-
+  CLEAR lv_max_stufe.
   LOOP AT lt_wbs_db INTO ls_wbs_db.
     IF ls_wbs_db-stufe > lv_max_stufe.
       lv_max_stufe = ls_wbs_db-stufe.
     ENDIF.
   ENDLOOP.
 
-  IF lv_max_stufe = 0.
+  IF lv_max_stufe IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 4) Build BPAK only for deepest STUFE
+* 3) Build BPAK from DB records (only lowest level: highest STUFE)
 *---------------------------------------------------------------------*
   CLEAR lt_bpak.
-
   LOOP AT lt_wbs_db INTO ls_wbs_db.
 
+    "Only process lowest level (highest STUFE)
     IF ls_wbs_db-stufe <> lv_max_stufe.
       CONTINUE.
     ENDIF.
 
-    CLEAR: lv_pspnr, lv_objnr.
-    lv_posid_ext = ls_wbs_db-posid.
+    CLEAR lv_objnr.
+
+    "Convert POSID external -> internal
+    lv_posid_db = ls_wbs_db-posid.
 
     CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
       EXPORTING
-        input  = lv_posid_ext
+        input  = lv_posid_db
       IMPORTING
-        output = lv_pspnr
+        output = lv_posid_db
       EXCEPTIONS
         OTHERS = 1.
-
-    IF lv_pspnr IS INITIAL.
-      CONTINUE.
-    ENDIF.
 
     SELECT SINGLE objnr
       INTO @lv_objnr
       FROM prps
-      WHERE pspnr = @lv_pspnr.
+      WHERE posid = @lv_posid_db.
 
     IF lv_objnr IS INITIAL.
       CONTINUE.
@@ -114,8 +109,8 @@ METHOD assign_budget_cj30.
     CLEAR ls_bpak.
     ls_bpak-e_objnr = lv_objnr.
     ls_bpak-e_versn = '000'.
-    ls_bpak-e_perio = '000'.
-    ls_bpak-e_wrttp = '41'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.     "CJ30 Budget
     ls_bpak-wert    = ls_wbs_db-wert2.
     ls_bpak-twaer   = lv_waers.
 
@@ -129,7 +124,7 @@ METHOD assign_budget_cj30.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 5) Call FM
+* 4) Call FM
 *---------------------------------------------------------------------*
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
@@ -147,6 +142,20 @@ METHOD assign_budget_cj30.
       it_return                     = lt_return.
 
   IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 5) Check Return Messages
+*---------------------------------------------------------------------*
+  lv_has_error = abap_false.
+  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
+       WHERE type CA 'AEX'.
+    lv_has_error = abap_true.
+    EXIT.
+  ENDLOOP.
+
+  IF lv_has_error = abap_true.
     RETURN.
   ENDIF.
 
