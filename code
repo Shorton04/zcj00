@@ -1,175 +1,105 @@
-METHODS release_project_cj02
-  IMPORTING
-    iv_pspid TYPE proj-pspid.
+MODULE user_command_0100 INPUT.
 
+  "------------------------------------------------------------------
+  "1) Persist user input into GS_HEADER and mark user overrides
+  "   (Put this BEFORE CASE sy-ucomm / validations)
+  "------------------------------------------------------------------
 
-
-
-METHOD release_project_cj02.
-  "======================================================================
-  " Release Project Definition via CJ02 (BDC)
-  " Based on SHDB: ZCJ02_REL
-  " 0100: =MDTB + *PROJ-PSPID
-  " 0998: =STFR (Release)
-  " 0998: =BU   (Save)
-  "======================================================================
-
-  DATA:
-    lt_bdcdata TYPE TABLE OF bdcdata,
-    lt_bdcmsg  TYPE STANDARD TABLE OF bdcmsgcoll,
-    ls_bdcmsg  TYPE bdcmsgcoll,
-    lv_pspid_c TYPE fnam_____4,
-    lv_mode    TYPE c VALUE 'N',
-    lv_update  TYPE c VALUE 'S'.
-
-  " Convert to CHAR* for BDC field
-  lv_pspid_c = iv_pspid.
-
-  CLEAR lt_bdcdata.
-
-  "------------------------------------------------------------
-  " SAPLCJWB 0100
-  "------------------------------------------------------------
-  bdc_dynpro(
-    EXPORTING
-      iv_program = 'SAPLCJWB'
-      iv_dynpro  = '0100'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_CURSOR'
-      iv_fval = '*PROJ-PSPID'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_OKCODE'
-      iv_fval = '=MDTB'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = '*PROJ-PSPID'
-      iv_fval = CONV #( lv_pspid_c )
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  "------------------------------------------------------------
-  " SAPLCJWB 0998 -> Release (=STFR)
-  " Include subscreens as per SHDB (1205SUBSCR2 + 0700STATUS)
-  "------------------------------------------------------------
-  bdc_dynpro(
-    EXPORTING
-      iv_program = 'SAPLCJWB'
-      iv_dynpro  = '0998'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_CURSOR'
-      iv_fval = 'PROJ-PSPID'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_SUBSCR'
-      iv_fval = 'SAPLCJWB                                1205SUBSCR2'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_SUBSCR'
-      iv_fval = 'SAPLCJWB                                0700STATUS'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_OKCODE'
-      iv_fval = '=STFR'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  "------------------------------------------------------------
-  " SAPLCJWB 0998 -> Save (=BU)
-  "------------------------------------------------------------
-  bdc_dynpro(
-    EXPORTING
-      iv_program = 'SAPLCJWB'
-      iv_dynpro  = '0998'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_CURSOR'
-      iv_fval = 'PROJ-PSPID'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_SUBSCR'
-      iv_fval = 'SAPLCJWB                                1205SUBSCR2'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_SUBSCR'
-      iv_fval = 'SAPLCJWB                                0700STATUS'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  bdc_field(
-    EXPORTING
-      iv_fnam = 'BDC_OKCODE'
-      iv_fval = '=BU'
-    CHANGING
-      ct_bdcdata = lt_bdcdata
-  ).
-
-  "------------------------------------------------------------
-  " Execute CJ02
-  "------------------------------------------------------------
-  CLEAR lt_bdcmsg.
-
-  CALL TRANSACTION 'CJ02'
-    USING lt_bdcdata
-    MODE  lv_mode
-    UPDATE lv_update
-    MESSAGES INTO lt_bdcmsg.
-
-  "Return error if any A/E/X in messages
-  LOOP AT lt_bdcmsg INTO ls_bdcmsg WHERE msgtyp CA 'AEX'.
-    EXIT.
-  ENDLOOP.
-
-  IF sy-subrc = 0.
-    MESSAGE e398(00) WITH 'CJ02 release failed for PSPID' iv_pspid.
-  ELSE.
-    COMMIT WORK AND WAIT.
-    WAIT UP TO 2 SECONDS.
+  IF p_post1 <> gs_header-post1.
+    gs_header-post1 = p_post1.
+    gv_u_post1 = abap_true.
   ENDIF.
 
-ENDMETHOD.
+  IF p_vernr <> gs_header-vernr.
+    gs_header-vernr = p_vernr.
+    gv_u_vernr = abap_true.
+  ENDIF.
+
+  IF p_plsez <> gs_header-plsez.
+    gs_header-plsez = p_plsez.
+    gv_u_plsez = abap_true.
+  ENDIF.
+
+  "IM Position: if your input is POSNR keep it here; if user edits POSID field, adapt accordingly
+  "Example if user edits POSNR:
+  IF p_posnr <> gs_header-posnr.
+    gs_header-posnr = p_posnr.
+    gv_u_posid = abap_true.
+  ENDIF.
+
+  IF p_prctr <> gs_header-prctr.
+    gs_header-prctr = p_prctr.
+    gv_u_prctr = abap_true.
+  ENDIF.
+
+  IF p_kostl <> gs_header-kostl.
+    gs_header-kostl = p_kostl.
+    gv_u_kostl = abap_true.
+  ENDIF.
+
+  "------------------------------------------------------------------
+  "2) Your existing OKCODE logic continues here
+  "------------------------------------------------------------------
+  " ok_code = sy-ucomm.
+  " CASE sy-ucomm.
+  " ...
+  " ENDCASE.
+
+ENDMODULE.
+
+
+
+MODULE set_header_display_values OUTPUT.
+
+  "------------------------------------------------------------------
+  "0) Derive defaults (example variables)
+  "   - put your existing derivation PERFORMs/SELECTs here if you have them
+  "------------------------------------------------------------------
+  "DATA: lv_post1_def TYPE ...
+  "      lv_vernr_def TYPE ...
+  "      lv_plsez_def TYPE ...
+  "      lv_prctr_def TYPE ...
+  "      lv_kostl_def TYPE ...
+
+  "------------------------------------------------------------------
+  "1) Protect user-entered fields: only default if not overridden
+  "------------------------------------------------------------------
+  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
+    gs_header-post1 = lv_post1_def.
+  ENDIF.
+
+  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
+    gs_header-vernr = lv_vernr_def.
+  ENDIF.
+
+  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
+    gs_header-plsez = lv_plsez_def.
+  ENDIF.
+
+  "IM Position protection:
+  "If auto-fill sets POSNR, guard it similarly:
+  IF gv_u_posid IS INITIAL AND gs_header-posnr IS INITIAL.
+    gs_header-posnr = lv_posnr_def.
+  ENDIF.
+
+  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
+    gs_header-prctr = lv_prctr_def.
+  ENDIF.
+
+  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
+    gs_header-kostl = lv_kostl_def.
+  ENDIF.
+
+  "------------------------------------------------------------------
+  "2) Your existing display-only logic stays as-is (requestor, reqtype,
+  "   gv_im_posid_display, available budget, currency)
+  "------------------------------------------------------------------
+  "... existing code you already have ...
+ENDMODULE.
+
+
+
+gs_header = ls_return-fieldval.
+
+
+
