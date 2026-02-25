@@ -1,142 +1,202 @@
-  METHOD assign_budget_cj30.
+METHOD assign_budget_cj30.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          ls_wbs_db       TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lv_waers        TYPE waers,
-          lv_delta        TYPE c,
-          lv_rollup       TYPE c,
-          lt_return       TYPE TABLE OF bapiret2,
-          lv_posid_db     TYPE ps_posid,
-          lv_has_error    TYPE abap_bool.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_wbs_db       TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lv_delta        TYPE c,
+        lv_rollup       TYPE c,
+        lt_return       TYPE TABLE OF bapiret2,
+        lv_has_error    TYPE abap_bool.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
+  "Flag/lowest logic
+  DATA: lt_flagged TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        lt_lowest  TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        lv_prefix  TYPE string,
+        lv_has_lower_flagged TYPE abap_bool.
 
-    lv_delta = ''.
-    lv_rollup = 'X'.
+  "OBJNR lookup (correct)
+  DATA: lv_pspnr     TYPE prps-pspnr,
+        lv_posid_ext TYPE ps_posid.
+
+  rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
+
+  lv_delta  = 'X'.   "DELTA = X
+  lv_rollup = 'X'.   "ROLLUP = X
 
 *---------------------------------------------------------------------*
 * 1) Get Currency
 *---------------------------------------------------------------------*
+  SELECT SINGLE waers
+    INTO @lv_waers
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = @is_header-zreq_num.
+
+  IF lv_waers IS INITIAL.
+    lv_waers = is_header-waers.
+  ENDIF.
+
+  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
     SELECT SINGLE waers
       INTO @lv_waers
-      FROM ztb_a2r_wbshdr
-      WHERE zreq_num = @is_header-zreq_num.
+      FROM t001
+      WHERE bukrs = @is_header-bukrs.
+  ENDIF.
 
-    IF lv_waers IS INITIAL.
-      lv_waers = is_header-waers.
-    ENDIF.
-
-    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-      SELECT SINGLE waers
-        INTO @lv_waers
-        FROM t001
-        WHERE bukrs = @is_header-bukrs.
-    ENDIF.
-
-    IF lv_waers IS INITIAL.
-      RETURN.
-    ENDIF.
+  IF lv_waers IS INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
-* 2) Read ONLY flagged WBS from DB
+* 2) Read WBS from DB for this request
 *---------------------------------------------------------------------*
-    SELECT *
-      FROM ztb_a2r_wbsitem
-      INTO TABLE @lt_wbs_db
-      WHERE zreq_num      = @is_header-zreq_num
-        AND zbudget_check = 'X'
-        AND wert2         > 0.
+  SELECT *
+    FROM ztb_a2r_wbsitem
+    INTO TABLE @lt_wbs_db
+    WHERE zreq_num = @is_header-zreq_num.
 
-    IF lt_wbs_db IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
+  IF lt_wbs_db IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 2.1) Candidates = flagged + amount + has posid
+*---------------------------------------------------------------------*
+  CLEAR lt_flagged.
+  LOOP AT lt_wbs_db INTO ls_wbs_db.
+    IF ls_wbs_db-zbudget_check = 'X'
+       AND ls_wbs_db-wert2 > 0
+       AND ls_wbs_db-posid IS NOT INITIAL.
+      APPEND ls_wbs_db TO lt_flagged.
     ENDIF.
+  ENDLOOP.
+
+  IF lt_flagged IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
-* 3) Build BPAK from DB records
+* 2.2) LOWEST FLAGGED using STUFE
+*      Keep a flagged record if there is NO deeper flagged descendant.
 *---------------------------------------------------------------------*
-    LOOP AT lt_wbs_db INTO ls_wbs_db.
+  CLEAR lt_lowest.
 
-      CLEAR lv_objnr.
+  LOOP AT lt_flagged INTO ls_wbs_db.
 
-      "Convert POSID external -> internal
-      lv_posid_db = ls_wbs_db-posid.
+    lv_has_lower_flagged = abap_false.
+    lv_prefix = |{ ls_wbs_db-posid }.|.  "descendants start with 'thisPOSID.'
 
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-        EXPORTING
-          input  = lv_posid_db
-        IMPORTING
-          output = lv_posid_db
-        EXCEPTIONS
-          OTHERS = 1.
-
-      SELECT SINGLE objnr
-        INTO @lv_objnr
-        FROM prps
-        WHERE posid = @lv_posid_db.
-
-      IF lv_objnr IS INITIAL.
-        CONTINUE.
+    LOOP AT lt_flagged ASSIGNING FIELD-SYMBOL(<f>).
+      "deeper level only
+      IF <f>-stufe > ls_wbs_db-stufe
+         AND <f>-posid CP ( lv_prefix && '*' ).
+        lv_has_lower_flagged = abap_true.
+        EXIT.
       ENDIF.
-
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '41'.     "CJ30 Budget
-      ls_bpak-wert    = ls_wbs_db-wert2.
-      ls_bpak-twaer   = lv_waers.
-
-      APPEND ls_bpak TO lt_bpak.
-
     ENDLOOP.
 
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
+    IF lv_has_lower_flagged = abap_false.
+      APPEND ls_wbs_db TO lt_lowest.
     ENDIF.
 
+  ENDLOOP.
+
+  IF lt_lowest IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
 *---------------------------------------------------------------------*
-* 4) Call FM
+* 3) Build BPAK ONLY from LOWEST FLAGGED rows
 *---------------------------------------------------------------------*
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+  CLEAR lt_bpak.
+
+  LOOP AT lt_lowest INTO ls_wbs_db.
+
+    CLEAR: lv_objnr, lv_pspnr.
+    lv_posid_ext = ls_wbs_db-posid.
+
+    "Convert external POSID -> internal PSPNR
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
       EXPORTING
-        i_budget_activity             = 'KBUD'
-        i_budget_distribution_allowed = 'X'
-        i_delta_amounts               = lv_delta
-        i_rollup_data                 = lv_rollup
-        i_check_plan_data             = 'X'
-        i_application                 = 'P'
-        i_commit_all                  = 'X'
+        input  = lv_posid_ext
       IMPORTING
-        e_errors_found                = lv_errors_found
-      TABLES
-        it_bpak                       = lt_bpak
-        it_return                     = lt_return.
+        output = lv_pspnr
+      EXCEPTIONS
+        OTHERS = 1.
 
-    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-      RETURN.
+    IF lv_pspnr IS INITIAL.
+      CONTINUE.
     ENDIF.
+
+    SELECT SINGLE objnr
+      INTO @lv_objnr
+      FROM prps
+      WHERE pspnr = @lv_pspnr.
+
+    IF lv_objnr IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '000'.   "Overall (recommended)
+    ls_bpak-e_wrttp = '41'.    "Original Budget (CJ30)
+    ls_bpak-wert    = ls_wbs_db-wert2.
+    ls_bpak-twaer   = lv_waers.
+
+    APPEND ls_bpak TO lt_bpak.
+
+  ENDLOOP.
+
+  IF lt_bpak IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 4) Call FM (DELTA + ROLLUP = X)
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity             = 'KBUD'
+      i_budget_distribution_allowed = 'X'
+      i_delta_amounts               = lv_delta
+      i_rollup_data                 = lv_rollup
+      i_check_plan_data             = 'X'
+      i_application                 = 'P'
+      i_commit_all                  = 'X'
+    IMPORTING
+      e_errors_found                = lv_errors_found
+    TABLES
+      it_bpak                       = lt_bpak
+      it_return                     = lt_return.
+
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * 5) Check Return Messages
 *---------------------------------------------------------------------*
-    lv_has_error = abap_false.
-    LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
-         WHERE type CA 'AEX'.
-      lv_has_error = abap_true.
-      EXIT.
-    ENDLOOP.
+  lv_has_error = abap_false.
+  LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
+       WHERE type CA 'AEX'.
+    lv_has_error = abap_true.
+    EXIT.
+  ENDLOOP.
 
-    IF lv_has_error = abap_true.
-      RETURN.
-    ENDIF.
+  IF lv_has_error = abap_true.
+    RETURN.
+  ENDIF.
 
-    rv_success = abap_true.
+  rv_success = abap_true.
 
-  ENDMETHOD.
+ENDMETHOD.
