@@ -1,135 +1,132 @@
-MODULE user_command_0100 INPUT.
-  DATA: lv_ok_code1 TYPE sy-ucomm.
+FORM save_request.
 
-  lv_ok_code1 = sy-ucomm.
-  CLEAR sy-ucomm.
+  DATA: lv_reqnum TYPE char10.
 
-  " Sync ALL editable screen fields to gs_header on every PAI.
-  " The gv_u_* flags are sticky - once set they prevent OUTPUT from reverting.
-  IF p_post1 <> gs_header-post1.
+  " ALWAYS sync screen fields to gs_header first.
+  " This ensures user-edited values override auto-populated ones.
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
+
+  CALL METHOD go_builder->save_request
+    EXPORTING
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    RECEIVING
+      rv_reqnum    = lv_reqnum.
+
+  IF lv_reqnum IS NOT INITIAL.
+    gv_request_number = lv_reqnum.
+    MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
+    COMMIT WORK.
+  ELSE.
+    MESSAGE e013.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM sync_screen_to_header.
+
+  " For each field: if user explicitly edited it (gv_u_* = true),
+  " their screen value takes priority over whatever is in gs_header.
+  " If user never touched it, keep gs_header as-is (auto-populated value).
+
+  IF gv_u_post1 = abap_true.
     gs_header-post1 = p_post1.
-    gv_u_post1 = abap_true.
-  ELSEIF gv_u_post1 = abap_true.
-    gs_header-post1 = p_post1.   " Keep user value sticky
   ENDIF.
 
-  IF p_verna <> gs_header-vernr.
-    gs_header-vernr = p_verna.
-    gv_u_vernr = abap_true.
-  ELSEIF gv_u_vernr = abap_true.
+  IF gv_u_vernr = abap_true.
     gs_header-vernr = p_verna.
   ENDIF.
 
-  IF p_plsez <> gs_header-plsez.
-    gs_header-plsez = p_plsez.
-    gv_u_plsez = abap_true.
-  ELSEIF gv_u_plsez = abap_true.
+  IF gv_u_plsez = abap_true.
     gs_header-plsez = p_plsez.
   ENDIF.
 
-  IF p_posnr <> gs_header-posnr.
-    gs_header-posnr = p_posnr.
-    gv_u_posid = abap_true.
-  ELSEIF gv_u_posid = abap_true.
+  IF gv_u_posid = abap_true.
     gs_header-posnr = p_posnr.
   ENDIF.
 
-  IF p_prctr <> gs_header-prctr.
-    gs_header-prctr = p_prctr.
-    gv_u_prctr = abap_true.
-  ELSEIF gv_u_prctr = abap_true.
+  IF gv_u_prctr = abap_true.
     gs_header-prctr = p_prctr.
   ENDIF.
 
-  IF p_kostl <> gs_header-kostl.
-    gs_header-kostl = p_kostl.
-    gv_u_kostl = abap_true.
-  ELSEIF gv_u_kostl = abap_true.
+  IF gv_u_kostl = abap_true.
     gs_header-kostl = p_kostl.
   ENDIF.
 
-  " ... rest of CASE lv_ok_code1 unchanged
+ENDFORM.
 
 
 
 
-MODULE set_header_display_values OUTPUT.
+FORM populate_header_structure.
 
-  DATA: lv_reqtype_text TYPE char20.
+  " Do NOT CLEAR gs_header here
 
-  " Only set p_* screen fields from gs_header if user has NOT manually edited them.
-  " Once gv_u_* is set, the user owns that field - do NOT touch it.
-  IF gv_u_post1 IS INITIAL.
-    p_post1  = gs_header-post1.
+  " IM Data - auto fields, safe to set if initial
+  IF gs_header-posnr IS INITIAL. gs_header-posnr = p_posnr. ENDIF.
+  IF gs_header-prnam IS INITIAL. gs_header-prnam = p_prnam. ENDIF.
+
+  " User-editable fields: only auto-populate if user never edited them
+  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
+    gs_header-post1 = p_post1.
   ENDIF.
 
-  IF gv_u_vernr IS INITIAL.
-    p_verna  = gs_header-vernr.
+  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
+    gs_header-vernr = p_verna.
   ENDIF.
 
-  IF gv_u_plsez IS INITIAL.
-    p_plsez  = gs_header-plsez.
+  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
+    gs_header-plsez = p_plsez.
   ENDIF.
 
-  IF gv_u_prctr IS INITIAL.
-    p_prctr  = gs_header-prctr.
+  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
+    gs_header-prctr = p_prctr.
   ENDIF.
 
-  IF gv_u_kostl IS INITIAL.
-    p_kostl  = gs_header-kostl.
+  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
+    gs_header-kostl = p_kostl.
   ENDIF.
 
-  " Display-only fields (non-editable) - always re-derive, no risk of overwrite
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    PERFORM get_user_fullname
-      USING    sy-uname
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
+  " Dates
+  IF gs_header-erdat IS INITIAL. gs_header-erdat = sy-datum. ENDIF.
+
+  " Org - auto fields
+  IF gs_header-bukrs IS INITIAL. gs_header-bukrs = gv_bukrs. ENDIF.
+  IF gs_header-werks IS INITIAL. gs_header-werks = gv_werks. ENDIF.
+
+  " Investment
+  IF gs_header-izwek IS INITIAL. gs_header-izwek = gv_izwek. ENDIF.
+  IF gs_header-profl IS INITIAL. gs_header-profl = p_profl. ENDIF.
+
+  " Flags
+  IF gs_header-zunifier_proj IS INITIAL. gs_header-zunifier_proj = p_usr10. ENDIF.
+  IF gs_header-usr008 IS INITIAL. gs_header-usr008 = gv_usr008. ENDIF.
+
+  " User/type
+  IF gs_header-ernam IS INITIAL. gs_header-ernam = sy-uname. ENDIF.
+  IF gs_header-z_reqtype IS INITIAL. gs_header-z_reqtype = gv_request_type. ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
   ENDIF.
 
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'(c01).
+  IF gv_im_posid_display IS INITIAL.
+    PERFORM get_im_posid_for_display USING p_posnr CHANGING gv_im_posid_display.
   ENDIF.
 
-  IF gs_header-posnr IS NOT INITIAL.
-    PERFORM get_im_posid_for_display
-      USING    gs_header-posnr
-      CHANGING gv_im_posid_display.
-  ENDIF.
-
-  IF gs_header-posnr IS NOT INITIAL.
-    PERFORM get_available_budget_display
-      USING    gs_header-posnr
-      CHANGING gv_avail_budget_text
-               gv_available_budget.
-  ELSE.
-    gv_avail_budget_text = 'No'.
-    CLEAR gv_available_budget.
-  ENDIF.
-
-  IF gs_header-pspnr IS NOT INITIAL.
-    PERFORM get_project_currency
-      USING    gs_header-pspnr
-      CHANGING gv_project_currency.
-  ELSE.
-    IF gv_bukrs IS NOT INITIAL.
-      SELECT SINGLE waers FROM t001
-        INTO gv_project_currency
-        WHERE bukrs = gv_bukrs.
-    ENDIF.
-  ENDIF.
-
-ENDMODULE.
+ENDFORM.
 
 
 
+
+FORM submit_direct_creation.
+  ...
+  PERFORM sync_screen_to_header.   " <-- ADD THIS
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
+  ...
+ENDFORM.
