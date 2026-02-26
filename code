@@ -1,60 +1,205 @@
-PROCESS BEFORE OUTPUT.
-  MODULE STATUS_0100.
-  MODULE set_header_display_values.
-  CALL SUBSCREEN: wbs INCLUDING sy-repid '0300',
-                  remarks INCLUDING sy-repid '0400'.
-
-PROCESS AFTER INPUT.
-  MODULE capture_user_edits.        " <-- ADD THIS AS FIRST LINE
-  CALL SUBSCREEN: wbs, remarks.
-  MODULE USER_COMMAND_0100.
-
-PROCESS ON VALUE-REQUEST.
-  FIELD gs_header-vernr MODULE f4_help_person_responsible.
-
-
-
-*&---------------------------------------------------------------------*
-*& Module CAPTURE_USER_EDITS INPUT
-*&---------------------------------------------------------------------*
 MODULE capture_user_edits INPUT.
 
-  " Must fire BEFORE subscreen and USER_COMMAND_0100
-  " Captures whatever user typed before any refresh logic runs
+  " Copy current gs_header screen values into shadow structure
+  " These are what the user currently sees/typed on screen
 
-  IF p_post1 <> gs_header-post1 OR gv_u_post1 = abap_true.
-    gs_header-post1 = p_post1.
-    IF p_post1 IS NOT INITIAL.
+  IF gv_u_post1 = abap_true OR gs_header-post1 <> gs_header_user-post1.
+    gs_header_user-post1 = gs_header-post1.
+    IF gs_header-post1 IS NOT INITIAL.
       gv_u_post1 = abap_true.
     ENDIF.
   ENDIF.
 
-  IF p_verna <> gs_header-vernr OR gv_u_vernr = abap_true.
-    gs_header-vernr = p_verna.
-    IF p_verna IS NOT INITIAL.
+  IF gv_u_vernr = abap_true OR gs_header-vernr <> gs_header_user-vernr.
+    gs_header_user-vernr = gs_header-vernr.
+    IF gs_header-vernr IS NOT INITIAL.
       gv_u_vernr = abap_true.
     ENDIF.
   ENDIF.
 
-  IF p_plsez <> gs_header-plsez OR gv_u_plsez = abap_true.
-    gs_header-plsez = p_plsez.
-    IF p_plsez IS NOT INITIAL.
+  IF gv_u_plsez = abap_true OR gs_header-plsez <> gs_header_user-plsez.
+    gs_header_user-plsez = gs_header-plsez.
+    IF gs_header-plsez IS NOT INITIAL.
       gv_u_plsez = abap_true.
     ENDIF.
   ENDIF.
 
-  IF p_prctr <> gs_header-prctr OR gv_u_prctr = abap_true.
-    gs_header-prctr = p_prctr.
-    IF p_prctr IS NOT INITIAL.
+  IF gv_u_prctr = abap_true OR gs_header-prctr <> gs_header_user-prctr.
+    gs_header_user-prctr = gs_header-prctr.
+    IF gs_header-prctr IS NOT INITIAL.
       gv_u_prctr = abap_true.
     ENDIF.
   ENDIF.
 
-  IF p_kostl <> gs_header-kostl OR gv_u_kostl = abap_true.
-    gs_header-kostl = p_kostl.
-    IF p_kostl IS NOT INITIAL.
+  IF gv_u_kostl = abap_true OR gs_header-kostl <> gs_header_user-kostl.
+    gs_header_user-kostl = gs_header-kostl.
+    IF gs_header-kostl IS NOT INITIAL.
       gv_u_kostl = abap_true.
     ENDIF.
   ENDIF.
 
 ENDMODULE.
+
+
+
+
+
+" Shadow structure to hold user-edited values
+" Protects against PBO overwriting gs_header
+DATA: gs_header_user TYPE ztb_a2r_wbshdr.
+
+
+
+
+
+
+MODULE set_header_display_values OUTPUT.
+
+  DATA: lv_reqtype_text TYPE char20.
+
+  " Step 1: Let display-only fields re-derive normally
+  IF gs_header-ernam IS NOT INITIAL.
+    PERFORM get_user_fullname
+      USING    gs_header-ernam
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
+  ELSE.
+    PERFORM get_user_fullname
+      USING    sy-uname
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
+  ENDIF.
+
+  IF gs_header-z_reqtype IS NOT INITIAL.
+    PERFORM get_request_type_text
+      USING    gs_header-z_reqtype
+      CHANGING lv_reqtype_text.
+    gv_reqtype_display = lv_reqtype_text.
+  ELSE.
+    gv_reqtype_display = 'Create'(c01).
+  ENDIF.
+
+  IF gs_header-posnr IS NOT INITIAL.
+    PERFORM get_im_posid_for_display
+      USING    gs_header-posnr
+      CHANGING gv_im_posid_display.
+  ENDIF.
+
+  IF gs_header-posnr IS NOT INITIAL.
+    PERFORM get_available_budget_display
+      USING    gs_header-posnr
+      CHANGING gv_avail_budget_text
+               gv_available_budget.
+  ELSE.
+    gv_avail_budget_text = 'No'.
+    CLEAR gv_available_budget.
+  ENDIF.
+
+  IF gs_header-pspnr IS NOT INITIAL.
+    PERFORM get_project_currency
+      USING    gs_header-pspnr
+      CHANGING gv_project_currency.
+  ELSE.
+    IF gv_bukrs IS NOT INITIAL.
+      SELECT SINGLE waers FROM t001
+        INTO gv_project_currency
+        WHERE bukrs = gv_bukrs.
+    ENDIF.
+  ENDIF.
+
+  " Step 2: ALWAYS restore user-edited values LAST
+  " This overwrites anything that auto-population may have put into gs_header
+  IF gv_u_post1 = abap_true.
+    gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+
+  IF gv_u_vernr = abap_true.
+    gs_header-vernr = gs_header_user-vernr.
+  ENDIF.
+
+  IF gv_u_plsez = abap_true.
+    gs_header-plsez = gs_header_user-plsez.
+  ENDIF.
+
+  IF gv_u_prctr = abap_true.
+    gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+
+  IF gv_u_kostl = abap_true.
+    gs_header-kostl = gs_header_user-kostl.
+  ENDIF.
+
+ENDMODULE.
+
+
+
+
+
+FORM sync_screen_to_header.
+
+  " Push shadow (user-edited) values into gs_header before save
+  IF gv_u_post1 = abap_true.
+    gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+
+  IF gv_u_vernr = abap_true.
+    gs_header-vernr = gs_header_user-vernr.
+  ENDIF.
+
+  IF gv_u_plsez = abap_true.
+    gs_header-plsez = gs_header_user-plsez.
+  ENDIF.
+
+  IF gv_u_prctr = abap_true.
+    gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+
+  IF gv_u_kostl = abap_true.
+    gs_header-kostl = gs_header_user-kostl.
+  ENDIF.
+
+ENDMODULE.
+
+
+
+
+
+FORM populate_header_structure.
+
+  IF gs_header-posnr IS INITIAL. gs_header-posnr = p_posnr. ENDIF.
+  IF gs_header-prnam IS INITIAL. gs_header-prnam = p_prnam. ENDIF.
+  IF gs_header-erdat IS INITIAL. gs_header-erdat = sy-datum. ENDIF.
+  IF gs_header-bukrs IS INITIAL. gs_header-bukrs = gv_bukrs. ENDIF.
+  IF gs_header-werks IS INITIAL. gs_header-werks = gv_werks. ENDIF.
+  IF gs_header-izwek IS INITIAL. gs_header-izwek = gv_izwek. ENDIF.
+  IF gs_header-profl IS INITIAL. gs_header-profl = p_profl.  ENDIF.
+  IF gs_header-zunifier_proj IS INITIAL. gs_header-zunifier_proj = p_usr10. ENDIF.
+  IF gs_header-usr008 IS INITIAL. gs_header-usr008 = gv_usr008. ENDIF.
+  IF gs_header-ernam IS INITIAL. gs_header-ernam = sy-uname.  ENDIF.
+  IF gs_header-z_reqtype IS INITIAL. gs_header-z_reqtype = gv_request_type. ENDIF.
+
+  " User-editable fields: only auto-populate if user never edited them
+  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
+    gs_header-post1 = p_post1.
+  ENDIF.
+  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
+    gs_header-vernr = p_verna.
+  ENDIF.
+  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
+    gs_header-plsez = p_plsez.
+  ENDIF.
+  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
+    gs_header-prctr = p_prctr.
+  ENDIF.
+  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
+    gs_header-kostl = p_kostl.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+  IF gv_im_posid_display IS INITIAL.
+    PERFORM get_im_posid_for_display USING p_posnr CHANGING gv_im_posid_display.
+  ENDIF.
+
+ENDFORM.
