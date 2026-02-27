@@ -1,121 +1,59 @@
-MODULE set_header_display_values OUTPUT.
+MODULE capture_user_edits INPUT.
 
-  DATA: lv_reqtype_text TYPE char20.
-  DATA: lv_posnr_for_budget TYPE im_posnr.
+  " ... existing gs_header field captures ...
 
-  " Derive gv_im_posid_display only when user hasn't edited it
-  IF gv_u_im_posid IS INITIAL.
-    IF gs_header-posnr IS NOT INITIAL.
-      PERFORM get_im_posid_for_display
-        USING    gs_header-posnr
-        CHANGING gv_im_posid_display.
-      gv_posnr_display_done = abap_true.
-    ENDIF.
-  ENDIF.
+  " Capture gv_im_posid_display
+  IF gv_posnr_display_done = abap_true.
+    IF gv_im_posid_display <> gv_im_posid_user
+    OR gv_u_im_posid = abap_true.
+      IF gv_im_posid_display IS NOT INITIAL.
 
-  " Display-only re-derivations
-  IF gs_header-ernam IS NOT INITIAL.
-    PERFORM get_user_fullname
-      USING    gs_header-ernam
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ELSE.
-    PERFORM get_user_fullname
-      USING    sy-uname
-      CHANGING lv_fullname.
-    gv_requestor_display = lv_fullname.
-  ENDIF.
+        IF gv_im_posid_display <> gv_im_posid_user.
+          DATA: lv_new_posnr TYPE im_posnr.
 
-  IF gs_header-z_reqtype IS NOT INITIAL.
-    PERFORM get_request_type_text
-      USING    gs_header-z_reqtype
-      CHANGING lv_reqtype_text.
-    gv_reqtype_display = lv_reqtype_text.
-  ELSE.
-    gv_reqtype_display = 'Create'(c01).
-  ENDIF.
+          " STEP 1: Check if posid exists in IMPR
+          SELECT SINGLE posnr, prnam, izwek, bukrs, werks, usr08
+            FROM impr
+            INTO @DATA(ls_impr_check)
+            WHERE posid = @gv_im_posid_display.
 
-  " Budget display: re-derive based on whether user changed posid or not
-  IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
-    " User replaced posid - resolve to posnr first, then get budget
-    SELECT SINGLE posnr FROM impr
-      INTO lv_posnr_for_budget
-      WHERE posid = gv_im_posid_user.
+          IF sy-subrc <> 0.
+            " posid not found in IMPR at all - invalid entry
+            MESSAGE e000(zmsg_a2r) WITH gv_im_posid_display
+                                        'not found in Investment Program'(m30).
+            " Revert to last valid value
+            gv_im_posid_display = gv_im_posid_user.
+            RETURN.
+          ENDIF.
 
-    IF sy-subrc <> 0.
-      " Try ALPHA conversion fallback
-      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-        EXPORTING
-          input  = gv_im_posid_user
-        IMPORTING
-          output = lv_posnr_for_budget.
+          " STEP 2: Check if posid belongs to the same PRNAM as gs_header-prnam
+          IF gs_header-prnam IS NOT INITIAL
+          AND ls_impr_check-prnam <> gs_header-prnam.
+            " posid exists but belongs to different Investment Program
+            MESSAGE e000(zmsg_a2r) WITH gv_im_posid_display
+                                        'does not belong to program'(m31)
+                                        gs_header-prnam.
+            " Revert to last valid value
+            gv_im_posid_display = gv_im_posid_user.
+            RETURN.
+          ENDIF.
 
-      SELECT SINGLE posnr FROM impr
-        INTO @DATA(lv_check)
-        WHERE posnr = lv_posnr_for_budget.
+          " STEP 3: Valid - update shadow and reload dependent fields
+          lv_new_posnr        = ls_impr_check-posnr.
+          gv_im_posid_user    = gv_im_posid_display.
+          gv_u_im_posid       = abap_true.
+          gs_header-posnr     = lv_new_posnr.
 
-      IF sy-subrc <> 0.
-        CLEAR lv_posnr_for_budget.
+          " Reload IM dependent global vars
+          gv_izwek  = ls_impr_check-izwek.
+          gv_bukrs  = ls_impr_check-bukrs.
+          gv_werks  = ls_impr_check-werks.
+          gv_usr008 = ls_impr_check-usr08.
+          gs_header-prnam = ls_impr_check-prnam.
+
+        ENDIF.
       ENDIF.
     ENDIF.
-
-    " Re-derive budget using resolved posnr from user input
-    IF lv_posnr_for_budget IS NOT INITIAL.
-      PERFORM get_available_budget_display
-        USING    lv_posnr_for_budget
-        CHANGING gv_avail_budget_text
-                 gv_available_budget.
-    ELSE.
-      " User typed invalid posid - show No budget
-      gv_avail_budget_text = 'No'.
-      CLEAR gv_available_budget.
-    ENDIF.
-
-  ELSE.
-    " No user edit - use original gs_header-posnr as normal
-    IF gs_header-posnr IS NOT INITIAL.
-      PERFORM get_available_budget_display
-        USING    gs_header-posnr
-        CHANGING gv_avail_budget_text
-                 gv_available_budget.
-    ELSE.
-      gv_avail_budget_text = 'No'.
-      CLEAR gv_available_budget.
-    ENDIF.
-  ENDIF.
-
-  IF gs_header-pspnr IS NOT INITIAL.
-    PERFORM get_project_currency
-      USING    gs_header-pspnr
-      CHANGING gv_project_currency.
-  ELSE.
-    IF gv_bukrs IS NOT INITIAL.
-      SELECT SINGLE waers FROM t001
-        INTO gv_project_currency
-        WHERE bukrs = gv_bukrs.
-    ENDIF.
-  ENDIF.
-
-  " == RESTORE USER VALUES LAST - always wins ==
-  IF gv_u_post1 = abap_true.
-    gs_header-post1 = gs_header_user-post1.
-  ENDIF.
-  IF gv_u_vernr = abap_true.
-    gs_header-vernr = gs_header_user-vernr.
-  ENDIF.
-  IF gv_u_plsez = abap_true.
-    gs_header-plsez = gs_header_user-plsez.
-  ENDIF.
-  IF gv_u_prctr = abap_true.
-    gs_header-prctr = gs_header_user-prctr.
-  ENDIF.
-  IF gv_u_kostl = abap_true.
-    gs_header-kostl = gs_header_user-kostl.
-  ENDIF.
-
-  " Restore gv_im_posid_display from shadow LAST
-  IF gv_u_im_posid = abap_true.
-    gv_im_posid_display = gv_im_posid_user.
   ENDIF.
 
 ENDMODULE.
