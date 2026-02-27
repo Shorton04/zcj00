@@ -1,152 +1,187 @@
-   DATA: lv_hdr_prnam  TYPE ztb_a2r_wbshdr-prnam,
-          lv_prnam      TYPE impr-prnam,
-          lv_posnr      TYPE impr-prnam,
-          lv_posid_im   TYPE impr-posid,
-          lv_gjahr_im   TYPE impr-gjahr,
-          lv_parnr_im   TYPE impr-parnr,
-          lv_posnr_im   TYPE impr-posnr,
-          lv_pspid_char TYPE char24.
+METHOD assign_im_cj02.
 
-    DATA: lt_bdc_cj02 TYPE STANDARD TABLE OF bdcdata,
-          lt_msg_cj02 TYPE STANDARD TABLE OF bdcmsgcoll,
-          ls_msg_cj02 TYPE bdcmsgcoll.
+  DATA:
+    lt_bdcdata   TYPE TABLE OF bdcdata,
+    lt_bdcmsg    TYPE STANDARD TABLE OF bdcmsgcoll,
+    ls_bdcmsg    TYPE bdcmsgcoll,
+    lv_mode      TYPE c VALUE 'N',
+    lv_update    TYPE c VALUE 'S',
 
-    DATA: lv_wbs_posid_cj02   TYPE prps-posid,
-          lv_cj02_error       TYPE abap_bool,
-          lv_try_cj02         TYPE i,
-          lv_wbs_posid_cj02_c TYPE fnam_____4,
-          lv_posid_char       TYPE char24.
+    lv_posid_im  TYPE impr-posid,
+    lv_gjahr_im  TYPE impr-gjahr,
 
-    " Get Level 1 WBS Element (Project Definition) from lt_wbs_celement
-    READ TABLE lt_wbs_celement INTO ls_wbs_celement INDEX 1.
+    lv_wbs_char  TYPE fnam_____4.
 
-    IF sy-subrc = 0 AND ls_wbs_celement-wbs_element IS NOT INITIAL.
+  rv_success = abap_false.
 
-      lv_wbs_posid_cj02_c = lv_wbs_posid_cj02.
+  "------------------------------------------------------------
+  " 1) Read IMPR using imported PRNAM + POSNR
+  "------------------------------------------------------------
+  CLEAR: lv_posid_im, lv_gjahr_im.
+  SELECT SINGLE posid, gjahr
+    INTO (@lv_posid_im, @lv_gjahr_im)
+    FROM impr
+   WHERE prnam = @iv_prnam
+     AND posnr = @iv_posnr.
 
-      "------------------------------------------------------------
-      "1) Read PRNAM from header table
-      "------------------------------------------------------------
-      CLEAR lv_hdr_prnam.
+  IF lv_posid_im IS INITIAL OR lv_gjahr_im IS INITIAL.
+    RETURN.
+  ENDIF.
 
-      SELECT SINGLE posnr, prnam
-        INTO (@lv_posnr_im, @lv_hdr_prnam)
-        FROM ztb_a2r_wbshdr
-       WHERE zreq_num = @is_header-zreq_num.
+  "------------------------------------------------------------
+  " 2) Target WBS to assign
+  "------------------------------------------------------------
+  IF iv_posid_wbs IS INITIAL.
+    RETURN.
+  ENDIF.
 
-      lv_prnam = lv_hdr_prnam.
-      lv_posnr = lv_posnr_im.
+  lv_wbs_char = iv_posid_wbs.
 
-      "------------------------------------------------------------
-      "2) Get IM Position (POSID) by highest PARNR for this PRNAM
-      "   (your requirement: PRNAM = header PRNAM, highest PARNR)
-      "------------------------------------------------------------
-*      IF sy-uname = 'HQ75177'.
-      CLEAR: lv_gjahr_im, lv_posid_im.
+  "------------------------------------------------------------
+  " 3) Build CJ02 BDC (keep EXACTLY your working flow)
+  "------------------------------------------------------------
+  CLEAR lt_bdcdata.
 
-      SELECT SINGLE posid, gjahr
-        FROM impr
-        WHERE prnam = @lv_prnam
-          AND posnr = @lv_posnr_im
-        INTO (@lv_posid_im, @lv_gjahr_im).
+  bdc_dynpro(
+    EXPORTING iv_program = 'SAPLCJWB'
+              iv_dynpro  = '0100'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_CURSOR'
+              iv_fval = '*PRPS-POSID'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_OKCODE'
+              iv_fval = '=LETB'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = '*PROJ-PSPID'
+              iv_fval = ''
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = '*PRPS-POSID'
+              iv_fval = lv_wbs_char
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_dynpro(
+    EXPORTING iv_program = 'SAPLCJWB'
+              iv_dynpro  = '0901'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_OKCODE'
+              iv_fval = '=AIPP'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_SUBSCR'
+              iv_fval = 'SAPLCJWB                                0902LISTE'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_CURSOR'
+              iv_fval = 'RCWBS-IDENT(01)'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_SUBSCR'
+              iv_fval = 'SAPLCJWB                                3993BUTTONS'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_dynpro(
+    EXPORTING iv_program = 'SAPLAIPP'
+              iv_dynpro  = '0050'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_CURSOR'
+              iv_fval = 'RAIP1-PRNAM'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_OKCODE'
+              iv_fval = '=TAKE'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'RAIP1-PRNAM'
+              iv_fval = CONV #( iv_prnam )
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'RAIP1-POSID'
+              iv_fval = CONV #( lv_posid_im )
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'RAIP1-GJAHR'
+              iv_fval = |{ lv_gjahr_im }|
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_dynpro(
+    EXPORTING iv_program = 'SAPLCJWB'
+              iv_dynpro  = '0901'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_OKCODE'
+              iv_fval = '=BU'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_SUBSCR'
+              iv_fval = 'SAPLCJWB                                0902LISTE'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_CURSOR'
+              iv_fval = 'RCWBS-IDENT(01)'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  bdc_field(
+    EXPORTING iv_fnam = 'BDC_SUBSCR'
+              iv_fval = 'SAPLCJWB                                3993BUTTONS'
+    CHANGING  ct_bdcdata = lt_bdcdata ).
+
+  "------------------------------------------------------------
+  " 4) Execute CJ02 (same error-check style as your settlement_rule)
+  "------------------------------------------------------------
+  CLEAR lt_bdcmsg.
+
+  CALL TRANSACTION 'CJ02'
+    USING lt_bdcdata
+    MODE lv_mode
+    UPDATE lv_update
+    MESSAGES INTO lt_bdcmsg.
+
+  LOOP AT lt_bdcmsg TRANSPORTING NO FIELDS WHERE msgtyp CA 'EA'.
+    EXIT.
+  ENDLOOP.
+
+  IF sy-subrc EQ 0.
+    "If you have a known fallback screen like your CJB2 logic,
+    "you can rebuild lt_bdcdata here and call CJ02 again.
+    RETURN.
+  ENDIF.
+
+  rv_success = abap_true.
+
+ENDMETHOD.
 
 
-      " Convert to CHAR132
-      lv_posid_char = ls_wbs_celement-wbs_element.
 
-      lv_wbs_posid_cj02 = lv_posid_char.
-      lv_wbs_posid_cj02_c = lv_wbs_posid_cj02.
 
-      lv_cj02_error = abap_false.
 
-      lv_try_cj02 = sy-index.
-      CLEAR: lt_bdc_cj02, lt_msg_cj02.
+DATA(lv_ok) = me->assign_im_cj02(
+  iv_prnam     = ls_hdr-prnam
+  iv_posnr     = ls_hdr-posnr
+  iv_posid_wbs = lv_pspid_char     "your Level1 WBS POSID
+).
 
-      "SAPLCJWB 0100
-      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                            iv_dynpro  = '0100'
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_CURSOR'
-                           iv_fval    = '*PRPS-POSID'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_OKCODE'
-                           iv_fval    = '=LETB'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = '*PROJ-PSPID'
-                           iv_fval    = ''
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = '*PRPS-POSID'
-                           iv_fval    = lv_wbs_posid_cj02_c
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-      "SAPLCJWB 0901 -> AIPP
-      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                            iv_dynpro  = '0901'
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_OKCODE'
-                           iv_fval    = '=AIPP'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_SUBSCR'
-                           iv_fval    = 'SAPLCJWB                                0902LISTE'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_CURSOR'
-                           iv_fval    = 'RCWBS-IDENT(01)'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_SUBSCR'
-                           iv_fval    = 'SAPLCJWB                                3993BUTTONS'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-      "SAPLAIPP 0050 -> fill PRNAM/POSID/GJAHR and TAKE
-      bdc_dynpro( EXPORTING iv_program = 'SAPLAIPP'
-                            iv_dynpro  = '0050'
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_CURSOR'
-                           iv_fval    = 'RAIP1-PRNAM'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_OKCODE'
-                           iv_fval    = '=TAKE'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-      bdc_field(  EXPORTING iv_fnam = 'RAIP1-PRNAM' iv_fval = CONV #( lv_prnam )
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field(  EXPORTING iv_fnam = 'RAIP1-POSID' iv_fval = CONV #( lv_posid_im )
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'RAIP1-GJAHR'
-                           iv_fval    = |{ lv_gjahr_im }|
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-      "Back to 0901 -> Save
-      bdc_dynpro( EXPORTING iv_program = 'SAPLCJWB'
-                            iv_dynpro  = '0901'
-                  CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_OKCODE'
-                           iv_fval    = '=BU'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_SUBSCR'
-                           iv_fval    = 'SAPLCJWB                                0902LISTE'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_CURSOR'
-                           iv_fval    = 'RCWBS-IDENT(01)'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-      bdc_field( EXPORTING iv_fnam    = 'BDC_SUBSCR'
-                           iv_fval    = 'SAPLCJWB                                3993BUTTONS'
-                 CHANGING  ct_bdcdata = lt_bdc_cj02 ).
-
-      CALL TRANSACTION 'CJ02'
-        USING lt_bdc_cj02
-        MODE  lv_mode
-        UPDATE lv_update
-        MESSAGES INTO lt_msg_cj02.
-
-      lv_cj02_error = abap_false.
-      LOOP AT lt_msg_cj02 INTO ls_msg_cj02 WHERE msgtyp CA 'AEX'.
-        lv_cj02_error = abap_true.
-        EXIT.
-      ENDLOOP.
-
-      IF sy-subrc EQ 0.
-        MESSAGE e398(00) WITH 'CJ02 IM assignment failed for WBS' lv_wbs_posid_cj02.
-      ELSE.
-        COMMIT WORK AND WAIT.
-        WAIT UP TO 2 SECONDS.
-      ENDIF.
+IF lv_ok = abap_false.
+  "handle error
+ENDIF.
