@@ -1,29 +1,121 @@
-" Sync gv_im_posid_display back to gs_header-posnr
-  " Convert display value back to internal POSNR before saving
-  IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
-    DATA: lv_posnr TYPE im_posnr.
+MODULE set_header_display_values OUTPUT.
 
-    " Try to find POSNR by POSID (user may have typed external format)
+  DATA: lv_reqtype_text TYPE char20.
+  DATA: lv_posnr_for_budget TYPE im_posnr.
+
+  " Derive gv_im_posid_display only when user hasn't edited it
+  IF gv_u_im_posid IS INITIAL.
+    IF gs_header-posnr IS NOT INITIAL.
+      PERFORM get_im_posid_for_display
+        USING    gs_header-posnr
+        CHANGING gv_im_posid_display.
+      gv_posnr_display_done = abap_true.
+    ENDIF.
+  ENDIF.
+
+  " Display-only re-derivations
+  IF gs_header-ernam IS NOT INITIAL.
+    PERFORM get_user_fullname
+      USING    gs_header-ernam
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
+  ELSE.
+    PERFORM get_user_fullname
+      USING    sy-uname
+      CHANGING lv_fullname.
+    gv_requestor_display = lv_fullname.
+  ENDIF.
+
+  IF gs_header-z_reqtype IS NOT INITIAL.
+    PERFORM get_request_type_text
+      USING    gs_header-z_reqtype
+      CHANGING lv_reqtype_text.
+    gv_reqtype_display = lv_reqtype_text.
+  ELSE.
+    gv_reqtype_display = 'Create'(c01).
+  ENDIF.
+
+  " Budget display: re-derive based on whether user changed posid or not
+  IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
+    " User replaced posid - resolve to posnr first, then get budget
     SELECT SINGLE posnr FROM impr
-      INTO lv_posnr
+      INTO lv_posnr_for_budget
       WHERE posid = gv_im_posid_user.
 
-    IF sy-subrc = 0.
-      gs_header-posnr = lv_posnr.
-    ELSE.
-      " Try with ALPHA conversion (user typed numeric)
+    IF sy-subrc <> 0.
+      " Try ALPHA conversion fallback
       CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
         EXPORTING
           input  = gv_im_posid_user
         IMPORTING
-          output = lv_posnr.
+          output = lv_posnr_for_budget.
 
       SELECT SINGLE posnr FROM impr
         INTO @DATA(lv_check)
-        WHERE posnr = lv_posnr.
+        WHERE posnr = lv_posnr_for_budget.
 
-      IF sy-subrc = 0.
-        gs_header-posnr = lv_posnr.
+      IF sy-subrc <> 0.
+        CLEAR lv_posnr_for_budget.
       ENDIF.
     ENDIF.
+
+    " Re-derive budget using resolved posnr from user input
+    IF lv_posnr_for_budget IS NOT INITIAL.
+      PERFORM get_available_budget_display
+        USING    lv_posnr_for_budget
+        CHANGING gv_avail_budget_text
+                 gv_available_budget.
+    ELSE.
+      " User typed invalid posid - show No budget
+      gv_avail_budget_text = 'No'.
+      CLEAR gv_available_budget.
+    ENDIF.
+
+  ELSE.
+    " No user edit - use original gs_header-posnr as normal
+    IF gs_header-posnr IS NOT INITIAL.
+      PERFORM get_available_budget_display
+        USING    gs_header-posnr
+        CHANGING gv_avail_budget_text
+                 gv_available_budget.
+    ELSE.
+      gv_avail_budget_text = 'No'.
+      CLEAR gv_available_budget.
+    ENDIF.
   ENDIF.
+
+  IF gs_header-pspnr IS NOT INITIAL.
+    PERFORM get_project_currency
+      USING    gs_header-pspnr
+      CHANGING gv_project_currency.
+  ELSE.
+    IF gv_bukrs IS NOT INITIAL.
+      SELECT SINGLE waers FROM t001
+        INTO gv_project_currency
+        WHERE bukrs = gv_bukrs.
+    ENDIF.
+  ENDIF.
+
+  " == RESTORE USER VALUES LAST - always wins ==
+  IF gv_u_post1 = abap_true.
+    gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+  IF gv_u_vernr = abap_true.
+    gs_header-vernr = gs_header_user-vernr.
+  ENDIF.
+  IF gv_u_plsez = abap_true.
+    gs_header-plsez = gs_header_user-plsez.
+  ENDIF.
+  IF gv_u_prctr = abap_true.
+    gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+  IF gv_u_kostl = abap_true.
+    gs_header-kostl = gs_header_user-kostl.
+  ENDIF.
+
+  " Restore gv_im_posid_display from shadow LAST
+  IF gv_u_im_posid = abap_true.
+    gv_im_posid_display = gv_im_posid_user.
+  ENDIF.
+
+ENDMODULE.
