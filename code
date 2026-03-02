@@ -1,121 +1,48 @@
-FUNCTION z_a2r_trigger_bdc_by_req.
-*"----------------------------------------------------------------------
-*"*"Local Interface:
-*"  IMPORTING
-*"     VALUE(iv_zreq_num) TYPE zreq_num
-*"  EXPORTING
-*"     VALUE(ev_success)  TYPE abap_bool
-*"  TABLES
-*"     et_return          TYPE bapiret2 OPTIONAL
-*"----------------------------------------------------------------------
-  DATA: ls_hdr        TYPE ztb_a2r_wbshdr,
-        lv_posnr_int  TYPE impr-posnr,     "internal IM position number (NUMC)
-        lv_prnam      TYPE impr-prnam,     "investment program
-        lv_im_posid   TYPE impr-posid,     "external ID (string) -> use in BDC
-        lv_gjahr      TYPE impr-gjahr,
-        lv_pspid      TYPE ps_pspid,       "project definition (and level 1 WBS POSID)
-        lv_pspnr_l1   TYPE prps-pspnr,
-        lv_vkokr      TYPE prps-pkokr,
-        lo_builder    TYPE REF TO zcl_a2r_wbs_builder,
-        lv_ok         TYPE abap_bool.
+MODULE build_im_dropdown OUTPUT.
 
-  ev_success = abap_false.
-  CLEAR et_return[].
+  DATA: ls_value TYPE vrm_value,
+        lt_impr  TYPE STANDARD TABLE OF ty_impr,
+        ls_impr  TYPE ty_impr,
+        lt_parts TYPE STANDARD TABLE OF string,
+        lv_dummy TYPE string,
+        lv_pr01  TYPE string.
 
-  "------------------------------------------------------------
-  "1) Read Header by Request Number
-  "------------------------------------------------------------
-  SELECT SINGLE *
-    INTO ls_hdr
-    FROM ztb_a2r_wbshdr
-   WHERE zreq_num = @iv_zreq_num.
+  CHECK gt_im_dropdown IS INITIAL.
 
-  IF sy-subrc <> 0.
-    APPEND VALUE #( type = 'E' id = '00' number = '398'
-                    message = |ZTB_A2R_WBSHDR not found for ZREQ_NUM { iv_zreq_num }| ) TO et_return.
-    RETURN.
+  " Get IM positions that have config entries
+  SELECT
+    i~posnr AS posnr,
+    i~gjahr AS gjahr,
+    i~posid AS posid,
+    i~prnam AS prnam,
+    i~izwek AS izwek
+    FROM impr AS i
+    INNER JOIN ztb_a2r_conftab1 AS c
+      ON c~izwek = i~izwek
+      INTO TABLE @lt_impr
+  ORDER BY i~posid DESCENDING.
+  IF sy-subrc EQ 0.
+    LOOP AT lt_impr INTO ls_impr.
+      CLEAR ls_value.
+      " Internal value (hidden)
+      ls_value-key = ls_impr-posnr.
+
+      SPLIT ls_impr-prnam AT space INTO TABLE lt_parts.
+      READ TABLE lt_parts INDEX lines( lt_parts ) INTO ls_value-text.
+
+      APPEND ls_value TO gt_im_dropdown.
+    ENDLOOP.
+
+
+    CALL FUNCTION 'VRM_SET_VALUES'
+      EXPORTING
+        id              = 'P_POSNR'
+        values          = gt_im_dropdown
+      EXCEPTIONS
+        id_illegal_name = 1
+        OTHERS          = 2.
+    IF sy-subrc <> 0.
+      CLEAR gt_im_dropdown.
+    ENDIF.
   ENDIF.
-
-  ">>> Adjust these assignments if your Z-table field names differ
-  lv_posnr_int = ls_hdr-posnr.   "stored internal posnr
-  lv_prnam     = ls_hdr-prnam.
-  lv_pspid     = ls_hdr-pspid.   "project definition
-
-  IF lv_posnr_int IS INITIAL OR lv_prnam IS INITIAL OR lv_pspid IS INITIAL.
-    APPEND VALUE #( type = 'E' id = '00' number = '398'
-                    message = |Missing required values in header (POSNR/PRNAM/PSPID) for ZREQ_NUM { iv_zreq_num }| ) TO et_return.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  "2) Read IMPR: get POSID (external) + GJAHR using PRNAM + POSNR
-  "   (POSID is what you feed in BDC, but keep variable name iv_posnr in class call)
-  "------------------------------------------------------------
-  SELECT SINGLE posid, gjahr
-    INTO ( @lv_im_posid, @lv_gjahr )
-    FROM impr
-   WHERE prnam = @lv_prnam
-     AND posnr = @lv_posnr_int.
-
-  IF sy-subrc <> 0 OR lv_im_posid IS INITIAL.
-    APPEND VALUE #( type = 'E' id = '00' number = '398'
-                    message = |IMPR not found for PRNAM { lv_prnam } POSNR { lv_posnr_int }| ) TO et_return.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  "3) Get VKOKR from PRPS using rule:
-  "   Level 1 WBS POSID == PSPID
-  "------------------------------------------------------------
-  SELECT SINGLE pspnr, pkokr
-    INTO ( @lv_pspnr_l1, @lv_vkokr )
-    FROM prps
-   WHERE posid = @lv_pspid.
-
-  IF sy-subrc <> 0 OR lv_vkokr IS INITIAL.
-    APPEND VALUE #( type = 'E' id = '00' number = '398'
-                    message = |Cannot derive VKOKR: PRPS not found for Level1 WBS POSID = PSPID = { lv_pspid }| ) TO et_return.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  "4) Trigger your 3 BDC methods (no change to your class)
-  "   - IMPORTANT: we pass lv_im_posid into parameter iv_posnr (name stays iv_posnr)
-  "------------------------------------------------------------
-  CREATE OBJECT lo_builder.
-
-  TRY.
-      "Step 1: CJ02 assign IM
-      lv_ok = lo_builder->assign_im_cj02(
-                iv_prnam     = lv_prnam
-                iv_posnr     = lv_im_posid   "<<< name iv_posnr, value is IMPR-POSID
-                iv_posid_wbs = lv_pspid      "<<< level1 WBS POSID
-              ).
-
-      IF lv_ok <> abap_true.
-        APPEND VALUE #( type = 'E' id = '00' number = '398'
-                        message = |Step1 failed: CJ02 assign IM (PRNAM={ lv_prnam } POSID={ lv_im_posid } WBS={ lv_pspid })| ) TO et_return.
-        RETURN.
-      ENDIF.
-
-      "Step 2: CJB2 settlement rule
-      lo_builder->settlement_rule(
-        iv_vkokr = lv_vkokr
-        iv_pspid = lv_pspid ).
-
-      "Step 3: CJ02 release
-      lo_builder->release_project_cj02(
-        iv_pspid = lv_pspid ).
-
-      ev_success = abap_true.
-      APPEND VALUE #( type = 'S' id = '00' number = '398'
-                      message = |BDC executed OK for ZREQ_NUM { iv_zreq_num } (PSPID={ lv_pspid }, VKOKR={ lv_vkokr }, IM_POSID={ lv_im_posid }, GJAHR={ lv_gjahr })| ) TO et_return.
-
-    CATCH cx_root INTO DATA(lx).
-      APPEND VALUE #( type = 'E' id = '00' number = '398'
-                      message = |Exception: { lx->get_text( ) }| ) TO et_return.
-      ev_success = abap_false.
-      RETURN.
-  ENDTRY.
-
-ENDFUNCTION.
+ENDMODULE.
