@@ -1,33 +1,35 @@
-          " Insert WBS items
-          LOOP AT it_wbs_items INTO ls_wbs.
-            CLEAR ls_item.
-            ls_item-mandt = sy-mandt.
-            ls_item-zreq_num = rv_reqnum.
-            ls_item-bukrs = ls_header-bukrs.
-            ls_item-vkokr = ls_wbs-vkokr.
-            ls_item-vkokr = ls_header-vkokr.
-            ls_item-posid = ls_wbs-posid.
-            ls_item-stufe = ls_wbs-stufe.
-            ls_item-post1 = ls_wbs-post1.
-            ls_item-kostl = ls_wbs-kostl.
-            ls_item-wert2 = ls_wbs-wert2.
-            IF ls_item-wert2 IS INITIAL.
-              ls_item-wert2 = 0.
-            ENDIF.
-            ls_item-vkokr = lv_vkokr.
-            ls_item-zbudget_check = ls_wbs-zbudget_check.
-            ls_item-imprf = ls_wbs-imprf.
-            ls_item-prart = ls_wbs-prart.
-            ls_item-werks = ls_header-werks.
+LOOP AT it_wbs_items ASSIGNING FIELD-SYMBOL(<ls_wbs>).
 
-            IF ls_wbs-posnr IS NOT INITIAL.
-              ls_item-posnr = ls_wbs-posnr.
-            ENDIF.
+  "Delete rows with no budget
+  IF <ls_wbs>-wert2 IS INITIAL.
+    DELETE it_wbs_items INDEX sy-tabix.
+    CONTINUE.
+  ENDIF.
 
-            INSERT ztb_a2r_wbsitem FROM ls_item.
+  "your existing insert logic...
+  CLEAR ls_item.
+  ls_item-mandt    = sy-mandt.
+  ls_item-zreq_num = rv_reqnum.
+  ls_item-bukrs    = ls_header-bukrs.
+  ls_item-vkokr    = lv_vkokr.
+  ls_item-posid    = <ls_wbs>-posid.
+  ls_item-stufe    = <ls_wbs>-stufe.
+  ls_item-post1    = <ls_wbs>-post1.
+  ls_item-kostl    = <ls_wbs>-kostl.
+  ls_item-wert2    = <ls_wbs>-wert2.
+  ls_item-zbudget_check = <ls_wbs>-zbudget_check.
+  ls_item-imprf    = <ls_wbs>-imprf.
+  ls_item-prart    = <ls_wbs>-prart.
+  ls_item-werks    = ls_header-werks.
 
-            IF sy-subrc <> 0.
-              lv_error = abap_true.
-              EXIT.
-            ENDIF.
-          ENDLOOP.
+  IF <ls_wbs>-posnr IS NOT INITIAL.
+    ls_item-posnr = <ls_wbs>-posnr.
+  ENDIF.
+
+  INSERT ztb_a2r_wbsitem FROM ls_item.
+  IF sy-subrc <> 0.
+    lv_error = abap_true.
+    EXIT.
+  ENDIF.
+
+ENDLOOP.
