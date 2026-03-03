@@ -1,113 +1,69 @@
-* ====================================================================
-REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
-*----------------------------------------------------------------------*
-* Include files
-*----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbszcj01_top.
-" Selection screen removed - using dynpro screens only
-"INCLUDE ztr_a2r_wbszcj01_sel.
-INCLUDE ztr_a2r_wbszcj01_f01.
-INCLUDE ztr_a2r_wbszcj01_pbo.
-INCLUDE ztr_a2r_wbszcj01_pai.
-
-*&---------------------------------------------------------------------*
-*& INITIALIZATION
-*&---------------------------------------------------------------------*
-INITIALIZATION.
-  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
-  IF gv_request_type IS INITIAL.
-    gv_request_type = 'A1'.
-  ENDIF.
-
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
-START-OF-SELECTION.
-  CREATE OBJECT go_builder.
-    CALL SCREEN 200.
-
-
-
-
-
-* ====================================================================
-* RICEFW ID.........: 6577
-* TR Number.........: D30K912694
-* Version...........: 1.0
-* Program...........: ZTR_A2R_WBSCJ00
-* Transaction Code..:
-* Author............: RQ28830
-* Date..............: 08.12.2025 -
-* --------------------------------------------------------------------
-* Description.......: Internal Project Cockpit
-* --------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 12/8/25  RQ28830   D30K912694    Initialized program.
-* ====================================================================
-REPORT ZTR_A2R_WBSCJ00 MESSAGE-ID zcj00.
-
-*----------------------------------------------------------------------*
-*                           Includes                                   *
-*----------------------------------------------------------------------*
-INCLUDE ztr_a2r_wbscj00_top.
-INCLUDE ztr_a2r_wbscj00_sel.
-INCLUDE ztr_a2r_wbscj00_f01.
-
-
-*&---------------------------------------------------------------------*
-*& INITIALIZATION
-*&---------------------------------------------------------------------*
-INITIALIZATION.
-
-*&---------------------------------------------------------------------*
-*& START-OF-SELECTION
-*&---------------------------------------------------------------------*
 START-OF-SELECTION.
 
   DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
 
   " Get selected request type
-  PERFORM get_request_type CHANGING lv_reqtype.
+  PERFORM get_request_type CHANGING lv_reqtype. "from your F01  [oai_citation:2‡zcj00_f01.txt](sediment://file_0000000093e071fa88d5f0dc13d459e0)
 
-  " Store request type in memory for next program
-  EXPORT lv_reqtype FROM lv_reqtype TO MEMORY ID 'ZCJ00_REQTYPE'.
-
-  " Route to appropriate program/screen
+  " Decide which screen of ZCJ01 to start
+  CLEAR gv_start_dynnr.
   CASE lv_reqtype.
-    WHEN 'A1'.  " Create New Project
-      SUBMIT ztr_a2r_wbscj01 VIA SELECTION-SCREEN AND RETURN.
+    WHEN 'A1'.
+      gv_start_dynnr = '0200'. " ZCJ01 Create (Screen 200)
+    WHEN 'F1'.
+      gv_start_dynnr = '0500'. " ZCJ01 Edit Saved (Screen 500)
+  ENDCASE.
+
+  " Store request type + start screen in memory (IMPORTANT: export with explicit names)
+  EXPORT gv_request_type = lv_reqtype
+         gv_start_dynnr  = gv_start_dynnr
+    TO MEMORY ID 'ZCJ00_NAV'.
+
+  " Route
+  CASE lv_reqtype.
+    WHEN 'A1' OR 'F1'.
+      " Go to ZCJ01, it will read memory and jump to 200 or 500
       CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
 
-    WHEN 'B1'.  " Add CAR
-      MESSAGE i001 WITH 'Request Type B1 not yet implemented'(m05).
+    WHEN 'B1' OR 'B2' OR 'B3' OR 'G1'.
+      " If these should also go to ZCJ01 later, you can map them too.
+      CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
 
-    WHEN 'B2'.  " Non-critical change
-      MESSAGE i001 WITH 'Request Type B2 not yet implemented'(m06).
+    WHEN 'C1'.
+      MESSAGE i001 WITH 'Request Type C1 not yet implemented'.
 
-    WHEN 'B3'.  " Critical change
-      MESSAGE i001 WITH 'Request Type B3 not yet implemented'(m07).
+    WHEN 'D1'.
+      MESSAGE i001 WITH 'Request Type D1 not yet implemented'.
 
-    WHEN 'C1'.  " Partial Capitalization
-      MESSAGE i001 WITH 'Request Type C1 not yet implemented'(m01).
-
-    WHEN 'D1'.  " Close WBS
-      MESSAGE i001 WITH 'Request Type D1 not yet implemented'(m02).
-
-    WHEN 'E1'.  " Unclose WBS
-      MESSAGE i001 WITH 'Request Type E1 not yet implemented'(m03).
-
-    WHEN 'F1'.  " Edit Request
-      CALL TRANSACTION 'ZA2R_EDITSAVED' AND SKIP FIRST SCREEN.
-
-    WHEN 'G1'.  " WBS Request Reporting
-      SUBMIT zre_a2r_wbscj01 VIA SELECTION-SCREEN AND RETURN.
-      CALL TRANSACTION 'ZA2R_ZCJ00REPORT' AND SKIP FIRST SCREEN.
+    WHEN 'E1'.
+      MESSAGE i001 WITH 'Request Type E1 not yet implemented'.
 
     WHEN OTHERS.
       MESSAGE e001 WITH lv_reqtype.
   ENDCASE.
 
-INCLUDE ztr_a2r_wbscj00_user_commani01.
 
-INCLUDE ztr_a2r_wbscj00_status_0100o01.
+
+INITIALIZATION.
+  CLEAR: gv_request_type, gv_start_dynnr.
+
+  IMPORT gv_request_type = gv_request_type
+         gv_start_dynnr  = gv_start_dynnr
+    FROM MEMORY ID 'ZCJ00_NAV'.
+
+  IF gv_start_dynnr IS INITIAL.
+    gv_start_dynnr = '0200'.
+  ENDIF.
+
+START-OF-SELECTION.
+  CREATE OBJECT go_builder.
+
+  CASE gv_start_dynnr.
+    WHEN '0200'. CALL SCREEN 200.
+    WHEN '0500'. CALL SCREEN 500.
+    WHEN OTHERS. CALL SCREEN 200.
+  ENDCASE.
+
+
+
+DATA: gv_start_dynnr TYPE sydynnr.
