@@ -1,51 +1,29 @@
 START-OF-SELECTION.
 
-  DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
+  DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype,
+        lv_dynnr   TYPE sydynnr.
 
-  " Get selected request type
-  PERFORM get_request_type CHANGING lv_reqtype. "from your F01  [oai_citation:2‡zcj00_f01.txt](sediment://file_0000000093e071fa88d5f0dc13d459e0)
+  PERFORM get_request_type CHANGING lv_reqtype.
 
-  " Decide which screen of ZCJ01 to start
-  CLEAR gv_start_dynnr.
   CASE lv_reqtype.
     WHEN 'A1'.
-      gv_start_dynnr = '0200'. " ZCJ01 Create (Screen 200)
+      lv_dynnr = '0200'.
     WHEN 'F1'.
-      gv_start_dynnr = '0500'. " ZCJ01 Edit Saved (Screen 500)
+      lv_dynnr = '0500'.
   ENDCASE.
 
-  " Store request type + start screen in memory (IMPORTANT: export with explicit names)
   EXPORT gv_request_type = lv_reqtype
-         gv_start_dynnr  = gv_start_dynnr
+         gv_start_dynnr  = lv_dynnr
     TO MEMORY ID 'ZCJ00_NAV'.
 
-  " Route
-  CASE lv_reqtype.
-    WHEN 'A1' OR 'F1'.
-      " Go to ZCJ01, it will read memory and jump to 200 or 500
-      CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
+  CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
 
-    WHEN 'B1' OR 'B2' OR 'B3' OR 'G1'.
-      " If these should also go to ZCJ01 later, you can map them too.
-      CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
 
-    WHEN 'C1'.
-      MESSAGE i001 WITH 'Request Type C1 not yet implemented'.
-
-    WHEN 'D1'.
-      MESSAGE i001 WITH 'Request Type D1 not yet implemented'.
-
-    WHEN 'E1'.
-      MESSAGE i001 WITH 'Request Type E1 not yet implemented'.
-
-    WHEN OTHERS.
-      MESSAGE e001 WITH lv_reqtype.
-  ENDCASE.
-
+DATA: gv_request_type TYPE ztb_a2r_reqtype-z_reqtype,
+      gv_start_dynnr  TYPE sydynnr.
 
 
 INITIALIZATION.
-  CLEAR: gv_request_type, gv_start_dynnr.
 
   IMPORT gv_request_type = gv_request_type
          gv_start_dynnr  = gv_start_dynnr
@@ -55,15 +33,18 @@ INITIALIZATION.
     gv_start_dynnr = '0200'.
   ENDIF.
 
+  FREE MEMORY ID 'ZCJ00_NAV'.
+
+
 START-OF-SELECTION.
+
   CREATE OBJECT go_builder.
 
   CASE gv_start_dynnr.
-    WHEN '0200'. CALL SCREEN 200.
-    WHEN '0500'. CALL SCREEN 500.
-    WHEN OTHERS. CALL SCREEN 200.
+    WHEN '0200'.
+      CALL SCREEN 200.
+    WHEN '0500'.
+      CALL SCREEN 500.
+    WHEN OTHERS.
+      CALL SCREEN 200.
   ENDCASE.
-
-
-
-DATA: gv_start_dynnr TYPE sydynnr.
