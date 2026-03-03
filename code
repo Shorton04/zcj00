@@ -1,19 +1,136 @@
+DATA: gv_edit_mode          TYPE abap_bool,
+      gv_loaded_reqnum      TYPE ztb_a2r_wbshdr-zreq_num,
+      gv_header_initialized TYPE abap_bool.
+
+CONSTANTS: gc_stat_draft TYPE ztb_a2r_wbshdr-z_reqstat VALUE 'DRAFT'. "adjust value
+
+
+
+MODULE user_command_0500 INPUT.
+
+  CASE ok_code.
+    WHEN 'NEXT'.
+
+      PERFORM f1_validate_reqnum USING p_zreq_num.
+      PERFORM f1_load_req_to_globals USING p_zreq_num.
+
+      "Set edit context before going to screen2
+      gv_edit_mode          = abap_true.
+      gv_loaded_reqnum      = p_zreq_num.
+      gv_header_initialized = abap_false.
+
+      CALL SCREEN 200.
+
+    WHEN 'BACK' OR 'CANC' OR 'EXIT'.
+      LEAVE TO SCREEN 0.
+  ENDCASE.
+
+  CLEAR ok_code.
+
+ENDMODULE.
+
+
+
+
+FORM f1_validate_reqnum USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr TYPE ztb_a2r_wbshdr.
+
+  IF iv_reqnum IS INITIAL.
+    MESSAGE e398(zcj00) WITH 'Please enter Request Number.'.
+  ENDIF.
+
+  SELECT SINGLE *
+    FROM ztb_a2r_wbshdr
+    INTO @ls_hdr
+    WHERE zreq_num = @iv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(zcj00) WITH 'Request Number not found.'.
+  ENDIF.
+
+  IF ls_hdr-z_reqstat <> gc_stat_draft.
+    MESSAGE e398(zcj00) WITH 'Request is not in draft status.'.
+  ENDIF.
+
+  IF ls_hdr-ernam <> sy-uname.
+    MESSAGE e398(zcj00) WITH 'You are not allowed to edit this request.'.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM f1_load_req_to_globals USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+
+  "Hard reset screen2 buffers
+  CLEAR: gs_header.
+  FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header
+  SELECT SINGLE *
+    FROM ztb_a2r_wbshdr
+    INTO @gs_header
+    WHERE zreq_num = @iv_reqnum.
+
+  "Load items
+  SELECT *
+    FROM ztb_a2r_wbsitem
+    INTO TABLE @gt_wbs_items
+    WHERE zreq_num = @iv_reqnum
+    ORDER BY stufe, posid.
+
+  IF gt_wbs_items IS INITIAL.
+    MESSAGE e398(zcj00) WITH 'No WBS items found for this request.'.
+  ENDIF.
+
+  "Align screen2 parameter-like globals (used by your forms)
+  p_posnr = gs_header-posnr.
+  p_prnam = gs_header-prnam.
+  p_gjahr = gs_header-gjahr.
+  p_kostl = gs_header-kostl.
+  p_prctr = gs_header-prctr.
+  p_plsez = gs_header-plsez.
+  p_post1 = gs_header-post1.
+  p_profl = gs_header-profl.
+
+ENDFORM.
+
+
+
+
+MODULE status_0200 OUTPUT.
+  PERFORM prepare_screen2.
+ENDMODULE.
+
+
 FORM prepare_screen2.
 
-  "Always get IM data (safe, doesn't overwrite screen2 edits)
+  "Always get IM data (safe)
   PERFORM get_additional_im_data USING p_posnr.
 
-  "Initialize screen2 ONCE only
+  "Do not rebuild on re-entry (prevents overwriting user edits)
   IF gv_header_initialized = abap_true.
-    "Screen2 re-entry: DO NOT rebuild template, DO NOT reset defaults, DO NOT clear header
     RETURN.
   ENDIF.
 
   "------------------------------------------------------------
   "FIRST ENTRY ONLY
   "------------------------------------------------------------
+  IF gv_edit_mode = abap_true.
 
-  " Build WBS items in correct PRHIS order
+    "gt_wbs_items + gs_header already loaded from DB at screen 500 NEXT
+    PERFORM convert_to_display.
+    PERFORM set_wbs_default_values.  "optional; only fills INITIAL fields
+
+    gv_header_initialized = abap_true.
+    RETURN.
+
+  ENDIF.
+
+  "------------------------------------------------------------
+  "CREATE MODE (A1) - original behavior
+  "------------------------------------------------------------
   CLEAR gt_wbs_items.
   CALL METHOD go_builder->copy_template_structure
     EXPORTING
@@ -22,155 +139,25 @@ FORM prepare_screen2.
     CHANGING
       ct_wbs_items = gt_wbs_items.
 
-  " IMPORTANT: Do NOT call load_template_to_wbs_items anymore
-  "PERFORM load_template_to_wbs_items USING p_pspid p_kostl.
-
   PERFORM convert_to_display.
-  PERFORM set_wbs_default_values.      "will be fixed below to not overwrite user edits
-  PERFORM populate_header_structure.   "will be fixed below to not clear on re-entry
+  PERFORM set_wbs_default_values.
+  PERFORM populate_header_structure.
 
   gv_header_initialized = abap_true.
 
 ENDFORM.
 
 
-FORM get_additional_im_data USING iv_posnr TYPE im_posnr.
 
-  SELECT SINGLE bukrs werks izwek usr08
-    FROM impr
-    INTO (gv_bukrs, gv_werks, gv_izwek, gv_usr008)
-    WHERE posnr = iv_posnr.
 
-  " Get available budget
-  PERFORM get_available_im_budget USING iv_posnr
-                                  CHANGING gv_available_budget.
-
+FORM reset_edit_context.
+  gv_edit_mode          = abap_false.
+  gv_loaded_reqnum      = ''.
+  gv_header_initialized = abap_false.
 ENDFORM.
 
 
 
-FORM get_available_im_budget USING iv_posnr TYPE im_posnr
-                           CHANGING cv_budget TYPE bpge-wlges.
-
-
-  SELECT SINGLE b~wlges, b~wtgev
-    FROM impr AS i
-    INNER JOIN bpge AS b ON b~objnr = i~objnr
-    WHERE i~posnr = @iv_posnr
-    INTO @DATA(ls_bpge).
-
-  IF sy-subrc = 0.
-    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
-    cv_budget = COND #( WHEN cv_budget > 0 THEN cv_budget ELSE 0 ).
-  ENDIF.
-
-ENDFORM.
-
-
-
-FORM convert_to_display.
-
-  DATA lv_posid_external TYPE ps_posid.
-
-  FREE gt_wbs_display.
-
-  LOOP AT gt_wbs_items INTO gs_wbs_item.
-    CLEAR: gs_wbs_display, lv_posid_external.
-
-    gs_wbs_display-stufe = gs_wbs_item-stufe.
-    gs_wbs_display-post1 = gs_wbs_item-post1.
-    gs_wbs_display-kostl = gs_wbs_item-kostl.
-    gs_wbs_display-posnr = gs_wbs_item-posnr.
-    gs_wbs_display-zapproved_budg = gs_wbs_item-wert2.
-    gs_wbs_display-zbudget_check = gs_wbs_item-zbudget_check.
-    gs_wbs_display-bukrs = gs_wbs_item-bukrs.
-    gs_wbs_display-imprf = gs_wbs_item-imprf.
-    gs_wbs_display-prart = gs_wbs_item-prart.
-
-    IF gs_wbs_item-posid IS NOT INITIAL.
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
-        EXPORTING
-          input  = gs_wbs_item-posid
-        IMPORTING
-          output = lv_posid_external
-        EXCEPTIONS
-          OTHERS = 1.
-
-      gs_wbs_display-posid = COND #( WHEN sy-subrc = 0 AND lv_posid_external IS NOT INITIAL
-                                     THEN lv_posid_external
-                                     ELSE gs_wbs_item-posid ).
-    ENDIF.
-
-    APPEND gs_wbs_display TO gt_wbs_display.
-  ENDLOOP.
-
-ENDFORM.
-
-
-FORM set_wbs_default_values.
-
-  LOOP AT gt_wbs_display INTO gs_wbs_display.
-
-    "Default KOSTL only if empty (don't overwrite user edit)
-    IF gs_wbs_display-kostl IS INITIAL.
-      gs_wbs_display-kostl = p_kostl.
-    ENDIF.
-
-    "Budget check default for STUFE=1 only if initial
-    IF gs_wbs_display-stufe = 1 AND gs_wbs_display-zbudget_check IS INITIAL.
-      gs_wbs_display-zbudget_check = gc_x.
-    ENDIF.
-
-    "Level 1 description default only if user didn't type anything
-    IF gs_wbs_display-stufe = 1 AND gs_wbs_display-post1 IS INITIAL.
-      gs_wbs_display-post1 = p_post1.
-    ENDIF.
-
-    MODIFY gt_wbs_display FROM gs_wbs_display.
-
-  ENDLOOP.
-
-ENDFORM.
-
-
-
-FORM populate_header_structure.
-
-  IF gs_header-posnr IS INITIAL. gs_header-posnr = p_posnr.  ENDIF.
-  IF gs_header-prnam IS INITIAL. gs_header-prnam = p_prnam.  ENDIF.
-  IF gv_gjahr        IS INITIAL. gv_gjahr        = p_gjahr.  ENDIF.
-  IF gs_header-erdat IS INITIAL. gs_header-erdat = sy-datum. ENDIF.
-  IF gs_header-bukrs IS INITIAL. gs_header-bukrs = gv_bukrs. ENDIF.
-  IF gs_header-werks IS INITIAL. gs_header-werks = gv_werks. ENDIF.
-  IF gs_header-izwek IS INITIAL. gs_header-izwek = gv_izwek. ENDIF.
-  IF gs_header-profl IS INITIAL. gs_header-profl = p_profl.  ENDIF.
-  IF gs_header-zunifier_proj IS INITIAL. gs_header-zunifier_proj = p_usr10. ENDIF.
-  IF gs_header-usr008 IS INITIAL. gs_header-usr008 = gv_usr008. ENDIF.
-  IF gs_header-ernam IS INITIAL. gs_header-ernam = sy-uname.  ENDIF.
-  IF gs_header-z_reqtype IS INITIAL. gs_header-z_reqtype = gv_request_type. ENDIF.
-
-  " User-editable fields: only auto-populate if user never edited them
-  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
-    gs_header-post1 = p_post1.
-  ENDIF.
-  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
-    gs_header-vernr = p_verna.
-  ENDIF.
-  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
-    gs_header-plsez = p_plsez.
-  ENDIF.
-  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
-    gs_header-prctr = p_prctr.
-  ENDIF.
-  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
-    gs_header-kostl = p_kostl.
-  ENDIF.
-
-  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
-    gs_header-z_remarks = gv_z_remarks.
-  ENDIF.
-  IF gv_im_posid_display IS INITIAL.
-    PERFORM get_im_posid_for_display USING p_posnr CHANGING gv_im_posid_display.
-  ENDIF.
-
-ENDFORM.
+WHEN 'BACK' OR 'CANC' OR 'EXIT'.
+  PERFORM reset_edit_context.
+  LEAVE TO SCREEN 0.
