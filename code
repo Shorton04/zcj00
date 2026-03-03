@@ -1,108 +1,104 @@
-  METHOD assign_budget_cj30.
+METHOD assign_budget_cj30.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          ls_wbs_db       TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lv_waers        TYPE waers,
-          lv_delta        TYPE c,
-          lv_rollup       TYPE c,
-          lt_return       TYPE TABLE OF bapiret2,
-          lv_posid_db     TYPE ps_posid,
-          lv_has_error    TYPE abap_bool.
+  DATA: lv_errors_found TYPE oax,
+        lt_bpak         TYPE TABLE OF bpak,
+        ls_bpak         TYPE bpak,
+        lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_wbs_db       TYPE ztb_a2r_wbsitem,
+        lv_objnr        TYPE j_objnr,
+        lv_waers        TYPE waers,
+        lv_delta        TYPE c,
+        lv_rollup       TYPE c,
+        lt_return       TYPE TABLE OF bapiret2,
+        lv_posid_db     TYPE ps_posid,
+        lv_has_error    TYPE abap_bool.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
+  rv_success = abap_false.
 
-    lv_delta = ''.
-    lv_rollup = 'X'.
+  lv_delta  = ''.
+  lv_rollup = 'X'.
 
 *---------------------------------------------------------------------*
 * 1) Get Currency
 *---------------------------------------------------------------------*
+  CLEAR lv_waers.
+  SELECT SINGLE waers
+    INTO @lv_waers
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = @is_header-zreq_num.
+
+  IF lv_waers IS INITIAL.
+    lv_waers = is_header-waers.
+  ENDIF.
+
+  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
     SELECT SINGLE waers
       INTO @lv_waers
-      FROM ztb_a2r_wbshdr
-      WHERE zreq_num = @is_header-zreq_num.
+      FROM t001
+      WHERE bukrs = @is_header-bukrs.
+  ENDIF.
 
-    IF lv_waers IS INITIAL.
-      lv_waers = is_header-waers.
-    ENDIF.
-
-    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-      SELECT SINGLE waers
-        INTO @lv_waers
-        FROM t001
-        WHERE bukrs = @is_header-bukrs.
-    ENDIF.
-
-    IF lv_waers IS INITIAL.
-      RETURN.
-    ENDIF.
+  IF lv_waers IS INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * 2) Read ONLY flagged WBS from DB
 *---------------------------------------------------------------------*
-    SELECT *
-      FROM ztb_a2r_wbsitem
-      INTO TABLE @lt_wbs_db
-      WHERE zreq_num      = @is_header-zreq_num
-        AND zbudget_check = 'X'
-        AND wert2         > 0.
+  CLEAR lt_wbs_db.
+  SELECT *
+    FROM ztb_a2r_wbsitem
+    INTO TABLE @lt_wbs_db
+    WHERE zreq_num      = @is_header-zreq_num
+      AND zbudget_check = 'X'
+      AND wert2         > 0.
 
-    IF lt_wbs_db IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
+  IF lt_wbs_db IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 3) Process each flagged row ONE-BY-ONE (1 FM call per WBS)
+*---------------------------------------------------------------------*
+  LOOP AT lt_wbs_db INTO ls_wbs_db.
+
+    CLEAR: lv_objnr, lv_posid_db, lt_bpak, lt_return, lv_errors_found.
+
+    " Convert POSID external -> internal
+    lv_posid_db = ls_wbs_db-posid.
+
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+      EXPORTING
+        input  = lv_posid_db
+      IMPORTING
+        output = lv_posid_db
+      EXCEPTIONS
+        OTHERS = 1.
+
+    " Get OBJNR for this WBS
+    SELECT SINGLE objnr
+      INTO @lv_objnr
+      FROM prps
+      WHERE posid = @lv_posid_db.
+
+    IF lv_objnr IS INITIAL.
+      " If you prefer to HARD FAIL instead of skipping, replace CONTINUE with RETURN + rv_success = abap_false
+      CONTINUE.
     ENDIF.
 
-*---------------------------------------------------------------------*
-* 3) Build BPAK from DB records
-*---------------------------------------------------------------------*
-    LOOP AT lt_wbs_db INTO ls_wbs_db.
-
-      CLEAR lv_objnr.
-
-      "Convert POSID external -> internal
-      lv_posid_db = ls_wbs_db-posid.
-
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-        EXPORTING
-          input  = lv_posid_db
-        IMPORTING
-          output = lv_posid_db
-        EXCEPTIONS
-          OTHERS = 1.
-
-      SELECT SINGLE objnr
-        INTO @lv_objnr
-        FROM prps
-        WHERE posid = @lv_posid_db.
-
-      IF lv_objnr IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '41'.     "CJ30 Budget
-      ls_bpak-wert    = ls_wbs_db-wert2.
-      ls_bpak-twaer   = lv_waers.
-
-      APPEND ls_bpak TO lt_bpak.
-
-    ENDLOOP.
-
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
+    " Build single BPAK line
+    CLEAR ls_bpak.
+    ls_bpak-e_objnr = lv_objnr.
+    ls_bpak-e_versn = '000'.
+    ls_bpak-e_perio = '001'.
+    ls_bpak-e_wrttp = '41'.          " CJ30 Budget
+    ls_bpak-wert    = ls_wbs_db-wert2.
+    ls_bpak-twaer   = lv_waers.
+    APPEND ls_bpak TO lt_bpak.
 
 *---------------------------------------------------------------------*
-* 4) Call FM
+* 4) Call FM for this single row
 *---------------------------------------------------------------------*
     CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
       EXPORTING
@@ -112,7 +108,7 @@
         i_rollup_data                 = lv_rollup
         i_check_plan_data             = 'X'
         i_application                 = 'P'
-        i_commit_all                  = 'X'
+        i_commit_all                  = ''          " IMPORTANT: commit outside (or set 'X' if you want per-row commit)
       IMPORTING
         e_errors_found                = lv_errors_found
       TABLES
@@ -125,24 +121,27 @@
     ENDIF.
 
 *---------------------------------------------------------------------*
-* 5) Check Return Messages
+* 5) Check Return Messages for this row
 *---------------------------------------------------------------------*
-*    lv_has_error = abap_false.
+    CLEAR lv_has_error.
     LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
          WHERE type CA 'AEX'.
-*      lv_has_error = abap_true.
+      lv_has_error = abap_true.
       EXIT.
     ENDLOOP.
 
-    IF sy-subrc EQ 0.
+    IF lv_has_error = abap_true.
       rv_success = abap_false.
-    ELSE.
-      COMMIT WORK AND WAIT.
-      WAIT UP TO 2 SECONDS.
-      rv_success = abap_true.
+      RETURN.
     ENDIF.
 
-*    IF lv_has_error = abap_true.
-*      RETURN.
-*    ENDIF.
-  ENDMETHOD.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* 6) Final commit if all rows succeeded
+*---------------------------------------------------------------------*
+  COMMIT WORK AND WAIT.
+  WAIT UP TO 2 SECONDS.
+  rv_success = abap_true.
+
+ENDMETHOD.
