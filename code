@@ -1,148 +1,113 @@
-  METHOD assign_budget_cj30.
+* ====================================================================
+REPORT ztr_a2r_wbscj01 MESSAGE-ID zcj00.
+*----------------------------------------------------------------------*
+* Include files
+*----------------------------------------------------------------------*
+INCLUDE ztr_a2r_wbszcj01_top.
+" Selection screen removed - using dynpro screens only
+"INCLUDE ztr_a2r_wbszcj01_sel.
+INCLUDE ztr_a2r_wbszcj01_f01.
+INCLUDE ztr_a2r_wbszcj01_pbo.
+INCLUDE ztr_a2r_wbszcj01_pai.
 
-    DATA: lv_errors_found TYPE oax,
-          lt_bpak         TYPE TABLE OF bpak,
-          ls_bpak         TYPE bpak,
-          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-          ls_wbs_db       TYPE ztb_a2r_wbsitem,
-          lv_objnr        TYPE j_objnr,
-          lv_waers        TYPE waers,
-          lv_delta        TYPE c,
-          lv_rollup       TYPE c,
-          lt_return       TYPE TABLE OF bapiret2,
-          lv_posid_db     TYPE ps_posid,
-          lv_has_error    TYPE abap_bool.
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  IMPORT gv_request_type TO gv_request_type FROM MEMORY ID 'ZCJ00_REQTYPE'.
+  IF gv_request_type IS INITIAL.
+    gv_request_type = 'A1'.
+  ENDIF.
 
-    rv_success = abap_false.
-    CLEAR: lt_bpak, lt_return, lv_errors_found.
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  CREATE OBJECT go_builder.
+    CALL SCREEN 200.
 
-    lv_delta = ''.
-    lv_rollup = 'X'.
 
-*---------------------------------------------------------------------*
-* 1) Get Currency
-*---------------------------------------------------------------------*
-    SELECT SINGLE waers
-      INTO @lv_waers
-      FROM ztb_a2r_wbshdr
-      WHERE zreq_num = @is_header-zreq_num.
 
-    IF lv_waers IS INITIAL.
-      lv_waers = is_header-waers.
-    ENDIF.
 
-    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-      SELECT SINGLE waers
-        INTO @lv_waers
-        FROM t001
-        WHERE bukrs = @is_header-bukrs.
-    ENDIF.
 
-    IF lv_waers IS INITIAL.
-      RETURN.
-    ENDIF.
+* ====================================================================
+* RICEFW ID.........: 6577
+* TR Number.........: D30K912694
+* Version...........: 1.0
+* Program...........: ZTR_A2R_WBSCJ00
+* Transaction Code..:
+* Author............: RQ28830
+* Date..............: 08.12.2025 -
+* --------------------------------------------------------------------
+* Description.......: Internal Project Cockpit
+* --------------------------------------------------------------------
+* Modification list.:
+* Date      Author    TR Number          Description
+* 12/8/25  RQ28830   D30K912694    Initialized program.
+* ====================================================================
+REPORT ZTR_A2R_WBSCJ00 MESSAGE-ID zcj00.
 
-*---------------------------------------------------------------------*
-* 2) Read ONLY flagged WBS from DB
-*---------------------------------------------------------------------*
-    SELECT *
-      FROM ztb_a2r_wbsitem
-      INTO TABLE @lt_wbs_db
-      WHERE zreq_num      = @is_header-zreq_num
-        AND zbudget_check = 'X'
-        AND wert2         > 0.
+*----------------------------------------------------------------------*
+*                           Includes                                   *
+*----------------------------------------------------------------------*
+INCLUDE ztr_a2r_wbscj00_top.
+INCLUDE ztr_a2r_wbscj00_sel.
+INCLUDE ztr_a2r_wbscj00_f01.
 
-    IF lt_wbs_db IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
 
-*---------------------------------------------------------------------*
-* 3) Build BPAK from DB records
-*---------------------------------------------------------------------*
-    LOOP AT lt_wbs_db INTO ls_wbs_db.
+*&---------------------------------------------------------------------*
+*& INITIALIZATION
+*&---------------------------------------------------------------------*
+INITIALIZATION.
 
-      CLEAR lv_objnr.
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
 
-      "Convert POSID external -> internal
-      lv_posid_db = ls_wbs_db-posid.
+  DATA: lv_reqtype TYPE ztb_a2r_reqtype-z_reqtype.
 
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-        EXPORTING
-          input  = lv_posid_db
-        IMPORTING
-          output = lv_posid_db
-        EXCEPTIONS
-          OTHERS = 1.
+  " Get selected request type
+  PERFORM get_request_type CHANGING lv_reqtype.
 
-      SELECT SINGLE objnr
-        INTO @lv_objnr
-        FROM prps
-        WHERE posid = @lv_posid_db.
+  " Store request type in memory for next program
+  EXPORT lv_reqtype FROM lv_reqtype TO MEMORY ID 'ZCJ00_REQTYPE'.
 
-      IF lv_objnr IS INITIAL.
-        CONTINUE.
-      ENDIF.
+  " Route to appropriate program/screen
+  CASE lv_reqtype.
+    WHEN 'A1'.  " Create New Project
+      SUBMIT ztr_a2r_wbscj01 VIA SELECTION-SCREEN AND RETURN.
+      CALL TRANSACTION 'ZA2R_ZCJ01' AND SKIP FIRST SCREEN.
 
-      CLEAR ls_bpak.
-      ls_bpak-e_objnr = lv_objnr.
-      ls_bpak-e_versn = '000'.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '41'.     "CJ30 Budget
-      ls_bpak-wert    = ls_wbs_db-wert2.
-      ls_bpak-twaer   = lv_waers.
+    WHEN 'B1'.  " Add CAR
+      MESSAGE i001 WITH 'Request Type B1 not yet implemented'(m05).
 
-      APPEND ls_bpak TO lt_bpak.
+    WHEN 'B2'.  " Non-critical change
+      MESSAGE i001 WITH 'Request Type B2 not yet implemented'(m06).
 
-    ENDLOOP.
+    WHEN 'B3'.  " Critical change
+      MESSAGE i001 WITH 'Request Type B3 not yet implemented'(m07).
 
-    IF lt_bpak IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
-    ENDIF.
+    WHEN 'C1'.  " Partial Capitalization
+      MESSAGE i001 WITH 'Request Type C1 not yet implemented'(m01).
 
-*---------------------------------------------------------------------*
-* 4) Call FM
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-      EXPORTING
-        i_budget_activity             = 'KBUD'
-        i_budget_distribution_allowed = 'X'
-        i_delta_amounts               = lv_delta
-        i_rollup_data                 = lv_rollup
-        i_check_plan_data             = 'X'
-        i_application                 = 'P'
-        i_commit_all                  = 'X'
-      IMPORTING
-        e_errors_found                = lv_errors_found
-      TABLES
-        it_bpak                       = lt_bpak
-        it_return                     = lt_return.
+    WHEN 'D1'.  " Close WBS
+      MESSAGE i001 WITH 'Request Type D1 not yet implemented'(m02).
 
-    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
+    WHEN 'E1'.  " Unclose WBS
+      MESSAGE i001 WITH 'Request Type E1 not yet implemented'(m03).
 
-*---------------------------------------------------------------------*
-* 5) Check Return Messages
-*---------------------------------------------------------------------*
-*    lv_has_error = abap_false.
-    LOOP AT lt_return ASSIGNING FIELD-SYMBOL(<r>)
-         WHERE type CA 'AEX'.
-*      lv_has_error = abap_true.
-      EXIT.
-    ENDLOOP.
+    WHEN 'F1'.  " Edit Request
+      CALL TRANSACTION 'ZA2R_EDITSAVED' AND SKIP FIRST SCREEN.
 
-    IF sy-subrc EQ 0.
-      rv_success = abap_false.
-    ELSE.
-      COMMIT WORK AND WAIT.
-      WAIT UP TO 2 SECONDS.
-      rv_success = abap_true.
-    ENDIF.
+    WHEN 'G1'.  " WBS Request Reporting
+      SUBMIT zre_a2r_wbscj01 VIA SELECTION-SCREEN AND RETURN.
+      CALL TRANSACTION 'ZA2R_ZCJ00REPORT' AND SKIP FIRST SCREEN.
 
-*    IF lv_has_error = abap_true.
-*      RETURN.
-*    ENDIF.
-  ENDMETHOD.
+    WHEN OTHERS.
+      MESSAGE e001 WITH lv_reqtype.
+  ENDCASE.
+
+INCLUDE ztr_a2r_wbscj00_user_commani01.
+
+INCLUDE ztr_a2r_wbscj00_status_0100o01.
