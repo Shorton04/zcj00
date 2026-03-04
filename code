@@ -1,115 +1,77 @@
-DATA: gv_edit_mode          TYPE abap_bool,
-      gv_loaded_reqnum      TYPE ztb_a2r_wbshdr-zreq_num,
-      gv_header_initialized TYPE abap_bool.
-
-CONSTANTS: gc_stat_draft TYPE ztb_a2r_wbshdr-z_reqstat VALUE 'DRAFT'. "adjust value
-
-
-
-MODULE user_command_0500 INPUT.
-
-  CASE ok_code.
-    WHEN 'NEXT'.
-
-      PERFORM f1_validate_reqnum USING p_zreq_num.
-      PERFORM f1_load_req_to_globals USING p_zreq_num.
-
-      "Set edit context before going to screen2
-      gv_edit_mode          = abap_true.
-      gv_loaded_reqnum      = p_zreq_num.
-      gv_header_initialized = abap_false.
-
-      CALL SCREEN 200.
-
-    WHEN 'BACK' OR 'CANC' OR 'EXIT'.
-      LEAVE TO SCREEN 0.
-  ENDCASE.
-
-  CLEAR ok_code.
-
-ENDMODULE.
-
-
-
-
-FORM f1_validate_reqnum USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+FORM validate_and_load_draft_req USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
   DATA: ls_hdr TYPE ztb_a2r_wbshdr.
 
-  IF iv_reqnum IS INITIAL.
+  "Basic check
+  IF pv_reqnum IS INITIAL.
     MESSAGE e398(zcj00) WITH 'Please enter Request Number.'.
   ENDIF.
 
+  "Read Header
   SELECT SINGLE *
     FROM ztb_a2r_wbshdr
     INTO @ls_hdr
-    WHERE zreq_num = @iv_reqnum.
+    WHERE zreq_num = @pv_reqnum.
 
   IF sy-subrc <> 0.
     MESSAGE e398(zcj00) WITH 'Request Number not found.'.
   ENDIF.
 
-  IF ls_hdr-z_reqstat <> gc_stat_draft.
-    MESSAGE e398(zcj00) WITH 'Request is not in draft status.'.
-  ENDIF.
-
+  "Only creator can edit
   IF ls_hdr-ernam <> sy-uname.
     MESSAGE e398(zcj00) WITH 'You are not allowed to edit this request.'.
   ENDIF.
 
-ENDFORM.
+  "Must be Draft
+  "Field from your table screenshot: REQUEST_STATUS
+  IF ls_hdr-request_status <> 'DRAFT'.  "<<< adjust if your value is DRFT etc.
+    MESSAGE e398(zcj00) WITH 'Request is not in DRAFT status.'.
+  ENDIF.
 
-
-
-FORM f1_load_req_to_globals USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
-
-  "Hard reset screen2 buffers
+  "Reset buffers (important)
   CLEAR: gs_header.
   FREE:  gt_wbs_items, gt_wbs_display.
 
-  "Load header
-  SELECT SINGLE *
-    FROM ztb_a2r_wbshdr
-    INTO @gs_header
-    WHERE zreq_num = @iv_reqnum.
+  "Load header to screen2 structure
+  MOVE-CORRESPONDING ls_hdr TO gs_header.
 
-  "Load items
+  "Load items to internal table used by screen2
   SELECT *
     FROM ztb_a2r_wbsitem
     INTO TABLE @gt_wbs_items
-    WHERE zreq_num = @iv_reqnum
+    WHERE zreq_num = @pv_reqnum
     ORDER BY stufe, posid.
 
   IF gt_wbs_items IS INITIAL.
     MESSAGE e398(zcj00) WITH 'No WBS items found for this request.'.
   ENDIF.
 
-  "Align screen2 parameter-like globals (used by your forms)
+  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
   p_posnr = gs_header-posnr.
   p_prnam = gs_header-prnam.
-  p_gjahr = gs_header-gjahr.
   p_kostl = gs_header-kostl.
+  p_post1 = gs_header-post1.
   p_prctr = gs_header-prctr.
   p_plsez = gs_header-plsez.
-  p_post1 = gs_header-post1.
   p_profl = gs_header-profl.
+
+  "Mark edit mode so prepare_screen2 will NOT copy template
+  gv_edit_mode          = abap_true.
+  gv_loaded_reqnum      = pv_reqnum.
+  gv_header_initialized = abap_false.
 
 ENDFORM.
 
 
 
 
-MODULE status_0200 OUTPUT.
-  PERFORM prepare_screen2.
-ENDMODULE.
-
 
 FORM prepare_screen2.
 
-  "Always get IM data (safe)
+  "Always get IM data (safe, doesn't overwrite screen2 edits)
   PERFORM get_additional_im_data USING p_posnr.
 
-  "Do not rebuild on re-entry (prevents overwriting user edits)
+  "Initialize screen2 ONCE only
   IF gv_header_initialized = abap_true.
     RETURN.
   ENDIF.
@@ -117,20 +79,33 @@ FORM prepare_screen2.
   "------------------------------------------------------------
   "FIRST ENTRY ONLY
   "------------------------------------------------------------
+
+  "=============================
+  "EDIT SAVED REQUEST (F1)
+  "=============================
   IF gv_edit_mode = abap_true.
 
-    "gt_wbs_items + gs_header already loaded from DB at screen 500 NEXT
+    "At this point, caller already loaded:
+    " - gs_header from ZTB_A2R_WBSHDR
+    " - gt_wbs_items from ZTB_A2R_WBSITEM
+    "So DO NOT rebuild anything from template.
+
     PERFORM convert_to_display.
-    PERFORM set_wbs_default_values.  "optional; only fills INITIAL fields
+    PERFORM set_wbs_default_values.  "only fills INITIAL values (safe)
+
+    "IMPORTANT: Do NOT call populate_header_structure in edit mode
+    "because it may overwrite DB header values (erdat/ernam etc.)
 
     gv_header_initialized = abap_true.
     RETURN.
 
   ENDIF.
 
-  "------------------------------------------------------------
-  "CREATE MODE (A1) - original behavior
-  "------------------------------------------------------------
+  "=============================
+  "CREATE MODE (A1)
+  "=============================
+
+  " Build WBS items in correct PRHIS order
   CLEAR gt_wbs_items.
   CALL METHOD go_builder->copy_template_structure
     EXPORTING
@@ -146,18 +121,3 @@ FORM prepare_screen2.
   gv_header_initialized = abap_true.
 
 ENDFORM.
-
-
-
-
-FORM reset_edit_context.
-  gv_edit_mode          = abap_false.
-  gv_loaded_reqnum      = ''.
-  gv_header_initialized = abap_false.
-ENDFORM.
-
-
-
-WHEN 'BACK' OR 'CANC' OR 'EXIT'.
-  PERFORM reset_edit_context.
-  LEAVE TO SCREEN 0.
