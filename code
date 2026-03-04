@@ -1,139 +1,231 @@
-FORM save_request.
+FORM submit_direct_creation.
 
-  DATA: lv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+  DATA: lv_reqnum  TYPE char10,
+        lv_success TYPE abap_bool.
 
-  "Bring screen values back into gs_header/gt_wbs_display
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+  "═══════════════════════════════════════════════════════════════════
   PERFORM sync_screen_to_header.
-  PERFORM convert_from_display.  "gt_wbs_display -> gt_wbs_items (must fill WERT2 etc.)
+  PERFORM convert_from_display.
+  PERFORM populate_header_structure.
 
-  "DO NOT call populate_header_structure in edit mode (can overwrite DB audit fields)
-  IF gv_edit_mode <> abap_true.
-    PERFORM populate_header_structure.
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 2: SAVE REQUEST (GET REQUEST NUMBER)
+  " ✓ Using new method that doesn't interrupt flow
+  "═══════════════════════════════════════════════════════════════════
+  lv_reqnum = go_builder->save_request_for_submit(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items
+  ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to save request before submit'(m13).
+    RETURN.
   ENDIF.
 
-  "=========================
-  "F1: EDIT SAVED REQUEST
-  "=========================
-  IF gv_edit_mode = abap_true.
+  " Store request number in header
+  gs_header-zreq_num = lv_reqnum.
 
-    lv_reqnum = gs_header-zreq_num.
-    IF lv_reqnum IS INITIAL.
-      MESSAGE e398(zcj00) WITH 'Request number missing.'.
-    ENDIF.
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 3: UPDATE STATUS TO PENDING (Required for tracking)
+  "═══════════════════════════════════════════════════════════════════
+  UPDATE ztb_a2r_wbshdr
+  SET request_status = 'PENDING'
+  WHERE zreq_num = lv_reqnum.
 
-    PERFORM update_draft_request_db USING lv_reqnum.
-
-    gv_request_number = lv_reqnum.
-    MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
-    COMMIT WORK AND WAIT.
-    EXIT.
-
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to update status for'(m03) lv_reqnum.
+*    ROLLBACK WORK.
+    RETURN.
   ENDIF.
 
-  "=========================
-  "A1: CREATE/SAVE REQUEST
-  "=========================
-  IF go_builder IS INITIAL.
-    "if you normally create it elsewhere, keep this defensive guard
-    CREATE OBJECT go_builder.  "adjust constructor if needed
+  " Commit the status change
+  COMMIT WORK AND WAIT.
+
+  " Update local header structure
+  gs_header-request_status = 'PENDING'.
+
+  "═══════════════════════════════════════════════════════════════════
+  " STEP 4: CREATE PROJECT DIRECTLY (SKIP WORKFLOW)
+  "═══════════════════════════════════════════════════════════════════
+  MESSAGE i000(zmsg_a2r) WITH 'Creating project for request'(m04) lv_reqnum ##NO_TEXT.
+
+
+   "───────────────────────────────────────────────────────────────
+      " PROJECT CREATION FAILED
+      "───────────────────────────────────────────────────────────────
+
+      " Mark as ERROR
+      UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = lv_reqnum.
+      IF sy-subrc EQ 0.
+        COMMIT WORK.
+        MESSAGE e000(zmsg_a2r) WITH 'Error creating project for request' lv_reqnum ##NO_TEXT.
+        RETURN.
+      ENDIF.
   ENDIF.
-
-  CALL METHOD go_builder->save_request
-    EXPORTING
-      is_header    = gs_header
-      it_wbs_items = gt_wbs_items
-    RECEIVING
-      rv_reqnum    = lv_reqnum.
-
-  IF lv_reqnum IS NOT INITIAL.
-    gv_request_number = lv_reqnum.
-    MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
-    COMMIT WORK AND WAIT.
-  ELSE.
-    MESSAGE e013.
-  ENDIF.
-
 ENDFORM.
 
 
+  METHOD save_request_for_submit.
 
+    DATA: ls_header TYPE ztb_a2r_wbshdr,
+          ls_item   TYPE ztb_a2r_wbsitem,
+          ls_wbs    TYPE ztb_a2r_wbsitem,
+          lv_error  TYPE abap_bool.
+    DATA: lv_vkokr TYPE kokrs,
+          lv_pspnr TYPE ps_spsnr.
 
-FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+    lv_vkokr = is_header-vkokr.
 
-  DATA: ls_hdr_db TYPE ztb_a2r_wbshdr,
-        ls_item   TYPE ztb_a2r_wbsitem,
-        ls_wbs    TYPE ztb_a2r_wbsitem.
+    IF lv_vkokr IS INITIAL.
+      READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
+      IF sy-subrc = 0 AND ls_any-posnr IS NOT INITIAL.
+        lv_pspnr = ls_any-posnr.
 
-  "Lock header (optional but recommended)
-  "ENQUEUE_EZTB_A2R_WBSHDR ... (if you have lock object)
-
-  "Read existing header to keep audit fields (ernam/erdat)
-  SELECT SINGLE *
-    FROM ztb_a2r_wbshdr
-    INTO @ls_hdr_db
-    WHERE zreq_num = @iv_reqnum.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(zcj00) WITH 'Request not found for update.'.
-  ENDIF.
-
-  "Security: only creator
-  IF ls_hdr_db-ernam <> sy-uname.
-    MESSAGE e398(zcj00) WITH 'You are not allowed to edit this request.'.
-  ENDIF.
-
-  "Must still be draft
-  IF ls_hdr_db-request_status <> 'DRAFT'.  "adjust if different
-    MESSAGE e398(zcj00) WITH 'Request is not in DRAFT status.'.
-  ENDIF.
-
-  "Update ONLY editable fields, keep original ernam/erdat
-  ls_hdr_db-profl        = gs_header-profl.
-  ls_hdr_db-kostl        = gs_header-kostl.
-  ls_hdr_db-post1        = gs_header-post1.
-  ls_hdr_db-vernr        = gs_header-vernr.
-  ls_hdr_db-plsez        = gs_header-plsez.
-  ls_hdr_db-prctr        = gs_header-prctr.
-  ls_hdr_db-z_remarks    = gs_header-z_remarks.
-  ls_hdr_db-zunifier_proj = gs_header-zunifier_proj.
-
-  "keep these from db or refresh from IM if you want:
-  ls_hdr_db-posnr        = gs_header-posnr.
-  ls_hdr_db-prnam        = gs_header-prnam.
-  ls_hdr_db-bukrs        = gs_header-bukrs.
-  ls_hdr_db-werks        = gs_header-werks.
-  ls_hdr_db-izwek        = gs_header-izwek.
-  ls_hdr_db-usr008       = gs_header-usr008.
-  ls_hdr_db-z_reqtype    = gs_header-z_reqtype.
-
-  UPDATE ztb_a2r_wbshdr FROM ls_hdr_db.
-  IF sy-subrc <> 0.
-    MESSAGE e398(zcj00) WITH 'Header update failed.'.
-  ENDIF.
-
-  "Replace items
-  DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = @iv_reqnum.
-
-  LOOP AT gt_wbs_items INTO ls_wbs.
-    CLEAR ls_item.
-    ls_item-mandt         = sy-mandt.
-    ls_item-zreq_num      = iv_reqnum.
-    ls_item-bukrs         = ls_hdr_db-bukrs.
-    ls_item-posid         = ls_wbs-posid.
-    ls_item-stufe         = ls_wbs-stufe.
-    ls_item-post1         = ls_wbs-post1.
-    ls_item-kostl         = ls_wbs-kostl.
-    ls_item-wert2         = ls_wbs-wert2.
-    ls_item-zbudget_check = ls_wbs-zbudget_check.
-    ls_item-imprf         = ls_wbs-imprf.
-    ls_item-prart         = ls_wbs-prart.
-    ls_item-gjahr         = ls_wbs-gjahr.
-    ls_item-posnr         = ls_wbs-posnr.
-
-    INSERT ztb_a2r_wbsitem FROM ls_item.
-    IF sy-subrc <> 0.
-      MESSAGE e398(zcj00) WITH 'Item save failed for' ls_item-posid.
+        SELECT SINGLE pkokr
+          INTO lv_vkokr
+          FROM prpss
+          WHERE pspnr = lv_pspnr.
+      ENDIF.
     ENDIF.
-  ENDLOOP.
 
-ENDFORM.
+    CLEAR: rv_reqnum, lv_error.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 1: GET REQUEST NUMBER
+    "═══════════════════════════════════════════════════════════════════
+    IF is_header-zreq_num IS INITIAL.
+      rv_reqnum = get_next_request_number( ).
+      IF rv_reqnum IS INITIAL.
+        RETURN.
+      ENDIF.
+    ELSE.
+      rv_reqnum = is_header-zreq_num.
+    ENDIF.
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 2: PREPARE HEADER
+    "═══════════════════════════════════════════════════════════════════
+    CLEAR ls_header.
+    ls_header-mandt = sy-mandt.
+    ls_header-zreq_num = rv_reqnum.
+    ls_header-posnr = is_header-posnr.
+    ls_header-prnam = is_header-prnam.
+    ls_header-pspnr = is_header-pspnr.
+    ls_header-post1 = is_header-post1.
+    ls_header-vernr = is_header-vernr.
+    ls_header-plsez = is_header-plsez.
+    ls_header-bukrs = is_header-bukrs.
+    ls_header-werks = is_header-werks.
+    ls_header-waers = is_header-waers.
+    ls_header-prctr = is_header-prctr.
+    ls_header-kostl = is_header-kostl.
+
+    ls_header-vkokr = lv_vkokr.
+    ls_header-izwek = is_header-izwek.
+    ls_header-zunifier_proj = is_header-zunifier_proj.
+    ls_header-usr008 = is_header-usr008.
+    ls_header-profl = is_header-profl.
+    ls_header-z_reqtype = is_header-z_reqtype.
+
+
+    IF is_header-zreq_num IS INITIAL.
+      ls_header-ernam = sy-uname.
+      ls_header-erdat = sy-datum.
+      ls_header-request_status = 'DRAFT'.
+    ELSE.
+      ls_header-ernam = is_header-ernam.
+      ls_header-erdat = is_header-erdat.
+      " Preserve existing status if set
+      IF is_header-request_status IS NOT INITIAL.
+        ls_header-request_status = is_header-request_status.
+      ELSE.
+        ls_header-request_status = 'DRAFT'.
+      ENDIF.
+    ENDIF.
+
+    IF is_header-z_remarks IS NOT INITIAL.
+      ls_header-z_remarks = is_header-z_remarks.
+    ENDIF.
+
+    "═══════════════════════════════════════════════════════════════════
+    " STEP 3: SAVE TO DATABASE
+    "═══════════════════════════════════════════════════════════════════
+    TRY.
+        " Insert or update header
+        IF is_header-zreq_num IS INITIAL.
+          INSERT ztb_a2r_wbshdr FROM ls_header.
+        ELSE.
+          UPDATE ztb_a2r_wbshdr FROM ls_header.
+          IF sy-subrc <> 0.
+            INSERT ztb_a2r_wbshdr FROM ls_header.
+          ENDIF.
+        ENDIF.
+
+
+        IF sy-subrc = 0.
+          " Delete old items if updating
+          IF is_header-zreq_num IS NOT INITIAL.
+            DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
+          ENDIF.
+
+          " Insert WBS items
+          LOOP AT it_wbs_items INTO ls_wbs WHERE wert2 > 0.
+            CLEAR ls_item.
+            ls_item-mandt = sy-mandt.
+            ls_item-zreq_num = rv_reqnum.
+            ls_item-bukrs = ls_header-bukrs.
+            ls_item-vkokr = ls_wbs-vkokr.
+            ls_item-vkokr = ls_header-vkokr.
+            ls_item-posid = ls_wbs-posid.
+            ls_item-stufe = ls_wbs-stufe.
+            ls_item-post1 = ls_wbs-post1.
+            ls_item-kostl = ls_wbs-kostl.
+            ls_item-wert2 = ls_wbs-wert2.
+            ls_item-vkokr = lv_vkokr.
+            ls_item-zbudget_check = ls_wbs-zbudget_check.
+            ls_item-imprf = ls_wbs-imprf.
+            ls_item-prart = ls_wbs-prart.
+            ls_item-werks = ls_header-werks.
+
+            IF ls_wbs-posnr IS NOT INITIAL.
+              ls_item-posnr = ls_wbs-posnr.
+            ENDIF.
+
+            INSERT ztb_a2r_wbsitem FROM ls_item.
+
+            IF sy-subrc <> 0.
+              lv_error = abap_true.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+
+          "═══════════════════════════════════════════════════════════
+          " COMMIT OR ROLLBACK
+          " ✓ NO MESSAGE
+          " ✓ NO TRANSACTION CALL
+          " ✓ Just return the request number so caller can continue
+          "═══════════════════════════════════════════════════════════
+          IF lv_error = abap_false.
+            COMMIT WORK AND WAIT.
+            " Success - just return the request number
+          ELSE.
+            ROLLBACK WORK.
+            CLEAR rv_reqnum.
+          ENDIF.
+
+        ELSE.
+          CLEAR rv_reqnum.
+          ROLLBACK WORK.
+        ENDIF.
+
+
+      CATCH cx_root INTO DATA(lx_error).
+        " Don't show message - just clear request number
+        CLEAR rv_reqnum.
+        ROLLBACK WORK.
+    ENDTRY.
+
+  ENDMETHOD.
