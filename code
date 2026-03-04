@@ -1,11 +1,42 @@
 FORM save_request.
 
-  DATA: lv_reqnum TYPE char10.
-  " Sync editable screen fields back to gs_header BEFORE saving
-  " (Do NOT call POPULATE_HEADER_STRUCTURE here - it overwrites user input)
-  PERFORM sync_screen_to_header.   " <-- new form, see below
-  PERFORM convert_from_display.
-  PERFORM populate_header_structure.
+  DATA: lv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+
+  "Bring screen values back into gs_header/gt_wbs_display
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.  "gt_wbs_display -> gt_wbs_items (must fill WERT2 etc.)
+
+  "DO NOT call populate_header_structure in edit mode (can overwrite DB audit fields)
+  IF gv_edit_mode <> abap_true.
+    PERFORM populate_header_structure.
+  ENDIF.
+
+  "=========================
+  "F1: EDIT SAVED REQUEST
+  "=========================
+  IF gv_edit_mode = abap_true.
+
+    lv_reqnum = gs_header-zreq_num.
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e398(zcj00) WITH 'Request number missing.'.
+    ENDIF.
+
+    PERFORM update_draft_request_db USING lv_reqnum.
+
+    gv_request_number = lv_reqnum.
+    MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
+    COMMIT WORK AND WAIT.
+    EXIT.
+
+  ENDIF.
+
+  "=========================
+  "A1: CREATE/SAVE REQUEST
+  "=========================
+  IF go_builder IS INITIAL.
+    "if you normally create it elsewhere, keep this defensive guard
+    CREATE OBJECT go_builder.  "adjust constructor if needed
+  ENDIF.
 
   CALL METHOD go_builder->save_request
     EXPORTING
@@ -17,7 +48,7 @@ FORM save_request.
   IF lv_reqnum IS NOT INITIAL.
     gv_request_number = lv_reqnum.
     MESSAGE s000(zmsg_a2r) WITH lv_reqnum.
-    COMMIT WORK.
+    COMMIT WORK AND WAIT.
   ELSE.
     MESSAGE e013.
   ENDIF.
@@ -26,154 +57,83 @@ ENDFORM.
 
 
 
-  METHOD save_request.
 
-    DATA: ls_header TYPE ztb_a2r_wbshdr,
-          ls_item   TYPE ztb_a2r_wbsitem,
-          ls_wbs    TYPE ztb_a2r_wbsitem,
-          lv_error  TYPE abap_bool.
+FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
-    CLEAR: rv_reqnum, lv_error.
+  DATA: ls_hdr_db TYPE ztb_a2r_wbshdr,
+        ls_item   TYPE ztb_a2r_wbsitem,
+        ls_wbs    TYPE ztb_a2r_wbsitem.
 
-    " Get request number ONLY if not already assigned
-    IF is_header-zreq_num IS INITIAL.
-      rv_reqnum = get_next_request_number( ).
+  "Lock header (optional but recommended)
+  "ENQUEUE_EZTB_A2R_WBSHDR ... (if you have lock object)
 
-      IF rv_reqnum IS INITIAL.
-        " Error message already displayed by get_next_request_number
-        RETURN.
-      ENDIF.
-    ELSE.
-      " Re-saving existing request (update scenario)
-      rv_reqnum = is_header-zreq_num.
+  "Read existing header to keep audit fields (ernam/erdat)
+  SELECT SINGLE *
+    FROM ztb_a2r_wbshdr
+    INTO @ls_hdr_db
+    WHERE zreq_num = @iv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(zcj00) WITH 'Request not found for update.'.
+  ENDIF.
+
+  "Security: only creator
+  IF ls_hdr_db-ernam <> sy-uname.
+    MESSAGE e398(zcj00) WITH 'You are not allowed to edit this request.'.
+  ENDIF.
+
+  "Must still be draft
+  IF ls_hdr_db-request_status <> 'DRAFT'.  "adjust if different
+    MESSAGE e398(zcj00) WITH 'Request is not in DRAFT status.'.
+  ENDIF.
+
+  "Update ONLY editable fields, keep original ernam/erdat
+  ls_hdr_db-profl        = gs_header-profl.
+  ls_hdr_db-kostl        = gs_header-kostl.
+  ls_hdr_db-post1        = gs_header-post1.
+  ls_hdr_db-vernr        = gs_header-vernr.
+  ls_hdr_db-plsez        = gs_header-plsez.
+  ls_hdr_db-prctr        = gs_header-prctr.
+  ls_hdr_db-z_remarks    = gs_header-z_remarks.
+  ls_hdr_db-zunifier_proj = gs_header-zunifier_proj.
+
+  "keep these from db or refresh from IM if you want:
+  ls_hdr_db-posnr        = gs_header-posnr.
+  ls_hdr_db-prnam        = gs_header-prnam.
+  ls_hdr_db-bukrs        = gs_header-bukrs.
+  ls_hdr_db-werks        = gs_header-werks.
+  ls_hdr_db-izwek        = gs_header-izwek.
+  ls_hdr_db-usr008       = gs_header-usr008.
+  ls_hdr_db-z_reqtype    = gs_header-z_reqtype.
+
+  UPDATE ztb_a2r_wbshdr FROM ls_hdr_db.
+  IF sy-subrc <> 0.
+    MESSAGE e398(zcj00) WITH 'Header update failed.'.
+  ENDIF.
+
+  "Replace items
+  DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = @iv_reqnum.
+
+  LOOP AT gt_wbs_items INTO ls_wbs.
+    CLEAR ls_item.
+    ls_item-mandt         = sy-mandt.
+    ls_item-zreq_num      = iv_reqnum.
+    ls_item-bukrs         = ls_hdr_db-bukrs.
+    ls_item-posid         = ls_wbs-posid.
+    ls_item-stufe         = ls_wbs-stufe.
+    ls_item-post1         = ls_wbs-post1.
+    ls_item-kostl         = ls_wbs-kostl.
+    ls_item-wert2         = ls_wbs-wert2.
+    ls_item-zbudget_check = ls_wbs-zbudget_check.
+    ls_item-imprf         = ls_wbs-imprf.
+    ls_item-prart         = ls_wbs-prart.
+    ls_item-gjahr         = ls_wbs-gjahr.
+    ls_item-posnr         = ls_wbs-posnr.
+
+    INSERT ztb_a2r_wbsitem FROM ls_item.
+    IF sy-subrc <> 0.
+      MESSAGE e398(zcj00) WITH 'Item save failed for' ls_item-posid.
     ENDIF.
+  ENDLOOP.
 
-    " Prepare header with correct field mapping
-    CLEAR ls_header.
-    ls_header-mandt = sy-mandt.
-    ls_header-zreq_num = rv_reqnum.
-
-    " FDS Table 4.1.7 field mapping
-    ls_header-posnr = is_header-posnr.              " IM Program Position
-    ls_header-prnam = is_header-prnam.              " IM Program
-    ls_header-pspnr = is_header-pspnr.              " Project ID (populated after creation)
-    ls_header-post1 = is_header-post1.              " Description
-    ls_header-vernr = is_header-vernr.              " Person Responsible
-    ls_header-plsez = is_header-plsez.              " Finish Date
-    ls_header-bukrs = is_header-bukrs.              " Company Code
-    ls_header-werks = is_header-werks.              " Plant
-    ls_header-prctr = is_header-prctr.              " Profit Center
-    ls_header-kostl = is_header-kostl.              " Cost Center
-    ls_header-izwek = is_header-izwek.              " Investment Reason
-    ls_header-zunifier_proj = is_header-zunifier_proj.  " GE Ariba Flag
-    ls_header-usr008 = is_header-usr008.            " CAR Approval Date
-    ls_header-profl = is_header-profl.              " Project Profile
-    ls_header-z_reqtype = is_header-z_reqtype.      " Request Type
-
-    " Status and audit fields (similar to old system pattern)
-    IF is_header-zreq_num IS INITIAL.
-      " New request
-      ls_header-ernam = sy-uname.                   " Created by
-      ls_header-erdat = sy-datum.                   " Created on
-      ls_header-request_status = 'DRAFT'.           " DRAFT status
-    ELSE.
-      " Existing request being updated
-      ls_header-ernam = is_header-ernam.            " Keep original creator
-      ls_header-erdat = is_header-erdat.            " Keep original date
-      " Add change tracking if fields exist:
-      " ls_header-changed_by = sy-uname.
-      " ls_header-changed_on = sy-datum.
-    ENDIF.
-
-    " Optional fields
-    IF is_header-z_remarks IS NOT INITIAL.
-      ls_header-z_remarks = is_header-z_remarks.
-    ENDIF.
-
-    " Validate mandatory fields
-    IF ls_header-posnr IS INITIAL.
-      MESSAGE 'IM Program Position is mandatory' TYPE 'E'.
-      CLEAR rv_reqnum.
-      RETURN.
-    ENDIF.
-
-    " Save with error handling
-    TRY.
-        " Check if updating or creating new
-        IF is_header-zreq_num IS INITIAL.
-          " Insert new header
-          INSERT ztb_a2r_wbshdr FROM ls_header.
-        ELSE.
-          " Update existing header
-          UPDATE ztb_a2r_wbshdr FROM ls_header.
-          IF sy-subrc <> 0.
-            " If update failed, try insert (might be new after all)
-            INSERT ztb_a2r_wbshdr FROM ls_header.
-          ENDIF.
-        ENDIF.
-
-        IF sy-subrc = 0.
-          " Delete old items if updating
-          IF is_header-zreq_num IS NOT INITIAL.
-            DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = rv_reqnum.
-          ENDIF.
-
-          " Insert/update WBS items
-          LOOP AT it_wbs_items INTO ls_wbs.
-            CLEAR ls_item.
-
-            " FDS Table 4.1.8 field mapping
-            ls_item-mandt = sy-mandt.
-            ls_item-zreq_num = rv_reqnum.           " Request Number (Primary Key)
-            ls_item-bukrs = ls_header-bukrs.        " Company Code (Primary Key)
-            ls_item-posid = ls_wbs-posid.           " WBS Element Code (Primary Key)
-            ls_item-stufe = ls_wbs-stufe.           " WBS Level
-            ls_item-post1 = ls_wbs-post1.           " Description
-            ls_item-kostl = ls_wbs-kostl.           " Cost Center
-            ls_item-wert2 = ls_wbs-wert2.           " Approved Budget
-            ls_item-zbudget_check = ls_wbs-zbudget_check.  " Budget Check
-            ls_item-imprf = ls_wbs-imprf.           " Investment Profile
-            ls_item-prart = ls_wbs-prart.           " Project Type
-            ls_item-gjahr = ls_wbs-gjahr.           " Approval Year
-
-            IF ls_wbs-posnr IS NOT INITIAL.
-              ls_item-posnr = ls_wbs-posnr.         " WBS Internal Number
-            ENDIF.
-
-            INSERT ztb_a2r_wbsitem FROM ls_item.
-
-            IF sy-subrc <> 0.
-              lv_error = abap_true.
-              MESSAGE 'Error saving WBS item' && ls_item-posid TYPE 'I' DISPLAY LIKE 'E'.
-              EXIT.
-            ENDIF.
-          ENDLOOP.
-
-          " Commit or rollback
-          IF lv_error = abap_false.
-            COMMIT WORK AND WAIT.
-            MESSAGE s024(zcj00) WITH rv_reqnum DISPLAY LIKE 'S'.
-            CALL TRANSACTION 'ZA2R_ZCJ00'.
-          ELSE.
-            ROLLBACK WORK.
-            CLEAR rv_reqnum.
-          ENDIF.
-
-        ELSE.
-          MESSAGE 'Error saving header. Check table structure.' TYPE 'E'.
-          CLEAR rv_reqnum.
-          ROLLBACK WORK.
-        ENDIF.
-
-      CATCH cx_sy_sql_error INTO DATA(lx_sql).
-        MESSAGE lx_sql->get_text( ) TYPE 'E'.
-        CLEAR rv_reqnum.
-        ROLLBACK WORK.
-
-      CATCH cx_root INTO DATA(lx_error).
-        MESSAGE lx_error->get_text( ) TYPE 'E'.
-        CLEAR rv_reqnum.
-        ROLLBACK WORK.
-    ENDTRY.
-
-  ENDMETHOD.
+ENDFORM.
