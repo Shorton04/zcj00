@@ -1,43 +1,40 @@
-FORM load_b3_project_data USING iv_pspnr TYPE proj-pspnr.
+MODULE user_command_0100 INPUT.
 
-  DATA: lv_post1 TYPE proj-post1,
-        lv_vernr TYPE proj-vernr,
-        lv_plsez TYPE proj-plsez,
-        lv_vbukr TYPE proj-vbukr,
-        lv_werks TYPE proj-werks,
-        lv_prctr TYPE proj-prctr.
+  DATA lv_ok TYPE sy-ucomm.
+  lv_ok = sy-ucomm.
+  CLEAR sy-ucomm.
 
-  CLEAR gs_header.
+  CASE lv_ok.
 
-  "Read PROJ (note VBUKR)
-  SELECT SINGLE
-         post1
-         vernr
-         plsez
-         vbukr
-         werks
-         prctr
-    INTO ( @lv_post1,
-           @lv_vernr,
-           @lv_plsez,
-           @lv_vbukr,
-           @lv_werks,
-           @lv_prctr )
-    FROM proj
-    WHERE pspnr = @iv_pspnr.
+    WHEN 'SUBMIT'.
 
-  IF sy-subrc <> 0.
-    MESSAGE e029(zcj00) WITH 'Project not found in PROJ'.
-    RETURN.
-  ENDIF.
+      IF gv_request_type = 'B3'.
 
-  "Map to your header structure
-  gs_header-pspnr = iv_pspnr.
-  gs_header-post1 = lv_post1.     "Description
-  gs_header-vernr = lv_vernr.     "Person Responsible
-  gs_header-plsez = lv_plsez.     "Finish Date
-  gs_header-bukrs = lv_vbukr.     "Company Code (PROJ-VBUKR -> BUKRS)
-  gs_header-werks = lv_werks.     "Plant
-  gs_header-prctr = lv_prctr.     "Profit Center
+        DATA lv_success TYPE abap_bool.
 
-ENDFORM.
+        lv_success = go_builder->change_project_critical(
+                        iv_pspnr   = gs_header-pspnr
+                        is_header  = gs_header ).
+
+        IF lv_success = abap_true.
+
+          "Update Z tables
+          PERFORM update_wbshdr_b3.
+          PERFORM update_wbsitem_b3.
+
+          "Trigger workflow
+          PERFORM trigger_workflow_b3.
+
+          MESSAGE s029(zcj00) WITH 'Project modification request submitted'.
+
+        ELSE.
+
+          MESSAGE e029(zcj00) WITH 'Project modification failed'.
+
+        ENDIF.
+
+      ENDIF.
+
+  ENDCASE.
+
+ENDMODULE.
