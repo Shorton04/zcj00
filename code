@@ -1,341 +1,76 @@
-CLASS zcl_a2r_wbs_builder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC .
-
-  PUBLIC SECTION.
-
-    METHODS change_project_critical
-      IMPORTING
-        iv_pspnr        TYPE proj-pspnr           "Selected Project (internal number)
-        is_header_new   TYPE ztb_a2r_wbshdr       "New values (screen)
-        is_header_old   TYPE ztb_a2r_wbshdr       "Old values (snapshot)
-      EXPORTING
-        et_return       TYPE bapiret2_t
-      RETURNING
-        VALUE(rv_success) TYPE abap_bool.
-
-ENDCLASS.
-
-
-
-
 METHOD change_project_critical.
 
-  DATA: ls_proj_chg    TYPE bapi_bus2001_chg,
-        ls_proj_chgx   TYPE bapi_bus2001_chgx,
-        lt_return      TYPE TABLE OF bapiret2,
-        lv_has_error   TYPE abap_bool.
+  DATA: ls_proj_chg TYPE bapi_bus2001_chg,
+        ls_proj_upd TYPE bapi_bus2001_upd,
+        lt_return   TYPE TABLE OF bapiret2,
+        ls_return   TYPE bapiret2,
+        lv_error    TYPE char1.
 
   rv_success = abap_false.
-  CLEAR: et_return, lt_return, lv_has_error, ls_proj_chg, ls_proj_chgx.
 
-  "------------------------------------------------------------
-  " 1) Init
-  "------------------------------------------------------------
+*---------------------------------------------------------------------*
+* 1) Initialize PS BAPI
+*---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-  "------------------------------------------------------------
-  " 2) Fill key
-  "------------------------------------------------------------
-  ls_proj_chg-project_definition  = iv_pspnr.
-  ls_proj_chgx-project_definition = iv_pspnr.
-  ls_proj_chgx-project_definitionx = abap_true.
+*---------------------------------------------------------------------*
+* 2) Fill change structure
+*---------------------------------------------------------------------*
 
-  "------------------------------------------------------------
-  " 3) Only set fields that changed (Critical Change rules)
-  "    Editable fields per FS B3: Desc, Vernr, Finish,
-  "    Posnr/Prnam (usually applied via IM/WBS assignment later),
-  "    Bukrs, Werks, Prctr, Izwek
-  "------------------------------------------------------------
+  ls_proj_chg-project_definition = iv_pspnr.
 
-  "Description
-  IF is_header_new-pspnr <> is_header_old-pspnr.
-    ls_proj_chg-description  = is_header_new-pspnr.
-    ls_proj_chgx-description = abap_true.
-  ENDIF.
+  ls_proj_chg-description      = is_header-post1.
+  ls_proj_chg-responsible_no   = is_header-vernr.
+  ls_proj_chg-finish           = is_header-plsez.
+  ls_proj_chg-company_code     = is_header-bukrs.
+  ls_proj_chg-plant            = is_header-werks.
+  ls_proj_chg-profit_ctr       = is_header-prctr.
 
-  "Person Responsible
-  IF is_header_new-vernr <> is_header_old-vernr.
-    ls_proj_chg-responsible_no  = is_header_new-vernr.
-    ls_proj_chgx-responsible_nox = abap_true.
-  ENDIF.
+*---------------------------------------------------------------------*
+* 3) Set UPDATE FLAGS (VERY IMPORTANT)
+*---------------------------------------------------------------------*
 
-  "Finish Date
-  IF is_header_new-plsez <> is_header_old-plsez.
-    ls_proj_chg-finish  = is_header_new-plsez.
-    ls_proj_chg-fcst_finish = is_header_new-plsez.
-    ls_proj_chgx-finishx = abap_true.
-    ls_proj_chgx-fcst_finishx = abap_true.
-  ENDIF.
+  ls_proj_upd-description    = 'X'.
+  ls_proj_upd-responsible_no = 'X'.
+  ls_proj_upd-finish         = 'X'.
+  ls_proj_upd-company_code   = 'X'.
+  ls_proj_upd-plant          = 'X'.
+  ls_proj_upd-profit_ctr     = 'X'.
 
-  "Company Code
-  IF is_header_new-bukrs <> is_header_old-bukrs.
-    ls_proj_chg-company_code  = is_header_new-bukrs.
-    ls_proj_chgx-company_codex = abap_true.
-  ENDIF.
+*---------------------------------------------------------------------*
+* 4) Call Change BAPI
+*---------------------------------------------------------------------*
 
-  "Plant
-  IF is_header_new-werks <> is_header_old-werks.
-    ls_proj_chg-plant  = is_header_new-werks.
-    ls_proj_chgx-plantx = abap_true.
-  ENDIF.
-
-  "Profit Center
-  IF is_header_new-prctr <> is_header_old-prctr.
-    ls_proj_chg-profit_ctr  = is_header_new-prctr.
-    ls_proj_chgx-profit_ctrx = abap_true.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " NOTE:
-  " - IZWEK and IM Program/Position are typically not PROJ fields.
-  " - In your process, store these in ZTB_* now, then after WF approval
-  "   apply them via WBS/IM assignment (e.g., CJ02 BDC / IMPR updates),
-  "   similar to your existing automation patterns.
-  "------------------------------------------------------------
-
-  "------------------------------------------------------------
-  " 4) Call Change BAPI
-  "------------------------------------------------------------
   CALL FUNCTION 'BAPI_BUS2001_CHANGE'
     EXPORTING
-      i_project_definition = ls_proj_chg
-      i_project_definitionx = ls_proj_chgx
+      i_project_definition     = ls_proj_chg
+      i_project_definition_upd = ls_proj_upd
     TABLES
-      et_return            = lt_return.
+      et_return                = lt_return.
 
-  et_return = lt_return.
+*---------------------------------------------------------------------*
+* 5) Check Errors
+*---------------------------------------------------------------------*
 
-  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
-    lv_has_error = abap_true.
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
+    lv_error = 'X'.
     EXIT.
   ENDLOOP.
 
-  IF lv_has_error = abap_true.
+  IF lv_error = 'X'.
     CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
     rv_success = abap_false.
     RETURN.
   ENDIF.
 
+*---------------------------------------------------------------------*
+* 6) Commit
+*---------------------------------------------------------------------*
+
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
-      wait = abap_true.
+      wait = 'X'.
 
   rv_success = abap_true.
 
 ENDMETHOD.
-
-
-
-
-DATA: gv_pspnr_sel   TYPE proj-pspnr,
-      gv_objnr_proj  TYPE jest-objnr,
-      gs_header_old  TYPE ztb_a2r_wbshdr,  "snapshot before edits
-      gs_header      TYPE ztb_a2r_wbshdr,  "screen working copy
-      gt_wbs_items_old TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-      gt_wbs_items     TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
-
-
-
-FORM validate_project_b3 USING    iv_pspnr TYPE proj-pspnr
-                        CHANGING cv_objnr TYPE jest-objnr.
-
-  DATA: lv_stat TYPE jest-stat.
-
-  CLEAR cv_objnr.
-
-  "1) Get OBJNR from PROJ using PSPNR (user input)
-  SELECT SINGLE objnr
-    INTO @cv_objnr
-    FROM proj
-    WHERE pspnr = @iv_pspnr.
-
-  IF sy-subrc <> 0 OR cv_objnr IS INITIAL.
-    MESSAGE e029(zcj00) WITH 'Project not found'.
-  ENDIF.
-
-  "2) Check CLSD/TECO in JEST (active statuses only)
-  SELECT SINGLE stat
-    INTO @lv_stat
-    FROM jest
-    WHERE objnr = @cv_objnr
-      AND inact = @space
-      AND stat  IN ('I0046', 'I0045').
-
-  IF sy-subrc = 0.
-    IF lv_stat = 'I0046'.
-      MESSAGE e029(zcj00) WITH 'Project is already closed. Modification not allowed'.
-    ELSEIF lv_stat = 'I0045'.
-      MESSAGE e029(zcj00) WITH 'Project is technically completed (TECO). Modification not allowed'.
-    ELSE.
-      MESSAGE e029(zcj00) WITH 'Project status does not allow modification'.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-
-
-FORM load_b3_project_data USING iv_pspnr TYPE proj-pspnr.
-
-  DATA: lv_wbs_pspnr TYPE prps-pspnr.
-
-  CLEAR: gs_header, gs_header_old, gt_wbs_items, gt_wbs_items_old.
-
-  "Header from PROJ
-  SELECT SINGLE
-         pspnr
-         post1
-         vernr
-         plsez
-         bukrs
-         werks
-         prctr
-    INTO CORRESPONDING FIELDS OF @gs_header
-    FROM proj
-    WHERE pspnr = @iv_pspnr.
-
-  IF sy-subrc <> 0.
-    MESSAGE e029(zcj00) WITH 'Project header not found in PROJ'.
-  ENDIF.
-
-  "Map FS names to your Z header fields (adjust if different)
-  gs_header-pspnr = iv_pspnr.
-  gs_header-pspnr = gs_header-post1. "If your Z-field PSPNR is used as Description on screen, keep consistent
-
-  "Get Level-1 WBS internal number using PSPHI + STUFE=1 (per FS)
-  SELECT SINGLE pspnr
-    INTO @lv_wbs_pspnr
-    FROM prps
-    WHERE psphi = @iv_pspnr
-      AND stufe = 1.
-
-  "Derive IM fields from IMPR using level-1 WBS PSPNR (common IMPR link)
-  IF lv_wbs_pspnr IS NOT INITIAL.
-    SELECT SINGLE
-           posnr
-           prnam
-           gjahr
-           izwek
-           usr008
-           usr10
-      INTO ( @gs_header-posnr,
-             @gs_header-prnam,
-             @gs_header-gjahr,
-             @gs_header-izwek,
-             @gs_header-usr008,
-             @gs_header-zunifier_proj )
-      FROM impr
-      WHERE pspnr = @lv_wbs_pspnr.
-  ENDIF.
-
-  "Load WBS list from PRPS for the project (basic pattern; adjust columns to your GT structure)
-  SELECT
-      posid,
-      post1,
-      stufe,
-      kostl,
-      prart,
-      imprf
-    FROM prps
-    INTO CORRESPONDING FIELDS OF TABLE @gt_wbs_items
-    WHERE psphi = @iv_pspnr.
-
-  "Snapshot for delta validation
-  gs_header_old      = gs_header.
-  gt_wbs_items_old[] = gt_wbs_items[].
-
-ENDFORM.
-
-
-MODULE user_command_0600 INPUT.
-  DATA lv_ok TYPE sy-ucomm.
-  lv_ok = sy-ucomm.
-  CLEAR sy-ucomm.
-
-  CASE lv_ok.
-    WHEN 'NEXT'.  "Next button
-      IF gv_pspnr_sel IS INITIAL.
-        MESSAGE e029(zcj00) WITH 'Enter Project (PSPNR)'.
-      ENDIF.
-
-      PERFORM validate_project_b3 USING gv_pspnr_sel CHANGING gv_objnr_proj.
-      PERFORM load_b3_project_data USING gv_pspnr_sel.
-
-      "Set request type for this flow
-      gv_request_type = 'B3'.
-
-      SET SCREEN 0100.
-      LEAVE SCREEN.
-
-    WHEN 'BACK' OR 'CANC'.
-      SET SCREEN 0000.
-      LEAVE SCREEN.
-  ENDCASE.
-ENDMODULE.
-
-
-
-
-FORM get_changed_wbs_rows
-  USING    it_new TYPE STANDARD TABLE
-           it_old TYPE STANDARD TABLE
-  CHANGING ct_changed TYPE STANDARD TABLE.
-
-  FIELD-SYMBOLS: <n> TYPE ztb_a2r_wbsitem,
-                 <o> TYPE ztb_a2r_wbsitem.
-
-  CLEAR ct_changed.
-
-  LOOP AT it_new ASSIGNING <n>.
-    READ TABLE it_old ASSIGNING <o> WITH KEY posid = <n>-posid.
-    IF sy-subrc <> 0.
-      "New row (insert) => validate
-      APPEND <n> TO ct_changed.
-      CONTINUE.
-    ENDIF.
-
-    "Compare only relevant editable fields (B3 scope)
-    IF <n>-post1 <> <o>-post1
-    OR <n>-wert2 <> <o>-wert2
-    OR <n>-zbudget_check <> <o>-zbudget_check.
-      APPEND <n> TO ct_changed.
-    ENDIF.
-  ENDLOOP.
-
-ENDFORM.
-
-
-
-MODULE user_command_0100 INPUT.
-
-  DATA lv_ok TYPE sy-ucomm.
-  lv_ok = sy-ucomm.
-  CLEAR sy-ucomm.
-
-  CASE lv_ok.
-
-    WHEN 'SUBM'.
-
-      "Run B3 submit flow ONLY when request type is B3
-      IF gv_request_type = 'B3'.
-
-        ">>> your B3 submit logic here
-        "PERFORM get_changed_wbs_rows ...
-        "PERFORM validate_b3_only_changed ...
-        "PERFORM save_request_b3 ...
-        "PERFORM trigger_workflow_b3 ...
-        "MESSAGE ...
-
-      ELSE.
-        "Not B3 → do nothing here (or route to A1/B1/F1 submit if you have it)
-        MESSAGE e029(zcj00) WITH 'SUBMIT is only allowed for B3 in this screen flow'.
-        EXIT.
-      ENDIF.
-
-    WHEN OTHERS.
-      "existing logic
-  ENDCASE.
-
-ENDMODULE.
