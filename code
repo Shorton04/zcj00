@@ -1,4 +1,57 @@
-   DATA: lv_pspid          TYPE ps_pspid,
+
+
+user must input proj-pspnr in screen 600
+
+Once selection is filled and “Next” button is clicked, perform the following system validation before direct to screen 100: 
+
+Check the Project is active and not in CLSD (Closed) status or TECO. 
+
+Get PROJ OBJNR using selected project PROJ- PSPNR 
+
+Check JEST-STAT using OBJNR, JEST-STAT should not equal to I0046 (CLSD) or I0045 (TECO) 
+
+If STAT = I0046 display message “Project is already closed. Modification not allowed” 
+
+If successful, display the same screen as B1, with the following fields as editable: 
+
+ 
+
+Description (PSPNR) 
+
+Person Responsible (VERNR) 
+
+Finish Date (PLSEZ) 
+
+IM Program Position (POSNR) 
+
+IM Program (PRNAM) 
+
+Company Code (BUKRS) 
+
+Plant (WERKS) 
+
+Profit Center (PRCTR) 
+
+Investment Reason (IZWEK) 
+
+ 
+
+Include the same Actions buttons from Create/B1 – Modify functionality.  
+
+Perform the same validations as indicated in Table 4.1.6 – System Validations only for WBS being updated. No checks should be done for WBS with no updates 
+
+Similarly, ZTB_A2R_WBSHDR and ZTB_A2R_WBSITEM are also updated upon clicking Submit. 
+
+The same workflow approval process is triggered, following request type B3 in the approver matrix (ZTB_A2R_CONFTAB2) 
+
+Perform the same workflow logic including Option 1 – following the approval matrix and Option 2 – Manual option by MD team. 
+
+Once workflow is completed, update the WBS accordingly.  
+
+
+heres my code for project creation if you need referenece:
+
+DATA: lv_pspid          TYPE ps_pspid,
           ls_wbs            TYPE ztb_a2r_wbsitem,
           ls_wbs_temp       TYPE ztb_a2r_wbsitem,
           ls_wbs_created    TYPE ztb_a2r_wbsitem,
