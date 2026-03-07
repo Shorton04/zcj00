@@ -1,460 +1,139 @@
-FORM validate_request_data
-  USING    iv_on_submit TYPE abap_bool
-  CHANGING cv_valid     TYPE abap_bool.
-
-  DATA: lv_has_attachment TYPE abap_bool,
-        lv_im_budget      TYPE bp_wljhr,
-        lv_level1_budget  TYPE bp_wljhr,
-        lv_msg            TYPE string.
-
-  cv_valid = abap_true.
-
-  "---------------------------------------------------------------*
-  "* 1. Mandatory Header Fields
-  "---------------------------------------------------------------*
-  PERFORM validate_mandatory_header CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 2. Overall Project Structure Checks
-  "*    - hierarchy levels
-  "*    - duplicate WBS
-  "---------------------------------------------------------------*
-  PERFORM validate_wbs_structure CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 3. Cost Center Validation
-  "---------------------------------------------------------------*
-  PERFORM validate_cost_center
-    USING    gs_header-kostl
-             gs_header-vkokr
-             gs_header-plsez
-    CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 4. Profit Center Validation
-  "---------------------------------------------------------------*
-  PERFORM validate_profit_center
-    USING    gs_header-prctr
-             gs_header-vkokr
-             gs_header-plsez
-    CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 5. Cost Center <> Profit Center / Company Code Validation
-  "---------------------------------------------------------------*
-  PERFORM validate_cc_pc_assignment CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 6. WBS row-level validations
-  "---------------------------------------------------------------*
-  PERFORM validate_wbs_rows CHANGING cv_valid.
-  IF cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 7. Level 1 WBS Budget vs IM Budget
-  "---------------------------------------------------------------*
-  PERFORM get_im_available_budget CHANGING lv_im_budget.
-  PERFORM get_level1_total_budget CHANGING lv_level1_budget.
-
-  IF lv_level1_budget > lv_im_budget.
-    MESSAGE e398(00) WITH 'Amount is greater than the available IM budget.'.
-    cv_valid = abap_false.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 8. Attachment validation
-  "*    Required for submit except B2 based on FS
-  "---------------------------------------------------------------*
-  IF iv_on_submit = abap_true
-     AND gs_header-zreqtype <> 'B2'.
-
-    PERFORM check_attachment_exists CHANGING lv_has_attachment.
-    IF lv_has_attachment = abap_false.
-      MESSAGE e398(00) WITH 'Please attach supporting document.'.
-      cv_valid = abap_false.
-      EXIT.
-    ENDIF.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  "* 9. Approver matrix validation
-  "*    Required only on SUBMIT
-  "---------------------------------------------------------------*
-  IF iv_on_submit = abap_true.
-    PERFORM validate_approver_matrix CHANGING cv_valid.
-    IF cv_valid = abap_false.
-      EXIT.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-
-
-
-FORM validate_mandatory_header CHANGING cv_valid TYPE abap_bool.
-
-  cv_valid = abap_true.
-
-  IF gs_header-post1 IS INITIAL
-  OR gs_header-vernr IS INITIAL
-  OR gs_header-plsez IS INITIAL
-  OR gs_header-posnr IS INITIAL
-  OR gs_header-prnam IS INITIAL
-  OR gs_header-profl IS INITIAL
-  OR gs_header-pspid IS INITIAL
-  OR gs_header-kostl IS INITIAL.
-    MESSAGE e398(00) WITH 'Fill in all required entry fields'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-  " Profit center mandatory except Lumpsum logic if needed
-  IF gs_header-prctr IS INITIAL AND gs_header-izwek <> 'LS'.
-    MESSAGE e398(00) WITH 'Fill in all required entry fields'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-
-FORM validate_wbs_structure CHANGING cv_valid TYPE abap_bool.
-
-  DATA: lt_posid TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line,
-        ls_wbs   TYPE ty_wbs_display,
-        lv_prev  TYPE i.
-
-  cv_valid = abap_true.
-
-  CLEAR lv_prev.
-
-  LOOP AT gt_wbs_items INTO ls_wbs.
-
-    IF ls_wbs-posid IS INITIAL OR ls_wbs-post1 IS INITIAL OR ls_wbs-stufe IS INITIAL.
-      MESSAGE e398(00) WITH 'Fill in all required entry fields'.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Duplicate WBS check
-    READ TABLE lt_posid WITH TABLE KEY table_line = ls_wbs-posid TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      MESSAGE e398(00) WITH |Duplicate WBS element found: { ls_wbs-posid }|.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-    INSERT ls_wbs-posid INTO TABLE lt_posid.
-
-    " Hierarchy sanity check
-    IF lv_prev IS NOT INITIAL.
-      IF ls_wbs-stufe > lv_prev + 1.
-        MESSAGE e398(00) WITH |Invalid hierarchy level sequence at WBS { ls_wbs-posid }|.
-        cv_valid = abap_false.
-        RETURN.
-      ENDIF.
-    ENDIF.
-
-    lv_prev = ls_wbs-stufe.
-
-  ENDLOOP.
-
-ENDFORM.
-
-
-
-
-FORM validate_cost_center
-  USING    iv_kostl TYPE kostl
-           iv_kokrs TYPE kokrs
-           iv_plsez TYPE dats
-  CHANGING cv_valid TYPE abap_bool.
-
-  DATA: ls_csks TYPE csks.
-
-  cv_valid = abap_true.
-
-  SELECT SINGLE *
-    INTO ls_csks
-    FROM csks
-   WHERE kostl = iv_kostl
-     AND kokrs = iv_kokrs
-     AND datab <= iv_plsez
-     AND datbi >= iv_plsez.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(00) WITH |Cost center is not valid in { iv_plsez }.|.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-ENDFORM.
-
-
-
-FORM validate_profit_center
-  USING    iv_prctr TYPE prctr
-           iv_kokrs TYPE kokrs
-           iv_plsez TYPE dats
-  CHANGING cv_valid TYPE abap_bool.
-
-  DATA: ls_cepc TYPE cepc.
-
-  cv_valid = abap_true.
-
-  SELECT SINGLE *
-    INTO ls_cepc
-    FROM cepc
-   WHERE prctr = iv_prctr
-     AND kokrs = iv_kokrs
-     AND datab <= iv_plsez
-     AND datbi >= iv_plsez.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(00) WITH |Profit center is not valid in { iv_plsez }.|.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-ENDFORM.
-
-
-
-FORM validate_cc_pc_assignment CHANGING cv_valid TYPE abap_bool.
-
-  DATA: ls_csks TYPE csks,
-        ls_cepc TYPE cepc.
-
-  cv_valid = abap_true.
-
-  SELECT SINGLE *
-    INTO ls_csks
-    FROM csks
-   WHERE kostl = gs_header-kostl
-     AND kokrs = gs_header-vkokr
-     AND datab <= gs_header-plsez
-     AND datbi >= gs_header-plsez.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(00) WITH 'Cost center master data not found.'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-  SELECT SINGLE *
-    INTO ls_cepc
-    FROM cepc
-   WHERE prctr = gs_header-prctr
-     AND kokrs = gs_header-vkokr
-     AND datab <= gs_header-plsez
-     AND datbi >= gs_header-plsez.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(00) WITH 'Profit center master data not found.'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-  IF ls_csks-prctr IS NOT INITIAL AND ls_csks-prctr <> gs_header-prctr.
-    MESSAGE e398(00) WITH 'Cost center is not assigned to selected profit center.'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-  IF ls_cepc-bukrs IS NOT INITIAL AND ls_cepc-bukrs <> ls_csks-bukrs.
-    MESSAGE e398(00) WITH 'Cost center and profit center do not belong to same company code.'.
-    cv_valid = abap_false.
-    RETURN.
-  ENDIF.
-
-ENDFORM.
-
-
-
-FORM validate_wbs_rows CHANGING cv_valid TYPE abap_bool.
-
-  DATA: ls_wbs TYPE ty_wbs_display.
-
-  cv_valid = abap_true.
-
-  LOOP AT gt_wbs_items INTO ls_wbs.
-
-    " Basic mandatory row checks
-    IF ls_wbs-stufe IS INITIAL
-    OR ls_wbs-posid IS INITIAL
-    OR ls_wbs-post1 IS INITIAL.
-      MESSAGE e398(00) WITH 'Fill in all required entry fields'.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Cost center inherited from header should exist
-    IF ls_wbs-kostl IS INITIAL.
-      MESSAGE e398(00) WITH |Responsible Cost Center is required in WBS { ls_wbs-posid }|.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Lowest-level budget rule
-    " If row is non-summary and budget expected, keep your own detection logic here
-    " Example: entered budget required only when budget check is X or leaf-level
-    IF ls_wbs-stufe > 1
-       AND ls_wbs-zbudget_check = 'X'
-       AND ls_wbs-wert2 IS INITIAL.
-      MESSAGE e398(00) WITH |Approved Budget is required for WBS { ls_wbs-posid }|.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-    " FS Excel validation:
-    " Prereq: PROJ-PROFL = 'ZPC0001' AND PRPS-STUFE = '1'
-    " Check: PRPS-IMPRF <> ''
-    IF gs_header-profl = 'ZPC0001'
-       AND ls_wbs-stufe = 1
-       AND ls_wbs-imprf IS INITIAL.
-      MESSAGE e398(00) WITH |Investment Profile is required in Level 1 WBS { ls_wbs-posid }|.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-    " Based on your screenshot this appears repeated for cost center requirement
-    IF gs_header-profl = 'ZPC0001'
-       AND ls_wbs-stufe = 1
-       AND ls_wbs-kostl IS INITIAL.
-      MESSAGE e398(00) WITH |Responsible Cost Center is required in Level 1 WBS { ls_wbs-posid }|.
-      cv_valid = abap_false.
-      RETURN.
-    ENDIF.
-
-  ENDLOOP.
-
-ENDFORM.
-
-
-FORM get_level1_total_budget CHANGING cv_level1_budget TYPE bp_wljhr.
-
-  DATA: ls_wbs TYPE ty_wbs_display.
-
-  CLEAR cv_level1_budget.
-
-  LOOP AT gt_wbs_items INTO ls_wbs WHERE stufe = 1.
-    cv_level1_budget = cv_level1_budget + ls_wbs-wert2.
-  ENDLOOP.
-
-ENDFORM.
-
-
-
-FORM get_im_available_budget CHANGING cv_im_budget TYPE bp_wljhr.
-
-  DATA: lv_objnr TYPE j_objnr,
-        lv_wlges TYPE bp_wljhr,
-        lv_wtgev TYPE bp_wljhr.
-
-  CLEAR: cv_im_budget, lv_objnr, lv_wlges, lv_wtgev.
-
-  SELECT SINGLE objnr
-    INTO lv_objnr
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_SCREEN1
+*&---------------------------------------------------------------------*
+FORM validate_screen1.
+
+  DATA: lv_error TYPE abap_bool,
+        lv_kokrs TYPE kokrs.
+
+  SELECT SINGLE kokrs
+    INTO @lv_kokrs
     FROM impr
-   WHERE posnr = gs_header-posnr.
+    WHERE posnr = @p_posnr.
 
-  IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-    CLEAR cv_im_budget.
-    RETURN.
+  " Cost Center validation
+  PERFORM validate_cost_center USING lv_kokrs p_kostl p_plsez
+  CHANGING lv_error.
+
+  " Profit Center validation
+  PERFORM validate_profit_center USING lv_kokrs p_prctr p_plsez
+  CHANGING lv_error.
+
+  " CC to PC assignment
+  PERFORM validate_cc_pc_assignment USING lv_kokrs p_kostl p_prctr
+  CHANGING lv_error.
+
+  " FR Unit validation
+  PERFORM validate_fr_unit USING p_posnr p_prctr
+  CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004. " Validation errors found
   ENDIF.
 
-  SELECT SINGLE wlges wtgev
-    INTO (lv_wlges, lv_wtgev)
-    FROM bpge
-   WHERE objnr = lv_objnr.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_COST_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_cost_center USING iv_kokrs TYPE kokrs
+                                iv_kostl TYPE kostl
+                                iv_plsez TYPE ps_plsez_chg
+                          CHANGING cv_error TYPE abap_bool.
+
+  " Check cost center validity against Finish Date
+  SELECT SINGLE @abap_true
+    FROM csks
+    WHERE kostl = @iv_kostl
+      AND kokrs = @iv_kokrs
+      AND datab <= @iv_plsez
+      AND datbi >= @iv_plsez
+   INTO @DATA(lv_found) .
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH iv_kostl iv_plsez.
+    cv_error = gc_x.
+  ENDIF.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_PROFIT_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_profit_center USING iv_kokrs TYPE kokrs
+                                  iv_prctr TYPE prctr
+                                  iv_plsez TYPE ps_plsez_chg
+                         CHANGING cv_error TYPE abap_bool.
+
+  " Check profit center validity against Finish Date
+  SELECT SINGLE @abap_true FROM cepc
+    INTO @DATA(lv_found)
+  WHERE prctr = @iv_prctr
+    AND kokrs = @iv_kokrs
+    AND datbi >= @iv_plsez.
 
   IF sy-subrc = 0.
-    cv_im_budget = lv_wlges - lv_wtgev.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH iv_prctr iv_plsez.
+    cv_error = gc_x.
   ENDIF.
-
 ENDFORM.
 
 
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_CC_PC_ASSIGNMENT
+*&---------------------------------------------------------------------*
+FORM validate_cc_pc_assignment USING iv_kokrs TYPE kokrs
+                                     iv_kostl TYPE kostl
+                                     iv_prctr TYPE prctr
+                            CHANGING cv_error TYPE abap_bool.
 
-FORM validate_approver_matrix CHANGING cv_valid TYPE abap_bool.
+  SELECT kokrs, kostl, datbi, datab, bukrs, prctr
+    FROM csks
+    INTO @DATA(ls_csks)
+     WHERE kokrs = @iv_kokrs
+     AND   kostl = @iv_kostl
+     AND   prctr = @iv_prctr
+     AND datab <= @sy-datum
+     AND datbi >= @sy-datum
+    ORDER BY datab.
+  ENDSELECT.
 
-  DATA: ls_conf2 TYPE ztb_a2r_conftab2.
 
-  cv_valid = abap_true.
-
-  SELECT SINGLE *
-    INTO ls_conf2
-    FROM ztb_a2r_conftab2
-   WHERE bukrs     = gs_header-bukrs
-     AND profl     = gs_header-profl
-     AND z_reqtype = gs_header-zreqtype.
-
-  IF sy-subrc <> 0.
-    MESSAGE e398(00) WITH
-      'The combination of Company Code, Project Profile, and Request Type does not exist. Approvers cannot be determined.'.
-    cv_valid = abap_false.
+  IF ls_csks-prctr <> iv_prctr.
+    MESSAGE e000(zmsg_a2r) WITH iv_kostl.
+    cv_error = gc_x.
     RETURN.
   ENDIF.
 
+  SELECT prctr, datbi, kokrs, bukrs
+    FROM cepc
+    INTO @DATA(ls_cepc)
+    WHERE prctr = @iv_prctr
+    AND kokrs = @iv_kokrs
+    ORDER BY datbi.
+  ENDSELECT.
+
+  IF ls_cepc-bukrs IS NOT INITIAL AND
+      ls_cepc-bukrs NE ls_csks-bukrs.
+    MESSAGE e010.
+    cv_error = gc_x.
+  ENDIF.
+
 ENDFORM.
 
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_FR_UNIT
+*&---------------------------------------------------------------------*
+FORM validate_fr_unit USING iv_posnr TYPE im_posnr
+                            iv_prctr TYPE prctr
+                      CHANGING cv_error TYPE abap_bool.
 
-
-FORM user_command_0100.
-
-  DATA lv_valid TYPE abap_bool.
-
-  CASE sy-ucomm.
-
-    WHEN 'CHECK'.
-      PERFORM sync_screen_to_header.
-      PERFORM validate_request_data
-        USING    abap_false
-        CHANGING lv_valid.
-
-      IF lv_valid = abap_true.
-        MESSAGE s398(00) WITH 'Validation successful.'.
-      ENDIF.
-
-    WHEN 'SUBMIT'.
-      PERFORM sync_screen_to_header.
-      PERFORM validate_request_data
-        USING    abap_true
-        CHANGING lv_valid.
-
-      CHECK lv_valid = abap_true.
-
-      " Continue your submit logic here
-      PERFORM submit_direct_creation.
-
-    WHEN 'SAVE'.
-      " No validation based on FS
-      PERFORM save_as_draft.
-
-  ENDCASE.
+  " Placeholder for FR Unit validation
+  " Implement based on actual custom tables
+  " Reference: Table ZTXCA_ORG01
 
 ENDFORM.
