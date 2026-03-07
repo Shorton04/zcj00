@@ -1,295 +1,4 @@
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_SCREEN2
-*&---------------------------------------------------------------------*
-FORM validate_screen2 USING iv_on_submit TYPE abap_bool.
-
-  DATA: lv_error          TYPE abap_bool,
-        lv_kokrs          TYPE kokrs,
-        lv_im_budget      TYPE bpge-wlges,
-        lv_level1_budget  TYPE bpge-wlges,
-        lv_has_attachment TYPE abap_bool.
-
-  CLEAR: lv_error, lv_kokrs, lv_im_budget, lv_level1_budget, lv_has_attachment.
-
-  "---------------------------------------------------------------*
-  " 1. Get KOKRS from IM Position
-  "---------------------------------------------------------------*
-  SELECT SINGLE kokrs
-    INTO @lv_kokrs
-    FROM impr
-   WHERE posnr = @gs_header-posnr.
-
-  IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH gs_header-posnr.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 2. Mandatory header fields
-  "---------------------------------------------------------------*
-  PERFORM validate_screen2_header
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 3. Reuse existing validations
-  "---------------------------------------------------------------*
-  PERFORM validate_cost_center
-    USING    lv_kokrs
-             gs_header-kostl
-             gs_header-plsez
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  PERFORM validate_profit_center
-    USING    lv_kokrs
-             gs_header-prctr
-             gs_header-plsez
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  PERFORM validate_cc_pc_assignment
-    USING    lv_kokrs
-             gs_header-kostl
-             gs_header-prctr
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  PERFORM validate_fr_unit
-    USING    gs_header-posnr
-             gs_header-prctr
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 4. WBS table validations
-  "---------------------------------------------------------------*
-  PERFORM validate_screen2_wbs_table
-    CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    MESSAGE e004.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 5. Level 1 budget vs IM available budget
-  "---------------------------------------------------------------*
-  PERFORM get_im_available_budget
-    CHANGING lv_im_budget.
-
-  PERFORM get_level1_total_budget
-    CHANGING lv_level1_budget.
-
-  IF lv_level1_budget > lv_im_budget.
-    MESSAGE e000(zmsg_a2r) WITH 'Amount is greater than the available IM budget.'.
-    EXIT.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 6. Attachment validation - submit only
-  "---------------------------------------------------------------*
-  IF iv_on_submit = abap_true
-     AND gs_header-z_reqtype <> 'B2'.
-
-    PERFORM check_attachment_exists
-      CHANGING lv_has_attachment.
-
-    IF lv_has_attachment IS INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH 'Please attach supporting document.'.
-      EXIT.
-    ENDIF.
-  ENDIF.
-
-  "---------------------------------------------------------------*
-  " 7. Approver matrix validation - submit only
-  "---------------------------------------------------------------*
-  IF iv_on_submit = abap_true.
-
-    PERFORM validate_approver_matrix
-      CHANGING lv_error.
-
-    IF lv_error = abap_true.
-      MESSAGE e004.
-      EXIT.
-    ENDIF.
-
-  ENDIF.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_SCREEN2_HEADER
-*&---------------------------------------------------------------------*
-FORM validate_screen2_header
-  CHANGING cv_error TYPE abap_bool.
-
-  CLEAR cv_error.
-
-  IF gs_header-post1 IS INITIAL
-  OR gs_header-bukrs IS INITIAL
-  OR gs_header-vernr IS INITIAL
-  OR gs_header-plsez IS INITIAL
-  OR gs_header-werks IS INITIAL
-  OR gs_header-prctr IS INITIAL
-  OR gs_header-prnam IS INITIAL
-  OR gs_header-kostl IS INITIAL
-  OR gs_header-izwek IS INITIAL
-  OR gs_header-posnr IS INITIAL.
-
-    MESSAGE e000(zmsg_a2r) WITH 'Fill in all required entry fields'.
-    cv_error = abap_true.
-    RETURN.
-  ENDIF.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_SCREEN2_WBS_TABLE
-*&---------------------------------------------------------------------*
-FORM validate_screen2_wbs_table
-  CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_wbs TYPE ty_wbs_display.
-
-  CLEAR cv_error.
-
-  IF gt_wbs_display IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Please enter at least one WBS row'.
-    cv_error = abap_true.
-    RETURN.
-  ENDIF.
-
-  " Duplicate / mandatory / level validations
-  PERFORM validate_wbs_duplicates
-    CHANGING cv_error.
-  IF cv_error = abap_true.
-    RETURN.
-  ENDIF.
-
-  LOOP AT gt_wbs_display INTO ls_wbs.
-
-    " Mandatory fields in table
-    IF ls_wbs-stufe IS INITIAL
-    OR ls_wbs-posid IS INITIAL
-    OR ls_wbs-post1 IS INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH 'Fill in all required WBS entry fields'.
-      cv_error = abap_true.
-      RETURN.
-    ENDIF.
-
-    " Level 1 validations based on FS
-    IF ls_wbs-stufe = 1.
-
-      " Investment Profile required in Level 1 WBS
-      IF ls_wbs-imprf IS INITIAL.
-        MESSAGE e000(zmsg_a2r)
-          WITH 'Investment Profile is required in Level 1 WBS' ls_wbs-posid.
-        cv_error = abap_true.
-        RETURN.
-      ENDIF.
-
-      " Responsible Cost Center required in Level 1 WBS
-      IF ls_wbs-kostl IS INITIAL.
-        MESSAGE e000(zmsg_a2r)
-          WITH 'Responsible Cost Center is required in Level 1 WBS' ls_wbs-posid.
-        cv_error = abap_true.
-        RETURN.
-      ENDIF.
-
-    ENDIF.
-
-  ENDLOOP.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_WBS_DUPLICATES
-*&---------------------------------------------------------------------*
-FORM validate_wbs_duplicates
-  CHANGING cv_error TYPE abap_bool.
-
-  DATA: ls_wbs   TYPE ty_wbs_display,
-        lt_posid TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line.
-
-  CLEAR cv_error.
-
-  LOOP AT gt_wbs_display INTO ls_wbs.
-
-    READ TABLE lt_posid
-      WITH TABLE KEY table_line = ls_wbs-posid
-      TRANSPORTING NO FIELDS.
-
-    IF sy-subrc = 0.
-      MESSAGE e000(zmsg_a2r)
-        WITH 'Duplicate WBS element found' ls_wbs-posid.
-      cv_error = abap_true.
-      RETURN.
-    ENDIF.
-
-    INSERT ls_wbs-posid INTO TABLE lt_posid.
-
-  ENDLOOP.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form GET_LEVEL1_TOTAL_BUDGET
-*&---------------------------------------------------------------------*
-FORM get_level1_total_budget
-  CHANGING cv_level1_budget TYPE bpge-wlges.
-
-  DATA: ls_wbs TYPE ty_wbs_display.
-
-  CLEAR cv_level1_budget.
-
-  LOOP AT gt_wbs_display INTO ls_wbs.
-    IF ls_wbs-stufe = 1.
-      cv_level1_budget = cv_level1_budget + ls_wbs-zapproved_budg.
-    ENDIF.
-  ENDLOOP.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form CHECK_ATTACHMENT_EXISTS
-*&---------------------------------------------------------------------*
-FORM check_attachment_exists
-  CHANGING cv_exists TYPE abap_bool.
-
-  " Placeholder only
-  " Replace with actual attachment check logic
-  cv_exists = abap_true.
-
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
 *& Form VALIDATE_APPROVER_MATRIX
 *&---------------------------------------------------------------------*
 FORM validate_approver_matrix
@@ -311,6 +20,40 @@ FORM validate_approver_matrix
       WITH 'The combination of Company Code, Project Profile, and Request Type does not exist.'.
     cv_error = abap_true.
     RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+*&---------------------------------------------------------------------*
+*& Form GET_IM_AVAILABLE_BUDGET
+*&---------------------------------------------------------------------*
+FORM get_im_available_budget
+  CHANGING cv_im_budget TYPE bpge-wlges.
+
+  DATA: lv_objnr TYPE j_objnr,
+        lv_wlges TYPE bpge-wlges,
+        lv_wtgev TYPE bpge-wtgev.
+
+  CLEAR: cv_im_budget, lv_objnr, lv_wlges, lv_wtgev.
+
+  SELECT SINGLE objnr
+    INTO @lv_objnr
+    FROM impr
+   WHERE posnr = @gs_header-posnr.
+
+  IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE wlges wtgev
+    INTO (@lv_wlges, @lv_wtgev)
+    FROM bpge
+   WHERE objnr = @lv_objnr.
+
+  IF sy-subrc = 0.
+    cv_im_budget = lv_wlges - lv_wtgev.
   ENDIF.
 
 ENDFORM.
