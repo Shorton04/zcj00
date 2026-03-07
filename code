@@ -1,206 +1,460 @@
-FORM total_up_wbs_tc.
-  DATA: lt_table5     TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table4     TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table3     TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table2     TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table1     TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum4       TYPE ty_wbs_display-zapproved_budg,
-        lv_sum3       TYPE ty_wbs_display-zapproved_budg,
-        lv_sum2       TYPE ty_wbs_display-zapproved_budg,
-        lv_sum1       TYPE ty_wbs_display-zapproved_budg,
-        lv_index4     TYPE sy-index,
-        lv_index3     TYPE sy-index,
-        lv_index2     TYPE sy-index.
+FORM validate_request_data
+  USING    iv_on_submit TYPE abap_bool
+  CHANGING cv_valid     TYPE abap_bool.
 
-  DATA: lv_pspid_len4 TYPE numc2.
-  DATA: lv_pspid_len3 TYPE numc2.
-  DATA: lv_pspid_len2 TYPE numc2.
-  DATA: lv_pspid_len1 TYPE numc2.
+  DATA: lv_has_attachment TYPE abap_bool,
+        lv_im_budget      TYPE bp_wljhr,
+        lv_level1_budget  TYPE bp_wljhr,
+        lv_msg            TYPE string.
 
-  DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
+  cv_valid = abap_true.
 
-  "Auto-populate blank budget = 0 (so totals still update)
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
-    IF <wa0>-zapproved_budg IS INITIAL.
-      <wa0>-zapproved_budg = 0.
+  "---------------------------------------------------------------*
+  "* 1. Mandatory Header Fields
+  "---------------------------------------------------------------*
+  PERFORM validate_mandatory_header CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 2. Overall Project Structure Checks
+  "*    - hierarchy levels
+  "*    - duplicate WBS
+  "---------------------------------------------------------------*
+  PERFORM validate_wbs_structure CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 3. Cost Center Validation
+  "---------------------------------------------------------------*
+  PERFORM validate_cost_center
+    USING    gs_header-kostl
+             gs_header-vkokr
+             gs_header-plsez
+    CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 4. Profit Center Validation
+  "---------------------------------------------------------------*
+  PERFORM validate_profit_center
+    USING    gs_header-prctr
+             gs_header-vkokr
+             gs_header-plsez
+    CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 5. Cost Center <> Profit Center / Company Code Validation
+  "---------------------------------------------------------------*
+  PERFORM validate_cc_pc_assignment CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 6. WBS row-level validations
+  "---------------------------------------------------------------*
+  PERFORM validate_wbs_rows CHANGING cv_valid.
+  IF cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 7. Level 1 WBS Budget vs IM Budget
+  "---------------------------------------------------------------*
+  PERFORM get_im_available_budget CHANGING lv_im_budget.
+  PERFORM get_level1_total_budget CHANGING lv_level1_budget.
+
+  IF lv_level1_budget > lv_im_budget.
+    MESSAGE e398(00) WITH 'Amount is greater than the available IM budget.'.
+    cv_valid = abap_false.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 8. Attachment validation
+  "*    Required for submit except B2 based on FS
+  "---------------------------------------------------------------*
+  IF iv_on_submit = abap_true
+     AND gs_header-zreqtype <> 'B2'.
+
+    PERFORM check_attachment_exists CHANGING lv_has_attachment.
+    IF lv_has_attachment = abap_false.
+      MESSAGE e398(00) WITH 'Please attach supporting document.'.
+      cv_valid = abap_false.
+      EXIT.
     ENDIF.
-  ENDLOOP.
+  ENDIF.
 
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
-    IF <wa>-stufe = '5'.
-      APPEND <wa> TO lt_table5.
-
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO lt_table4.
-      DATA(lv_pspid_new4) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new4.
-      lv_pspid_len4 = strlen( lv_pspid_new4 ).
-
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO lt_table3.
-      DATA(lv_pspid_new3) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new3.
-      lv_pspid_len3 = strlen( lv_pspid_new3 ).
-
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO lt_table2.
-      DATA(lv_pspid_new2) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new2.
-      lv_pspid_len2 = strlen( lv_pspid_new2 ).
-
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO lt_table1.
-      DATA(lv_pspid_new1) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new1.
-      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+  "---------------------------------------------------------------*
+  "* 9. Approver matrix validation
+  "*    Required only on SUBMIT
+  "---------------------------------------------------------------*
+  IF iv_on_submit = abap_true.
+    PERFORM validate_approver_matrix CHANGING cv_valid.
+    IF cv_valid = abap_false.
+      EXIT.
     ENDIF.
-  ENDLOOP.
+  ENDIF.
 
-* Build the Total for Level4.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
-    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
-        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
+ENDFORM.
+
+
+
+
+
+
+
+FORM validate_mandatory_header CHANGING cv_valid TYPE abap_bool.
+
+  cv_valid = abap_true.
+
+  IF gs_header-post1 IS INITIAL
+  OR gs_header-vernr IS INITIAL
+  OR gs_header-plsez IS INITIAL
+  OR gs_header-posnr IS INITIAL
+  OR gs_header-prnam IS INITIAL
+  OR gs_header-profl IS INITIAL
+  OR gs_header-pspid IS INITIAL
+  OR gs_header-kostl IS INITIAL.
+    MESSAGE e398(00) WITH 'Fill in all required entry fields'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+  " Profit center mandatory except Lumpsum logic if needed
+  IF gs_header-prctr IS INITIAL AND gs_header-izwek <> 'LS'.
+    MESSAGE e398(00) WITH 'Fill in all required entry fields'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+
+FORM validate_wbs_structure CHANGING cv_valid TYPE abap_bool.
+
+  DATA: lt_posid TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line,
+        ls_wbs   TYPE ty_wbs_display,
+        lv_prev  TYPE i.
+
+  cv_valid = abap_true.
+
+  CLEAR lv_prev.
+
+  LOOP AT gt_wbs_items INTO ls_wbs.
+
+    IF ls_wbs-posid IS INITIAL OR ls_wbs-post1 IS INITIAL OR ls_wbs-stufe IS INITIAL.
+      MESSAGE e398(00) WITH 'Fill in all required entry fields'.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Duplicate WBS check
+    READ TABLE lt_posid WITH TABLE KEY table_line = ls_wbs-posid TRANSPORTING NO FIELDS.
+    IF sy-subrc = 0.
+      MESSAGE e398(00) WITH |Duplicate WBS element found: { ls_wbs-posid }|.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+    INSERT ls_wbs-posid INTO TABLE lt_posid.
+
+    " Hierarchy sanity check
+    IF lv_prev IS NOT INITIAL.
+      IF ls_wbs-stufe > lv_prev + 1.
+        MESSAGE e398(00) WITH |Invalid hierarchy level sequence at WBS { ls_wbs-posid }|.
+        cv_valid = abap_false.
+        RETURN.
       ENDIF.
-    ENDLOOP.
-    IF lv_sum4 IS NOT INITIAL.
-      <wa4>-zapproved_budg = lv_sum4.
     ENDIF.
-    lv_index4 = lv_index4 + 1.
-    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
-    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
+
+    lv_prev = ls_wbs-stufe.
+
   ENDLOOP.
 
-* Build the Total for Level3.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
-    LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
-        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
+ENDFORM.
+
+
+
+
+FORM validate_cost_center
+  USING    iv_kostl TYPE kostl
+           iv_kokrs TYPE kokrs
+           iv_plsez TYPE dats
+  CHANGING cv_valid TYPE abap_bool.
+
+  DATA: ls_csks TYPE csks.
+
+  cv_valid = abap_true.
+
+  SELECT SINGLE *
+    INTO ls_csks
+    FROM csks
+   WHERE kostl = iv_kostl
+     AND kokrs = iv_kokrs
+     AND datab <= iv_plsez
+     AND datbi >= iv_plsez.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(00) WITH |Cost center is not valid in { iv_plsez }.|.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM validate_profit_center
+  USING    iv_prctr TYPE prctr
+           iv_kokrs TYPE kokrs
+           iv_plsez TYPE dats
+  CHANGING cv_valid TYPE abap_bool.
+
+  DATA: ls_cepc TYPE cepc.
+
+  cv_valid = abap_true.
+
+  SELECT SINGLE *
+    INTO ls_cepc
+    FROM cepc
+   WHERE prctr = iv_prctr
+     AND kokrs = iv_kokrs
+     AND datab <= iv_plsez
+     AND datbi >= iv_plsez.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(00) WITH |Profit center is not valid in { iv_plsez }.|.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM validate_cc_pc_assignment CHANGING cv_valid TYPE abap_bool.
+
+  DATA: ls_csks TYPE csks,
+        ls_cepc TYPE cepc.
+
+  cv_valid = abap_true.
+
+  SELECT SINGLE *
+    INTO ls_csks
+    FROM csks
+   WHERE kostl = gs_header-kostl
+     AND kokrs = gs_header-vkokr
+     AND datab <= gs_header-plsez
+     AND datbi >= gs_header-plsez.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(00) WITH 'Cost center master data not found.'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE *
+    INTO ls_cepc
+    FROM cepc
+   WHERE prctr = gs_header-prctr
+     AND kokrs = gs_header-vkokr
+     AND datab <= gs_header-plsez
+     AND datbi >= gs_header-plsez.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(00) WITH 'Profit center master data not found.'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+  IF ls_csks-prctr IS NOT INITIAL AND ls_csks-prctr <> gs_header-prctr.
+    MESSAGE e398(00) WITH 'Cost center is not assigned to selected profit center.'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+  IF ls_cepc-bukrs IS NOT INITIAL AND ls_cepc-bukrs <> ls_csks-bukrs.
+    MESSAGE e398(00) WITH 'Cost center and profit center do not belong to same company code.'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM validate_wbs_rows CHANGING cv_valid TYPE abap_bool.
+
+  DATA: ls_wbs TYPE ty_wbs_display.
+
+  cv_valid = abap_true.
+
+  LOOP AT gt_wbs_items INTO ls_wbs.
+
+    " Basic mandatory row checks
+    IF ls_wbs-stufe IS INITIAL
+    OR ls_wbs-posid IS INITIAL
+    OR ls_wbs-post1 IS INITIAL.
+      MESSAGE e398(00) WITH 'Fill in all required entry fields'.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Cost center inherited from header should exist
+    IF ls_wbs-kostl IS INITIAL.
+      MESSAGE e398(00) WITH |Responsible Cost Center is required in WBS { ls_wbs-posid }|.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Lowest-level budget rule
+    " If row is non-summary and budget expected, keep your own detection logic here
+    " Example: entered budget required only when budget check is X or leaf-level
+    IF ls_wbs-stufe > 1
+       AND ls_wbs-zbudget_check = 'X'
+       AND ls_wbs-wert2 IS INITIAL.
+      MESSAGE e398(00) WITH |Approved Budget is required for WBS { ls_wbs-posid }|.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+    " FS Excel validation:
+    " Prereq: PROJ-PROFL = 'ZPC0001' AND PRPS-STUFE = '1'
+    " Check: PRPS-IMPRF <> ''
+    IF gs_header-profl = 'ZPC0001'
+       AND ls_wbs-stufe = 1
+       AND ls_wbs-imprf IS INITIAL.
+      MESSAGE e398(00) WITH |Investment Profile is required in Level 1 WBS { ls_wbs-posid }|.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Based on your screenshot this appears repeated for cost center requirement
+    IF gs_header-profl = 'ZPC0001'
+       AND ls_wbs-stufe = 1
+       AND ls_wbs-kostl IS INITIAL.
+      MESSAGE e398(00) WITH |Responsible Cost Center is required in Level 1 WBS { ls_wbs-posid }|.
+      cv_valid = abap_false.
+      RETURN.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+
+FORM get_level1_total_budget CHANGING cv_level1_budget TYPE bp_wljhr.
+
+  DATA: ls_wbs TYPE ty_wbs_display.
+
+  CLEAR cv_level1_budget.
+
+  LOOP AT gt_wbs_items INTO ls_wbs WHERE stufe = 1.
+    cv_level1_budget = cv_level1_budget + ls_wbs-wert2.
+  ENDLOOP.
+
+ENDFORM.
+
+
+
+FORM get_im_available_budget CHANGING cv_im_budget TYPE bp_wljhr.
+
+  DATA: lv_objnr TYPE j_objnr,
+        lv_wlges TYPE bp_wljhr,
+        lv_wtgev TYPE bp_wljhr.
+
+  CLEAR: cv_im_budget, lv_objnr, lv_wlges, lv_wtgev.
+
+  SELECT SINGLE objnr
+    INTO lv_objnr
+    FROM impr
+   WHERE posnr = gs_header-posnr.
+
+  IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+    CLEAR cv_im_budget.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE wlges wtgev
+    INTO (lv_wlges, lv_wtgev)
+    FROM bpge
+   WHERE objnr = lv_objnr.
+
+  IF sy-subrc = 0.
+    cv_im_budget = lv_wlges - lv_wtgev.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM validate_approver_matrix CHANGING cv_valid TYPE abap_bool.
+
+  DATA: ls_conf2 TYPE ztb_a2r_conftab2.
+
+  cv_valid = abap_true.
+
+  SELECT SINGLE *
+    INTO ls_conf2
+    FROM ztb_a2r_conftab2
+   WHERE bukrs     = gs_header-bukrs
+     AND profl     = gs_header-profl
+     AND z_reqtype = gs_header-zreqtype.
+
+  IF sy-subrc <> 0.
+    MESSAGE e398(00) WITH
+      'The combination of Company Code, Project Profile, and Request Type does not exist. Approvers cannot be determined.'.
+    cv_valid = abap_false.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM user_command_0100.
+
+  DATA lv_valid TYPE abap_bool.
+
+  CASE sy-ucomm.
+
+    WHEN 'CHECK'.
+      PERFORM sync_screen_to_header.
+      PERFORM validate_request_data
+        USING    abap_false
+        CHANGING lv_valid.
+
+      IF lv_valid = abap_true.
+        MESSAGE s398(00) WITH 'Validation successful.'.
       ENDIF.
-    ENDLOOP.
-    IF lv_sum3 IS NOT INITIAL.
-      <wa3>-zapproved_budg = lv_sum3.
-    ENDIF.
-    lv_index3 = lv_index3 + 1.
-    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
-    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
-  ENDLOOP.
 
-* Build the Total for Level2.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
-    LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
-        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
+    WHEN 'SUBMIT'.
+      PERFORM sync_screen_to_header.
+      PERFORM validate_request_data
+        USING    abap_true
+        CHANGING lv_valid.
 
-    IF lv_sum2 IS NOT INITIAL.
-      <wa2>-zapproved_budg = lv_sum2.
-    ENDIF.
-    lv_index2 = lv_index2 + 1.
-    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
-    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
-  ENDLOOP.
+      CHECK lv_valid = abap_true.
 
-* Build the Total for Level1.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
-    LOOP AT lt_table2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
-        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum1 IS NOT INITIAL.
-      <wa1>-zapproved_budg = lv_sum1.
-    ENDIF.
-    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
-    CLEAR: lv_sum1.
-  ENDLOOP.
+      " Continue your submit logic here
+      PERFORM submit_direct_creation.
 
-*---------------------------------------------------------------------*
-* Separate logic for zbudget_check
-*---------------------------------------------------------------------*
+    WHEN 'SAVE'.
+      " No validation based on FS
+      PERFORM save_as_draft.
 
-* Level 4 gets X if any Level 5 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa5> WHERE stufe = '5'.
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4)
-         AND <wa5>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa4>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
-
-* Level 3 gets X if any Level 4 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3)
-         AND <wa4>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa3>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
-
-* Level 2 gets X if any Level 3 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2)
-         AND <wa3>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa2>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
-
-* Level 1 gets X if any Level 2 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1)
-         AND <wa2>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa1>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
+  ENDCASE.
 
 ENDFORM.
