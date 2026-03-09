@@ -4,13 +4,13 @@
 FORM validate_total_up_done
   CHANGING cv_error TYPE abap_bool.
 
-  DATA: ls_parent    TYPE ty_wbs_display,
-        ls_child     TYPE ty_wbs_display,
-        lv_tabix     TYPE sy-tabix,
-        lv_nextix    TYPE sy-tabix,
-        lv_lines     TYPE i,
-        lv_sum       TYPE ty_wbs_display-zapproved_budg,
-        lv_has_child TYPE abap_bool,
+  DATA: ls_parent     TYPE ty_wbs_display,
+        ls_child      TYPE ty_wbs_display,
+        lv_tabix      TYPE sy-tabix,
+        lv_nextix     TYPE sy-tabix,
+        lv_lines      TYPE i,
+        lv_sum        TYPE ty_wbs_display-zapproved_budg,
+        lv_has_child  TYPE abap_bool,
         lv_next_stufe TYPE ps_stufe.
 
   CLEAR cv_error.
@@ -20,7 +20,11 @@ FORM validate_total_up_done
     RETURN.
   ENDIF.
 
+*---------------------------------------------------------------------*
+* Dynamic hierarchy validation
+*---------------------------------------------------------------------*
   LOOP AT gt_wbs_display INTO ls_parent.
+
     lv_tabix = sy-tabix.
     CLEAR: lv_sum, lv_has_child.
 
@@ -33,13 +37,14 @@ FORM validate_total_up_done
         EXIT.
       ENDIF.
 
-      " stop when next sibling / upper parent starts
+      " stop when next sibling or higher parent starts
       IF ls_child-stufe <= ls_parent-stufe.
         EXIT.
       ENDIF.
 
-      " only direct children are included in sum
+      " only direct children
       lv_next_stufe = ls_parent-stufe + 1.
+
       IF ls_child-stufe = lv_next_stufe.
         lv_sum = lv_sum + ls_child-zapproved_budg.
         lv_has_child = abap_true.
@@ -49,12 +54,22 @@ FORM validate_total_up_done
 
     ENDWHILE.
 
-    " validate only if this row has direct children
-    IF lv_has_child = abap_true
-       AND ls_parent-zapproved_budg <> lv_sum.
-      MESSAGE e000(zmsg_a2r) WITH 'Please trigger Total Up first.'.
-      cv_error = abap_true.
-      RETURN.
+*---------------------------------------------------------------------*
+* Validation
+*---------------------------------------------------------------------*
+    IF lv_has_child = abap_true.
+
+      " Only error if children exceed parent
+      IF ls_parent-zapproved_budg < lv_sum.
+
+        MESSAGE e000(zmsg_a2r)
+        WITH 'Children budget exceeds parent. Please trigger Total Up.'.
+
+        cv_error = abap_true.
+        RETURN.
+
+      ENDIF.
+
     ENDIF.
 
   ENDLOOP.
