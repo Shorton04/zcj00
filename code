@@ -4,45 +4,52 @@
 FORM validate_total_up_done
   CHANGING cv_error TYPE abap_bool.
 
-  DATA: lt_work   TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
-        lv_index4 TYPE sy-tabix,
-        lv_index3 TYPE sy-tabix,
-        lv_index2 TYPE sy-tabix,
-        lv_index1 TYPE sy-tabix.
+  DATA: lt_work    TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_actual  TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table5  TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table4  TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table3  TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table2  TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table1  TYPE STANDARD TABLE OF ty_wbs_display,
+        lv_sum4    TYPE ty_wbs_display-zapproved_budg,
+        lv_sum3    TYPE ty_wbs_display-zapproved_budg,
+        lv_sum2    TYPE ty_wbs_display-zapproved_budg,
+        lv_sum1    TYPE ty_wbs_display-zapproved_budg,
+        lv_index4  TYPE sy-tabix,
+        lv_index3  TYPE sy-tabix,
+        lv_index2  TYPE sy-tabix,
+        lv_index1  TYPE sy-tabix,
+        lv_len4    TYPE i,
+        lv_len3    TYPE i,
+        lv_len2    TYPE i,
+        lv_len1    TYPE i.
 
-  DATA: lv_pspid_len4 TYPE numc2,
-        lv_pspid_len3 TYPE numc2,
-        lv_pspid_len2 TYPE numc2,
-        lv_pspid_len1 TYPE numc2.
+  DATA: ls_actual    TYPE ty_wbs_display,
+        ls_expected  TYPE ty_wbs_display,
+        lv_parent4   TYPE ps_posid,
+        lv_parent3   TYPE ps_posid,
+        lv_parent2   TYPE ps_posid,
+        lv_parent1   TYPE ps_posid.
 
-  DATA: ls_actual   TYPE ty_wbs_display,
-        ls_expected TYPE ty_wbs_display.
+  FIELD-SYMBOLS: <wa>   TYPE ty_wbs_display,
+                 <wa1>  TYPE ty_wbs_display,
+                 <wa2>  TYPE ty_wbs_display,
+                 <wa3>  TYPE ty_wbs_display,
+                 <wa4>  TYPE ty_wbs_display,
+                 <wa5>  TYPE ty_wbs_display.
 
-  FIELD-SYMBOLS: <wa>    TYPE ty_wbs_display,
-                 <wa1>   TYPE ty_wbs_display,
-                 <wa2>   TYPE ty_wbs_display,
-                 <wa3>   TYPE ty_wbs_display,
-                 <wa4>   TYPE ty_wbs_display,
-                 <wa5>   TYPE ty_wbs_display.
-
-  CLEAR cv_error.
+  CLEAR: cv_error,
+         lv_sum4, lv_sum3, lv_sum2, lv_sum1,
+         lv_index4, lv_index3, lv_index2, lv_index1.
 
 *---------------------------------------------------------------------*
-* Copy current screen data to working table
+* Copy current screen data
 *---------------------------------------------------------------------*
-  lt_work = gt_wbs_display.
+  lt_work   = gt_wbs_display.
+  lt_actual = gt_wbs_display.
 
 *---------------------------------------------------------------------*
-* Same preprocessing as total_up_wbs_tc
+* Same preprocessing as TOTAL_UP_WBS_TC
 *---------------------------------------------------------------------*
   LOOP AT lt_work ASSIGNING <wa>.
     IF <wa>-zapproved_budg IS INITIAL.
@@ -50,52 +57,48 @@ FORM validate_total_up_done
     ENDIF.
   ENDLOOP.
 
+*---------------------------------------------------------------------*
+* Split by level
+*---------------------------------------------------------------------*
   LOOP AT lt_work ASSIGNING <wa>.
-    IF <wa>-stufe = '5'.
-      APPEND <wa> TO lt_table5.
 
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO lt_table4.
-      DATA(lv_pspid_new4) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new4.
-      lv_pspid_len4 = strlen( lv_pspid_new4 ).
+    CASE <wa>-stufe.
+      WHEN '5'.
+        APPEND <wa> TO lt_table5.
 
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO lt_table3.
-      DATA(lv_pspid_new3) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new3.
-      lv_pspid_len3 = strlen( lv_pspid_new3 ).
+      WHEN '4'.
+        APPEND <wa> TO lt_table4.
 
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO lt_table2.
-      DATA(lv_pspid_new2) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new2.
-      lv_pspid_len2 = strlen( lv_pspid_new2 ).
+      WHEN '3'.
+        APPEND <wa> TO lt_table3.
 
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO lt_table1.
-      DATA(lv_pspid_new1) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new1.
-      lv_pspid_len1 = strlen( lv_pspid_new1 ).
-    ENDIF.
+      WHEN '2'.
+        APPEND <wa> TO lt_table2.
+
+      WHEN '1'.
+        APPEND <wa> TO lt_table1.
+    ENDCASE.
+
   ENDLOOP.
 
 *---------------------------------------------------------------------*
-* Simulate total up exactly like total_up_wbs_tc
+* Simulate total-up exactly
 *---------------------------------------------------------------------*
 
-* Level 4
+* Level 4 = sum of Level 5
   LOOP AT lt_work ASSIGNING <wa4> WHERE stufe = '4'.
+
+    CLEAR: lv_sum4, lv_parent4, lv_len4.
+    lv_parent4 = <wa4>-posid.
+
+    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+      CHANGING
+        c_value = lv_parent4.
+
+    lv_len4 = strlen( lv_parent4 ).
+
     LOOP AT lt_table5 ASSIGNING <wa5>.
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
+      IF <wa5>-posid+0(lv_len4) = <wa4>-posid+0(lv_len4).
         lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
       ENDIF.
     ENDLOOP.
@@ -105,15 +108,24 @@ FORM validate_total_up_done
     ENDIF.
 
     lv_index4 = lv_index4 + 1.
-    MODIFY lt_work FROM <wa4> TRANSPORTING zapproved_budg.
+    MODIFY lt_work   FROM <wa4> TRANSPORTING zapproved_budg.
     MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
   ENDLOOP.
 
-* Level 3
+* Level 3 = sum of Level 4
   LOOP AT lt_work ASSIGNING <wa3> WHERE stufe = '3'.
+
+    CLEAR: lv_sum3, lv_parent3, lv_len3.
+    lv_parent3 = <wa3>-posid.
+
+    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+      CHANGING
+        c_value = lv_parent3.
+
+    lv_len3 = strlen( lv_parent3 ).
+
     LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
+      IF <wa4>-posid+0(lv_len3) = <wa3>-posid+0(lv_len3).
         lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
       ENDIF.
     ENDLOOP.
@@ -123,15 +135,24 @@ FORM validate_total_up_done
     ENDIF.
 
     lv_index3 = lv_index3 + 1.
-    MODIFY lt_work FROM <wa3> TRANSPORTING zapproved_budg.
+    MODIFY lt_work   FROM <wa3> TRANSPORTING zapproved_budg.
     MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
   ENDLOOP.
 
-* Level 2
+* Level 2 = sum of Level 3
   LOOP AT lt_work ASSIGNING <wa2> WHERE stufe = '2'.
+
+    CLEAR: lv_sum2, lv_parent2, lv_len2.
+    lv_parent2 = <wa2>-posid.
+
+    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+      CHANGING
+        c_value = lv_parent2.
+
+    lv_len2 = strlen( lv_parent2 ).
+
     LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
+      IF <wa3>-posid+0(lv_len2) = <wa2>-posid+0(lv_len2).
         lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
       ENDIF.
     ENDLOOP.
@@ -141,15 +162,25 @@ FORM validate_total_up_done
     ENDIF.
 
     lv_index2 = lv_index2 + 1.
-    MODIFY lt_work FROM <wa2> TRANSPORTING zapproved_budg.
+    MODIFY lt_work   FROM <wa2> TRANSPORTING zapproved_budg.
     MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
   ENDLOOP.
 
-* Level 1 -> simulate but do NOT validate against it
+* Level 1 = sum of Level 2
+* simulated only, not validated
   LOOP AT lt_work ASSIGNING <wa1> WHERE stufe = '1'.
+
+    CLEAR: lv_sum1, lv_parent1, lv_len1.
+    lv_parent1 = <wa1>-posid.
+
+    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+      CHANGING
+        c_value = lv_parent1.
+
+    lv_len1 = strlen( lv_parent1 ).
+
     LOOP AT lt_table2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+      IF <wa2>-posid+0(lv_len1) = <wa1>-posid+0(lv_len1).
         lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
       ENDIF.
     ENDLOOP.
@@ -159,16 +190,18 @@ FORM validate_total_up_done
     ENDIF.
 
     lv_index1 = lv_index1 + 1.
-    MODIFY lt_work FROM <wa1> TRANSPORTING zapproved_budg.
+    MODIFY lt_work   FROM <wa1> TRANSPORTING zapproved_budg.
     MODIFY lt_table1 FROM <wa1> INDEX lv_index1.
-    CLEAR: lv_sum1.
   ENDLOOP.
 
 *---------------------------------------------------------------------*
-* Compare expected result vs actual screen values
-* Validate only levels 2/3/4
+* Compare expected vs actual
+* Validate only Level 2 / 3 / 4
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_actual WHERE stufe IN ('2','3','4').
+  LOOP AT lt_actual INTO ls_actual
+    WHERE stufe = '2'
+       OR stufe = '3'
+       OR stufe = '4'.
 
     READ TABLE lt_work INTO ls_expected
       WITH KEY posid = ls_actual-posid
