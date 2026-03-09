@@ -4,134 +4,184 @@
 FORM validate_total_up_done
   CHANGING cv_error TYPE abap_bool.
 
-  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
+  DATA: lt_work   TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
         lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
         lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
         lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
         lv_sum4   TYPE ty_wbs_display-zapproved_budg,
         lv_sum3   TYPE ty_wbs_display-zapproved_budg,
         lv_sum2   TYPE ty_wbs_display-zapproved_budg,
-        lv_len4   TYPE i,
-        lv_len3   TYPE i,
-        lv_len2   TYPE i.
+        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
+        lv_index4 TYPE sy-tabix,
+        lv_index3 TYPE sy-tabix,
+        lv_index2 TYPE sy-tabix,
+        lv_index1 TYPE sy-tabix.
 
-  FIELD-SYMBOLS: <wa2> TYPE ty_wbs_display,
-                 <wa3> TYPE ty_wbs_display,
-                 <wa4> TYPE ty_wbs_display,
-                 <wa5> TYPE ty_wbs_display.
+  DATA: lv_pspid_len4 TYPE numc2,
+        lv_pspid_len3 TYPE numc2,
+        lv_pspid_len2 TYPE numc2,
+        lv_pspid_len1 TYPE numc2.
 
-  DATA: lv_posid_4 TYPE ps_posid,
-        lv_posid_3 TYPE ps_posid,
-        lv_posid_2 TYPE ps_posid.
+  DATA: ls_actual   TYPE ty_wbs_display,
+        ls_expected TYPE ty_wbs_display.
+
+  FIELD-SYMBOLS: <wa>    TYPE ty_wbs_display,
+                 <wa1>   TYPE ty_wbs_display,
+                 <wa2>   TYPE ty_wbs_display,
+                 <wa3>   TYPE ty_wbs_display,
+                 <wa4>   TYPE ty_wbs_display,
+                 <wa5>   TYPE ty_wbs_display.
 
   CLEAR cv_error.
 
 *---------------------------------------------------------------------*
-* Prepare child tables
+* Copy current screen data to working table
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
+  lt_work = gt_wbs_display.
 
+*---------------------------------------------------------------------*
+* Same preprocessing as total_up_wbs_tc
+*---------------------------------------------------------------------*
+  LOOP AT lt_work ASSIGNING <wa>.
+    IF <wa>-zapproved_budg IS INITIAL.
+      <wa>-zapproved_budg = 0.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT lt_work ASSIGNING <wa>.
     IF <wa>-stufe = '5'.
       APPEND <wa> TO lt_table5.
 
     ELSEIF <wa>-stufe = '4'.
       APPEND <wa> TO lt_table4.
+      DATA(lv_pspid_new4) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new4.
+      lv_pspid_len4 = strlen( lv_pspid_new4 ).
 
     ELSEIF <wa>-stufe = '3'.
       APPEND <wa> TO lt_table3.
+      DATA(lv_pspid_new3) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new3.
+      lv_pspid_len3 = strlen( lv_pspid_new3 ).
 
     ELSEIF <wa>-stufe = '2'.
       APPEND <wa> TO lt_table2.
-    ENDIF.
+      DATA(lv_pspid_new2) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new2.
+      lv_pspid_len2 = strlen( lv_pspid_new2 ).
 
+    ELSEIF <wa>-stufe = '1'.
+      APPEND <wa> TO lt_table1.
+      DATA(lv_pspid_new1) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new1.
+      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+    ENDIF.
   ENDLOOP.
 
 *---------------------------------------------------------------------*
-* Validate Level 4 = sum of Level 5
+* Simulate total up exactly like total_up_wbs_tc
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
 
-    CLEAR: lv_sum4, lv_posid_4, lv_len4.
-    lv_posid_4 = <wa4>-posid.
-
-    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-      CHANGING
-        c_value = lv_posid_4.
-
-    lv_len4 = strlen( lv_posid_4 ).
-
+* Level 4
+  LOOP AT lt_work ASSIGNING <wa4> WHERE stufe = '4'.
     LOOP AT lt_table5 ASSIGNING <wa5>.
-      IF <wa5>-posid+0(lv_len4) = <wa4>-posid+0(lv_len4).
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
         lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
       ENDIF.
     ENDLOOP.
 
-    IF lv_sum4 <> <wa4>-zapproved_budg.
-      MESSAGE e000(zmsg_a2r)
-        WITH 'Please trigger Total Up first. Budget mismatch in Level 4 WBS'
-             <wa4>-posid.
-      cv_error = abap_true.
-      RETURN.
+    IF lv_sum4 IS NOT INITIAL.
+      <wa4>-zapproved_budg = lv_sum4.
     ENDIF.
 
+    lv_index4 = lv_index4 + 1.
+    MODIFY lt_work FROM <wa4> TRANSPORTING zapproved_budg.
+    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
+    CLEAR: lv_sum4.
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Validate Level 3 = sum of Level 4
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
-
-    CLEAR: lv_sum3, lv_posid_3, lv_len3.
-    lv_posid_3 = <wa3>-posid.
-
-    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-      CHANGING
-        c_value = lv_posid_3.
-
-    lv_len3 = strlen( lv_posid_3 ).
-
+* Level 3
+  LOOP AT lt_work ASSIGNING <wa3> WHERE stufe = '3'.
     LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_len3) = <wa3>-posid+0(lv_len3).
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
         lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
       ENDIF.
     ENDLOOP.
 
-    IF lv_sum3 <> <wa3>-zapproved_budg.
-      MESSAGE e000(zmsg_a2r)
-        WITH 'Please trigger Total Up first. Budget mismatch in Level 3 WBS'
-             <wa3>-posid.
-      cv_error = abap_true.
-      RETURN.
+    IF lv_sum3 IS NOT INITIAL.
+      <wa3>-zapproved_budg = lv_sum3.
     ENDIF.
 
+    lv_index3 = lv_index3 + 1.
+    MODIFY lt_work FROM <wa3> TRANSPORTING zapproved_budg.
+    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
+    CLEAR: lv_sum3.
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Validate Level 2 = sum of Level 3
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
-
-    CLEAR: lv_sum2, lv_posid_2, lv_len2.
-    lv_posid_2 = <wa2>-posid.
-
-    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-      CHANGING
-        c_value = lv_posid_2.
-
-    lv_len2 = strlen( lv_posid_2 ).
-
+* Level 2
+  LOOP AT lt_work ASSIGNING <wa2> WHERE stufe = '2'.
     LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_len2) = <wa2>-posid+0(lv_len2).
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
         lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
       ENDIF.
     ENDLOOP.
 
-    IF lv_sum2 <> <wa2>-zapproved_budg.
-      MESSAGE e000(zmsg_a2r)
-        WITH 'Please trigger Total Up first. Budget mismatch in Level 2 WBS'
-             <wa2>-posid.
-      cv_error = abap_true.
-      RETURN.
+    IF lv_sum2 IS NOT INITIAL.
+      <wa2>-zapproved_budg = lv_sum2.
+    ENDIF.
+
+    lv_index2 = lv_index2 + 1.
+    MODIFY lt_work FROM <wa2> TRANSPORTING zapproved_budg.
+    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
+    CLEAR: lv_sum2.
+  ENDLOOP.
+
+* Level 1 -> simulate but do NOT validate against it
+  LOOP AT lt_work ASSIGNING <wa1> WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-zapproved_budg = lv_sum1.
+    ENDIF.
+
+    lv_index1 = lv_index1 + 1.
+    MODIFY lt_work FROM <wa1> TRANSPORTING zapproved_budg.
+    MODIFY lt_table1 FROM <wa1> INDEX lv_index1.
+    CLEAR: lv_sum1.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Compare expected result vs actual screen values
+* Validate only levels 2/3/4
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_actual WHERE stufe IN ('2','3','4').
+
+    READ TABLE lt_work INTO ls_expected
+      WITH KEY posid = ls_actual-posid
+               stufe = ls_actual-stufe.
+
+    IF sy-subrc = 0.
+      IF ls_actual-zapproved_budg <> ls_expected-zapproved_budg.
+        MESSAGE e000(zmsg_a2r)
+          WITH 'Please trigger Total Up first. Budget mismatch in'
+               ls_actual-posid.
+        cv_error = abap_true.
+        RETURN.
+      ENDIF.
     ENDIF.
 
   ENDLOOP.
