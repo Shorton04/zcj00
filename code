@@ -1,3 +1,6 @@
+DATA: gs_header_old TYPE ztb_a2r_wbshdr.
+
+
 FORM validate_and_load_b3 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
   DATA: ls_hdr TYPE ztb_a2r_wbshdr.
@@ -8,12 +11,10 @@ FORM validate_and_load_b3 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
     WHERE pspnr = @gv_pspnr_sel.
 
   IF lv_reqnum_b3 IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'(m31).
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'.
   ENDIF.
 
-  IF lv_reqnum_b3 IS NOT INITIAL.
-    pv_reqnum = lv_reqnum_b3.
-  ENDIF.
+  pv_reqnum = lv_reqnum_b3.
 
   "Read Header
   SELECT SINGLE *
@@ -22,38 +23,42 @@ FORM validate_and_load_b3 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
     WHERE zreq_num = @pv_reqnum.
 
   IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'.
   ENDIF.
-
 
   "Only creator can edit
   IF ls_hdr-ernam <> sy-uname.
-    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'.
   ENDIF.
 
-    ls_hdr-z_reqtype = 'B3'. "keep locally
-
-  "Must be Draft
-  "Field from your table screenshot: REQUEST_STATUS
-  IF ls_hdr-request_status <> 'APPROVED'.
-  ELSEIF ls_hdr-request_status IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'(m31).
+  "Must be approved
+  IF ls_hdr-request_status IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'.
+  ELSEIF ls_hdr-request_status <> 'APPROVED'.
+    MESSAGE e000(zmsg_a2r) WITH 'Only approved project can be modified.'.
   ENDIF.
 
-  "Reset buffers (important)
-  CLEAR: gs_header.
+  "Set B3 request type
+  ls_hdr-z_reqtype = 'B3'.
+  gv_request_type  = 'B3'.
+
+  "Reset buffers
+  CLEAR: gs_header, gs_header_old.
   FREE:  gt_wbs_items, gt_wbs_display.
 
-  "Load header to screen2 structure
+  "Load header to screen structure
   MOVE-CORRESPONDING ls_hdr TO gs_header.
 
-  "Load items to internal table used by screen2
+  "Store original header snapshot
+  MOVE-CORRESPONDING ls_hdr TO gs_header_old.
+
+  "If you still need old items shown in screen, keep this
   SELECT *
     FROM ztb_a2r_wbsitem
     INTO TABLE @gt_wbs_items
     WHERE zreq_num = @pv_reqnum.
 
-  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+  "Align helper PERFORMs that use p_*
   p_posnr = gs_header-posnr.
   p_prnam = gs_header-prnam.
   p_kostl = gs_header-kostl.
@@ -67,18 +72,100 @@ FORM validate_and_load_b3 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
     SELECT SINGLE posnr
       FROM ztb_a2r_wbshdr
       INTO @DATA(lv_edit_posnr)
-      WHERE zreq_num = @p_req_num.
+      WHERE zreq_num = @pv_reqnum.
 
-    SELECT SINGLE gjahr
-      FROM impr
-      INTO @DATA(lv_edit_gjahr)
-      WHERE posnr = @lv_edit_posnr.
+    IF lv_edit_posnr IS NOT INITIAL.
+      SELECT SINGLE gjahr
+        FROM impr
+        INTO @DATA(lv_edit_gjahr)
+        WHERE posnr = @lv_edit_posnr.
+    ENDIF.
   ENDIF.
 
-  "Mark edit mode so prepare_screen2 will NOT copy template
   gv_gjahr              = lv_edit_gjahr.
   gv_edit_mode          = abap_true.
   gv_loaded_reqnum      = pv_reqnum.
   gv_header_initialized = abap_false.
 
 ENDFORM.
+
+
+
+FORM check_b3_header_changed CHANGING cv_changed TYPE abap_bool.
+
+  cv_changed = abap_false.
+
+  IF gs_header-post1 <> gs_header_old-post1
+  OR gs_header-vernr <> gs_header_old-vernr
+  OR gs_header-plsez <> gs_header_old-plsez
+  OR gs_header-posnr <> gs_header_old-posnr
+  OR gs_header-prnam <> gs_header_old-prnam
+  OR gs_header-bukrs <> gs_header_old-bukrs
+  OR gs_header-werks <> gs_header_old-werks
+  OR gs_header-prctr <> gs_header_old-prctr
+  OR gs_header-izwek <> gs_header_old-izwek.
+    cv_changed = abap_true.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM submit_b3_change.
+
+  DATA: lv_success TYPE abap_bool,
+        lv_changed TYPE abap_bool,
+        lt_return  TYPE bapiret2_t.
+
+  CLEAR: lv_success, lv_changed, lt_return.
+
+  PERFORM check_b3_header_changed CHANGING lv_changed.
+
+  IF lv_changed = abap_false.
+    MESSAGE e000(zmsg_a2r) WITH 'No changes detected.'.
+  ENDIF.
+
+  lv_success = go_builder->change_project_critical(
+                 iv_pspnr      = gs_header-pspnr
+                 is_header     = gs_header
+                 is_header_old = gs_header_old
+                 IMPORTING
+                   et_return   = lt_return ).
+
+  IF lv_success = abap_true.
+    MESSAGE s000(zmsg_a2r) WITH 'Project critical change submitted successfully'.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH 'Project critical change failed'.
+  ENDIF.
+
+ENDFORM.
+
+
+
+MODULE user_command_0100 INPUT.
+
+  DATA lv_ok TYPE sy-ucomm.
+
+  lv_ok = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE lv_ok.
+
+    WHEN 'SUBM' OR 'SUBMIT'.
+
+      IF gv_request_type = 'B3'.
+        PERFORM submit_b3_change.
+
+      ELSEIF sy-uname = 'HQ75177' OR sy-uname = 'CL83960'.
+        PERFORM submit_direct_creation_t.
+
+      ELSE.
+        PERFORM submit_direct_creation.
+      ENDIF.
+
+    WHEN 'BACK' OR 'CANC' OR 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+  ENDCASE.
+
+ENDMODULE.
