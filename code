@@ -1,46 +1,30 @@
-MODULE user_command_0100 INPUT.
+FORM get_changed_wbs_rows
+  USING    it_new     TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+           it_old     TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  CHANGING ct_changed TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
 
-  DATA: lv_ok          TYPE sy-ucomm,
-        lt_changed_wbs TYPE STANDARD TABLE OF ztb_a2r_wbsitem WITH DEFAULT KEY.
+  FIELD-SYMBOLS: <n> TYPE ztb_a2r_wbsitem,
+                 <o> TYPE ztb_a2r_wbsitem.
 
-  lv_ok = sy-ucomm.
-  CLEAR sy-ucomm.
+  CLEAR ct_changed.
 
-  CASE lv_ok.
+  LOOP AT it_new ASSIGNING <n>.
+    READ TABLE it_old ASSIGNING <o> WITH KEY posid = <n>-posid.
+    IF sy-subrc <> 0.
+      APPEND <n> TO ct_changed.
+      CONTINUE.
+    ENDIF.
 
-    WHEN 'SUBM' OR 'SUBMIT'.
+    "compare only fields you care about
+    IF <n>-post1 <> <o>-post1
+    OR <n>-wert2 <> <o>-wert2
+    OR <n>-zbudget_check <> <o>-zbudget_check.
+      APPEND <n> TO ct_changed.
+    ENDIF.
+  ENDLOOP.
 
-      "Run only for B3
-      IF gv_request_type <> 'B3'.
-        MESSAGE e029(zcj00) WITH 'Submit is not allowed for this request type.'.
-        EXIT.
-      ENDIF.
+ENDFORM.
 
-      "1) Get changed WBS rows only
-      PERFORM get_changed_wbs_rows
-        USING    gt_wbs_items
-                 gt_wbs_items_old
-        CHANGING lt_changed_wbs.
 
-      "2) If nothing changed, block submit (optional but recommended)
-      IF lt_changed_wbs IS INITIAL
-         AND gs_header = gs_header_old.
-        MESSAGE e029(zcj00) WITH 'No changes detected. Nothing to submit.'.
-        EXIT.
-      ENDIF.
-
-      "3) Validate ONLY changed rows (your Table 4.1.6 logic)
-      PERFORM validate_b3_only_changed USING gs_header lt_changed_wbs.
-
-      "4) Update Z tables (HDR/ITEM) for B3 submit
-      PERFORM update_wbshdr_b3 USING gs_header.
-      PERFORM update_wbsitem_b3 USING gt_wbs_items.
-
-      "5) Trigger workflow B3
-      PERFORM trigger_workflow_b3 USING gs_header.
-
-      MESSAGE s029(zcj00) WITH 'B3 request submitted for approval.'.
-
-  ENDCASE.
-
-ENDMODULE.
+DATA: gt_wbs_items      TYPE STANDARD TABLE OF ztb_a2r_wbsitem WITH DEFAULT KEY,
+      gt_wbs_items_old  TYPE STANDARD TABLE OF ztb_a2r_wbsitem WITH DEFAULT KEY.
