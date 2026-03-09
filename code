@@ -4,57 +4,57 @@
 FORM validate_total_up_done
   CHANGING cv_error TYPE abap_bool.
 
-  DATA: lt_level1 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_level2 TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum    TYPE ty_wbs_display-zapproved_budg,
-        lv_len1   TYPE i,
-        lv_parent TYPE ps_posid.
-
-  FIELD-SYMBOLS: <wa1> TYPE ty_wbs_display,
-                 <wa2> TYPE ty_wbs_display.
+  DATA: ls_parent    TYPE ty_wbs_display,
+        ls_child     TYPE ty_wbs_display,
+        lv_tabix     TYPE sy-tabix,
+        lv_nextix    TYPE sy-tabix,
+        lv_lines     TYPE i,
+        lv_sum       TYPE ty_wbs_display-zapproved_budg,
+        lv_has_child TYPE abap_bool,
+        lv_next_stufe TYPE ps_stufe.
 
   CLEAR cv_error.
 
-*---------------------------------------------------------------------*
-* Separate Level 1 and Level 2
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
-    CASE <wa>-stufe.
-      WHEN '1'.
-        APPEND <wa> TO lt_level1.
-      WHEN '2'.
-        APPEND <wa> TO lt_level2.
-    ENDCASE.
-  ENDLOOP.
+  lv_lines = lines( gt_wbs_display ).
+  IF lv_lines IS INITIAL.
+    RETURN.
+  ENDIF.
 
-*---------------------------------------------------------------------*
-* Validate Level 1 = sum of Level 2 children
-*---------------------------------------------------------------------*
-  LOOP AT lt_level1 ASSIGNING <wa1>.
+  LOOP AT gt_wbs_display INTO ls_parent.
+    lv_tabix = sy-tabix.
+    CLEAR: lv_sum, lv_has_child.
 
-    CLEAR: lv_sum, lv_parent, lv_len1.
+    lv_nextix = lv_tabix + 1.
 
-    lv_parent = <wa1>-posid.
+    WHILE lv_nextix <= lv_lines.
 
-    CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-      CHANGING
-        c_value = lv_parent.
-
-    lv_len1 = strlen( lv_parent ).
-
-    LOOP AT lt_level2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_len1) = <wa1>-posid+0(lv_len1).
-        lv_sum = lv_sum + <wa2>-zapproved_budg.
+      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
+      IF sy-subrc <> 0.
+        EXIT.
       ENDIF.
-    ENDLOOP.
 
-    " If parent has children, it must match total-up result
-    IF lv_sum IS NOT INITIAL.
-      IF <wa1>-zapproved_budg <> lv_sum.
-        MESSAGE e000(zmsg_a2r) WITH 'Please trigger Total Up first.'.
-        cv_error = abap_true.
-        RETURN.
+      " stop when next sibling / upper parent starts
+      IF ls_child-stufe <= ls_parent-stufe.
+        EXIT.
       ENDIF.
+
+      " only direct children are included in sum
+      lv_next_stufe = ls_parent-stufe + 1.
+      IF ls_child-stufe = lv_next_stufe.
+        lv_sum = lv_sum + ls_child-zapproved_budg.
+        lv_has_child = abap_true.
+      ENDIF.
+
+      lv_nextix = lv_nextix + 1.
+
+    ENDWHILE.
+
+    " validate only if this row has direct children
+    IF lv_has_child = abap_true
+       AND ls_parent-zapproved_budg <> lv_sum.
+      MESSAGE e000(zmsg_a2r) WITH 'Please trigger Total Up first.'.
+      cv_error = abap_true.
+      RETURN.
     ENDIF.
 
   ENDLOOP.
