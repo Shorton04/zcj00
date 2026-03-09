@@ -1,17 +1,100 @@
-FORM check_b3_header_changed CHANGING cv_changed TYPE abap_bool.
+FORM save_b3_pending_request
+  CHANGING cv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
-  cv_changed = abap_false.
+  DATA: ls_hdr_new TYPE ztb_a2r_wbshdr.
 
-  IF gs_header-post1 <> gs_header_old-post1
-  OR gs_header-vernr <> gs_header_old-vernr
-  OR gs_header-plsez <> gs_header_old-plsez
-  OR gs_header-posnr <> gs_header_old-posnr
-  OR gs_header-prnam <> gs_header_old-prnam
-  OR gs_header-bukrs <> gs_header_old-bukrs
-  OR gs_header-werks <> gs_header_old-werks
-  OR gs_header-prctr <> gs_header_old-prctr
-  OR gs_header-izwek <> gs_header_old-izwek.
-    cv_changed = abap_true.
+  CLEAR: cv_reqnum, ls_hdr_new.
+
+  "Get new request number from your class method
+  cv_reqnum = go_builder->get_next_request_number( ).
+
+  IF cv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to generate request number'.
+  ENDIF.
+
+  MOVE-CORRESPONDING gs_header TO ls_hdr_new.
+
+  ls_hdr_new-zreq_num        = cv_reqnum.
+  ls_hdr_new-z_reqtype       = 'B3'.
+  ls_hdr_new-request_status  = 'PENDING'.
+  ls_hdr_new-ernam           = sy-uname.
+  ls_hdr_new-erdat           = sy-datum.
+  ls_hdr_new-aenam           = sy-uname.
+  ls_hdr_new-aedat           = sy-datum.
+
+  INSERT ztb_a2r_wbshdr FROM ls_hdr_new.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to save B3 pending request'.
   ENDIF.
 
 ENDFORM.
+
+
+
+FORM update_b3_request_status
+  USING
+    pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num
+    pv_status TYPE ztb_a2r_wbshdr-request_status.
+
+  UPDATE ztb_a2r_wbshdr
+    SET request_status = @pv_status,
+        aenam          = @sy-uname,
+        aedat          = @sy-datum
+    WHERE zreq_num     = @pv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to update B3 request status'.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM submit_b3_change.
+
+  DATA: lv_success TYPE abap_bool,
+        lv_changed TYPE abap_bool,
+        lv_reqnum  TYPE ztb_a2r_wbshdr-zreq_num,
+        lt_return  TYPE bapiret2_t.
+
+  CLEAR: lv_success, lv_changed, lv_reqnum, lt_return.
+
+  "Check if user really changed anything
+  PERFORM check_b3_header_changed CHANGING lv_changed.
+
+  IF lv_changed = abap_false.
+    MESSAGE e000(zmsg_a2r) WITH 'No changes detected.'.
+  ENDIF.
+
+  "1) Save new B3 request first as PENDING
+  PERFORM save_b3_pending_request CHANGING lv_reqnum.
+
+  "2) Call your existing class method
+  lv_success = go_builder->change_project_critical(
+                 iv_pspnr      = gs_header-pspnr
+                 is_header     = gs_header
+                 is_header_old = gs_header_old
+                 IMPORTING
+                   et_return   = lt_return ).
+
+  "3) Update request status depending on result
+  IF lv_success = abap_true.
+
+    PERFORM update_b3_request_status
+      USING lv_reqnum 'APPROVED'.
+
+    MESSAGE s000(zmsg_a2r) WITH 'B3 request approved successfully'.
+
+  ELSE.
+
+    "You can keep as PENDING or change to FAILED
+    PERFORM update_b3_request_status
+      USING lv_reqnum 'FAILED'.
+
+    MESSAGE e000(zmsg_a2r) WITH 'Project critical change failed'.
+
+  ENDIF.
+
+ENDFORM.
+
