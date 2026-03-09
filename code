@@ -1,77 +1,46 @@
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_TOTAL_UP_DONE
-*&---------------------------------------------------------------------*
-FORM validate_total_up_done
-  CHANGING cv_error TYPE abap_bool.
+MODULE user_command_0100 INPUT.
 
-  DATA: ls_parent     TYPE ty_wbs_display,
-        ls_child      TYPE ty_wbs_display,
-        lv_tabix      TYPE sy-tabix,
-        lv_nextix     TYPE sy-tabix,
-        lv_lines      TYPE i,
-        lv_sum        TYPE ty_wbs_display-zapproved_budg,
-        lv_has_child  TYPE abap_bool,
-        lv_next_stufe TYPE ps_stufe.
+  DATA: lv_ok          TYPE sy-ucomm,
+        lt_changed_wbs TYPE STANDARD TABLE OF ztb_a2r_wbsitem WITH DEFAULT KEY.
 
-  CLEAR cv_error.
+  lv_ok = sy-ucomm.
+  CLEAR sy-ucomm.
 
-  lv_lines = lines( gt_wbs_display ).
-  IF lv_lines IS INITIAL.
-    RETURN.
-  ENDIF.
+  CASE lv_ok.
 
-*---------------------------------------------------------------------*
-* Dynamic hierarchy validation
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_parent.
+    WHEN 'SUBM' OR 'SUBMIT'.
 
-    lv_tabix = sy-tabix.
-    CLEAR: lv_sum, lv_has_child.
-
-    lv_nextix = lv_tabix + 1.
-
-    WHILE lv_nextix <= lv_lines.
-
-      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
-      IF sy-subrc <> 0.
+      "Run only for B3
+      IF gv_request_type <> 'B3'.
+        MESSAGE e029(zcj00) WITH 'Submit is not allowed for this request type.'.
         EXIT.
       ENDIF.
 
-      " stop when next sibling or higher parent starts
-      IF ls_child-stufe <= ls_parent-stufe.
+      "1) Get changed WBS rows only
+      PERFORM get_changed_wbs_rows
+        USING    gt_wbs_items
+                 gt_wbs_items_old
+        CHANGING lt_changed_wbs.
+
+      "2) If nothing changed, block submit (optional but recommended)
+      IF lt_changed_wbs IS INITIAL
+         AND gs_header = gs_header_old.
+        MESSAGE e029(zcj00) WITH 'No changes detected. Nothing to submit.'.
         EXIT.
       ENDIF.
 
-      " only direct children
-      lv_next_stufe = ls_parent-stufe + 1.
+      "3) Validate ONLY changed rows (your Table 4.1.6 logic)
+      PERFORM validate_b3_only_changed USING gs_header lt_changed_wbs.
 
-      IF ls_child-stufe = lv_next_stufe.
-        lv_sum = lv_sum + ls_child-zapproved_budg.
-        lv_has_child = abap_true.
-      ENDIF.
+      "4) Update Z tables (HDR/ITEM) for B3 submit
+      PERFORM update_wbshdr_b3 USING gs_header.
+      PERFORM update_wbsitem_b3 USING gt_wbs_items.
 
-      lv_nextix = lv_nextix + 1.
+      "5) Trigger workflow B3
+      PERFORM trigger_workflow_b3 USING gs_header.
 
-    ENDWHILE.
+      MESSAGE s029(zcj00) WITH 'B3 request submitted for approval.'.
 
-*---------------------------------------------------------------------*
-* Validation
-*---------------------------------------------------------------------*
-    IF lv_has_child = abap_true.
+  ENDCASE.
 
-      " Only error if children exceed parent
-      IF ls_parent-zapproved_budg < lv_sum.
-
-        MESSAGE e000(zmsg_a2r)
-        WITH 'Children budget exceeds parent. Please trigger Total Up.'.
-
-        cv_error = abap_true.
-        RETURN.
-
-      ENDIF.
-
-    ENDIF.
-
-  ENDLOOP.
-
-ENDFORM.
+ENDMODULE.
