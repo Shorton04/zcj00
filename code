@@ -199,4 +199,35 @@ FORM prepare_screen2.
 ENDFORM.
 
 
+MODULE user_command_0100 INPUT.
+  DATA: lv_ok_code1 TYPE sy-ucomm.
 
+  lv_ok_code1 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+ CASE lv_ok_code1.
+    WHEN 'ENTER' OR ''.
+
+    WHEN 'SAVE'.
+      PERFORM get_text.
+      PERFORM save_request.
+
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      gv_url = TEXT-s04.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'CHECK'.
+      PERFORM validate_screen2 USING abap_false.
+
+    WHEN 'SUBMIT'.
+      PERFORM get_text.
+      PERFORM validate_screen2 USING abap_false.
+*      PERFORM check_data.
+      IF sy-uname = 'HQ75177' OR sy-uname = 'CL83960' OR sy-uname = 'KP05750'.
+        IF gv_req_type = 'B3'.
+          "perform submit B3
+        ENDIF.
+      ELSE.
+        PERFORM submit_direct_creation.
+      ENDIF.
