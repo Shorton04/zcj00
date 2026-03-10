@@ -1,197 +1,233 @@
-FORM submit_direct_creation_t.
+METHOD save_request_for_submit_b3.
+
+  IMPORTING
+    is_header    TYPE ztb_a2r_wbshdr
+    it_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+
+  RETURNING
+    VALUE(rv_reqnum) TYPE ztb_a2r_wbshdr-zreq_num.
+
+ENDMETHOD.
+
+
+
+METHOD save_request_for_submit_b3.
+
+  DATA: ls_header TYPE ztb_a2r_wbshdr,
+        ls_item   TYPE ztb_a2r_wbsitem,
+        ls_wbs    TYPE ztb_a2r_wbsitem,
+        lv_error  TYPE abap_bool.
+
+  DATA: lv_vkokr TYPE kokrs,
+        lv_pspnr TYPE ps_pspnr.
+
+*---------------------------------------------------------------------*
+* Determine controlling area
+*---------------------------------------------------------------------*
+
+  lv_vkokr = is_header-vkokr.
+
+  IF lv_vkokr IS INITIAL.
+
+    READ TABLE it_wbs_items INTO DATA(ls_any) INDEX 1.
+
+    IF sy-subrc = 0 AND ls_any-posnr IS NOT INITIAL.
+
+      lv_pspnr = ls_any-posnr.
+
+      SELECT SINGLE pkokr
+        INTO lv_vkokr
+        FROM prpss
+        WHERE pspnr = lv_pspnr.
+
+    ENDIF.
+
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 1 : ALWAYS GENERATE NEW REQUEST NUMBER
+*---------------------------------------------------------------------*
+
+  rv_reqnum = get_next_request_number( ).
+
+  IF rv_reqnum IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 2 : PREPARE HEADER
+*---------------------------------------------------------------------*
+
+  CLEAR ls_header.
+
+  ls_header-mandt = sy-mandt.
+  ls_header-zreq_num = rv_reqnum.
+
+  ls_header-posnr = is_header-posnr.
+  ls_header-prnam = is_header-prnam.
+  ls_header-pspnr = is_header-pspnr.
+  ls_header-post1 = is_header-post1.
+  ls_header-vernr = is_header-vernr.
+  ls_header-plsez = is_header-plsez.
+  ls_header-bukrs = is_header-bukrs.
+  ls_header-werks = is_header-werks.
+  ls_header-waers = is_header-waers.
+  ls_header-prctr = is_header-prctr.
+  ls_header-kostl = is_header-kostl.
+
+  ls_header-vkokr = lv_vkokr.
+
+  ls_header-izwek = is_header-izwek.
+  ls_header-zunifier_proj = is_header-zunifier_proj.
+  ls_header-usr008 = is_header-usr008.
+  ls_header-profl = is_header-profl.
+
+*---------------------------------------------------------------------*
+* B3 specific
+*---------------------------------------------------------------------*
+
+  ls_header-z_reqtype = 'B3'.
+  ls_header-request_status = 'PENDING'.
+
+  ls_header-ernam = sy-uname.
+  ls_header-erdat = sy-datum.
+
+  IF is_header-z_remarks IS NOT INITIAL.
+    ls_header-z_remarks = is_header-z_remarks.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 3 : INSERT HEADER
+*---------------------------------------------------------------------*
+
+  INSERT ztb_a2r_wbshdr FROM ls_header.
+
+  IF sy-subrc <> 0.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 4 : INSERT ITEMS
+*---------------------------------------------------------------------*
+
+  LOOP AT it_wbs_items INTO ls_wbs WHERE wert2 > 0.
+
+    CLEAR ls_item.
+
+    ls_item-mandt = sy-mandt.
+    ls_item-zreq_num = rv_reqnum.
+    ls_item-bukrs = ls_header-bukrs.
+
+    ls_item-vkokr = lv_vkokr.
+
+    ls_item-posid = ls_wbs-posid.
+    ls_item-stufe = ls_wbs-stufe.
+    ls_item-post1 = ls_wbs-post1.
+    ls_item-kostl = ls_wbs-kostl.
+    ls_item-wert2 = ls_wbs-wert2.
+
+    ls_item-zbudget_check = ls_wbs-zbudget_check.
+
+    ls_item-imprf = ls_wbs-imprf.
+    ls_item-prart = ls_wbs-prart.
+
+    ls_item-werks = ls_header-werks.
+
+    IF ls_wbs-posnr IS NOT INITIAL.
+      ls_item-posnr = ls_wbs-posnr.
+    ENDIF.
+
+    INSERT ztb_a2r_wbsitem FROM ls_item.
+
+    IF sy-subrc <> 0.
+      lv_error = abap_true.
+      EXIT.
+    ENDIF.
+
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* COMMIT
+*---------------------------------------------------------------------*
+
+  IF lv_error = abap_false.
+    COMMIT WORK AND WAIT.
+  ELSE.
+    ROLLBACK WORK.
+    CLEAR rv_reqnum.
+  ENDIF.
+
+ENDMETHOD.
+
+
+
+
+FORM submit_b3.
 
   DATA: lv_reqnum  TYPE ztb_a2r_wbshdr-zreq_num,
         lv_success TYPE abap_bool.
 
-  "STEP 1: Sync + convert
+*---------------------------------------------------------------------*
+* STEP 1 : Sync screen
+*---------------------------------------------------------------------*
+
   PERFORM sync_screen_to_header.
   PERFORM convert_from_display.
 
-  "Only A1: allow auto-defaults
-  IF gv_edit_mode <> abap_true.
-    PERFORM populate_header_structure.
-  ENDIF.
-
-  "Ensure builder exists ONLY if we will call it
   IF go_builder IS INITIAL.
-    CREATE OBJECT go_builder. "adjust if constructor requires params
+    CREATE OBJECT go_builder.
   ENDIF.
 
-  "STEP 2: Save request / get request number
-  IF gv_edit_mode = abap_true.
+*---------------------------------------------------------------------*
+* STEP 2 : SAVE B3 REQUEST
+*---------------------------------------------------------------------*
 
-    "Edit mode: request number must already exist
-    lv_reqnum = gs_header-zreq_num.
-    IF lv_reqnum IS INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH 'Missing request number for submit'(m13).
-      RETURN.
-    ENDIF.
+  lv_reqnum = go_builder->save_request_for_submit_b3(
+                is_header    = gs_header
+                it_wbs_items = gt_wbs_items ).
 
-    "Update Z tables (no builder dependency)
-    PERFORM update_draft_request_db USING lv_reqnum.
-
-  ELSE.
-
-    "Create mode: use your existing builder method
-    lv_reqnum = go_builder->save_request_for_submit(
-      is_header    = gs_header
-      it_wbs_items = gt_wbs_items
-    ).
-
-    IF lv_reqnum IS INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH 'Failed to save request before submit'(m13).
-      RETURN.
-    ENDIF.
-
-    gs_header-zreq_num = lv_reqnum.
-
-  ENDIF.
-
-  "STEP 3: Set PENDING
-  UPDATE ztb_a2r_wbshdr
-    SET request_status = 'PENDING'
-    WHERE zreq_num = @lv_reqnum.
-
-  IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH 'Failed to update status for'(m03) lv_reqnum.
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B3 request'.
     RETURN.
   ENDIF.
 
-  COMMIT WORK AND WAIT.
-  gs_header-request_status = 'PENDING'.
+  gs_header-zreq_num = lv_reqnum.
 
-  "STEP 4: Create project (keep your logic)
-  MESSAGE i000(zmsg_a2r) WITH 'Creating project for request'(m04) lv_reqnum ##NO_TEXT.
+*---------------------------------------------------------------------*
+* STEP 3 : Execute Critical Change
+*---------------------------------------------------------------------*
 
-  "==========================================================
-  " BRANCH A: EV92123 -> workflow or direct create (your logic)
-  "==========================================================
-  IF sy-uname = 'EV92123'.
+  lv_success = go_builder->change_project_critical(
+                 iv_pspnr     = gs_header-pspnr
+                 is_header    = gs_header
+                 is_header_old = gs_header ).
 
-    DATA:
-      lv_appr1         TYPE char8,
-      lv_appr2         TYPE char8,
-      lv_auto          TYPE char1,
-      lv_error_handler TYPE char8,
-      lt_l1_approvers  TYPE hpa_t_bname,
-      lt_l2_approvers  TYPE hpa_t_bname,
-      lv_found         TYPE abap_bool.
+*---------------------------------------------------------------------*
+* STEP 4 : Update Status
+*---------------------------------------------------------------------*
 
-    "Your code uses IF 1 = 0 (disabled direct create)
-    IF 1 = 0.
+  IF lv_success = abap_true.
 
-      lv_success = go_builder->create_project_cj20n(
-        is_header = gs_header
-      ).
+    UPDATE ztb_a2r_wbshdr
+      SET request_status       = 'APPROVED',
+          zapproved_by         = @sy-uname,
+          zrequest_approved_on = @sy-datum
+      WHERE zreq_num = @lv_reqnum.
 
-      IF lv_success EQ abap_true.
+    COMMIT WORK AND WAIT.
 
-        CALL FUNCTION 'ZFM_A2R_ZCJ00' IN UPDATE TASK
-          EXPORTING
-            iv_zreq_num = gs_header-zreq_num.
+    MESSAGE s000(zmsg_a2r) WITH 'B3 request approved'(m21) lv_reqnum.
 
-        UPDATE ztb_a2r_wbshdr
-          SET request_status       = 'APPROVED',
-              zapproved_by         = 'EV92123',
-              zrequest_approved_on = @sy-datum
-          WHERE zreq_num           = @gs_header-zreq_num.
-
-        COMMIT WORK AND WAIT.
-        MESSAGE s000(zmsg_a2r) WITH 'Request'(m20) lv_reqnum 'approved'(m21).
-        LEAVE TO SCREEN 0.
-
-      ELSE.
-        PERFORM mark_request_error USING lv_reqnum.
-        RETURN.
-      ENDIF.
-
-    ELSE.
-
-      lv_found = go_builder->check_approver_matrix(
-        EXPORTING
-          iv_bukrs         = gs_header-bukrs
-          iv_profl         = gs_header-profl
-          iv_reqtype       = gs_header-z_reqtype
-        IMPORTING
-          ev_appr1         = lv_appr1
-          ev_appr2         = lv_appr2
-          ev_auto          = lv_auto
-          ev_error_handler = lv_error_handler
-          et_l1_approvers  = lt_l1_approvers
-          et_l2_approvers  = lt_l2_approvers
-      ).
-
-      lv_found = go_builder->trigger_workflow(
-        is_header   = gs_header
-        iv_appr1    = lv_appr1
-        iv_appr2    = lv_appr2
-        it_l1_apprv = lt_l1_approvers
-        it_l2_apprv = lt_l2_approvers
-      ).
-
-      MESSAGE s000(zmsg_a2r) WITH 'Request'(m14) lv_reqnum 'submitted for approval'(m06).
-      LEAVE TO SCREEN 0.
-
-    ENDIF.
-
-    "==========================================================
-    " BRANCH B: others -> direct create wbs/project (your logic)
-    "==========================================================
   ELSE.
 
-    IF sy-uname = 'HQ75177' OR sy-uname = 'KP05750' OR sy-uname = 'CL83960'.
-      lv_success = go_builder->create_wbs_elements(
-        is_header    = gs_header
-        it_wbs_items = gt_wbs_items
-      ).
-    ELSE.
-      lv_success = go_builder->create_project_wbs(
-        is_header    = gs_header
-        it_wbs_items = gt_wbs_items
-      ).
-    ENDIF.
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = @lv_reqnum.
 
-    IF lv_success = abap_true.
+    COMMIT WORK AND WAIT.
 
-      UPDATE ztb_a2r_wbshdr
-        SET request_status       = 'APPROVED',
-            zapproved_by         = @sy-uname,
-            zrequest_approved_on = @sy-datum
-        WHERE zreq_num = @lv_reqnum.
-
-      IF sy-subrc = 0.
-        COMMIT WORK AND WAIT.
-
-        SELECT SINGLE pspnr
-          FROM ztb_a2r_wbshdr
-          INTO @DATA(lv_pspnr)
-          WHERE zreq_num = @lv_reqnum.
-
-        IF sy-subrc = 0 AND lv_pspnr IS NOT INITIAL.
-          SELECT SINGLE pspid
-            FROM proj
-            INTO @DATA(lv_pspid)
-            WHERE pspnr = @lv_pspnr.
-
-          IF sy-subrc = 0.
-            MESSAGE s000(zmsg_a2r) WITH lv_reqnum lv_pspid.
-          ELSE.
-            MESSAGE s000(zmsg_a2r) WITH 'Request'(m20) lv_reqnum 'approved'(m21).
-          ENDIF.
-        ELSE.
-          MESSAGE s000(zmsg_a2r) WITH 'Request'(m20) lv_reqnum 'approved'(m21).
-        ENDIF.
-
-        LEAVE TO SCREEN 0.
-
-      ELSE.
-        MESSAGE e000(zmsg_a2r) WITH 'Failed to update approval status'(m22).
-      ENDIF.
-
-    ELSE.
-      PERFORM mark_request_error USING lv_reqnum.
-      RETURN.
-    ENDIF.
+    MESSAGE e000(zmsg_a2r) WITH 'Critical change failed'.
 
   ENDIF.
 
