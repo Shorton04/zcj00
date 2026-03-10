@@ -1,233 +1,150 @@
-MODULE user_command_0600 INPUT.
-  DATA: lv_ok_code_600 TYPE sy-ucomm.
+FORM submit_b3.
 
-  lv_ok_code_600 = sy-ucomm.
-  CLEAR sy-ucomm.
+  DATA: lv_new_reqnum TYPE char10,
+        lv_success    TYPE abap_bool,
+        ls_header_old TYPE ztb_a2r_wbshdr,
+        ls_header_new TYPE ztb_a2r_wbshdr,
+        lt_return     TYPE bapiret2_t,
+        ls_return     TYPE bapiret2,
+        lv_errmsg     TYPE string.
 
-  CASE lv_ok_code_600.
-    WHEN 'SOP'.
-      CLEAR gv_url.
-      gv_url = TEXT-s04.
-      PERFORM show_dms_link USING gv_url.
+  "------------------------------------------------------------
+  " 1) Get latest screen values into gs_header
+  "------------------------------------------------------------
+  PERFORM sync_screen_to_header.
+  PERFORM get_text.
 
-    WHEN 'BACK'.
-      LEAVE TO SCREEN 0.
-
-    WHEN 'CANCEL'.
-      LEAVE TO SCREEN 0.
-
-    WHEN 'EXIT'.
-      LEAVE TO SCREEN 0.
-
-    WHEN 'NEXT' OR 'ENTER'.
-      IF gv_pspnr_sel IS INITIAL OR p_req_num IS INITIAL.
-        PERFORM pspid_pspnr.
-      ENDIF.
-
-      IF gv_pspnr_sel IS INITIAL.
-        MESSAGE e000(zmsg_a2r) WITH 'Enter Project Definition'(M53).
-      ENDIF.
-
-      PERFORM validate_and_load_b3 USING p_req_num.
-      IF sy-subrc = 0.
-        PERFORM free_tree_control.
-        PERFORM prepare_screen2.
-        CALL SCREEN 100.
-      ENDIF.
-
-  ENDCASE.
-ENDMODULE.
-
-
-FORM pspid_pspnr.
-  SELECT SINGLE pspnr
-    FROM proj
-    INTO @gv_pspnr_sel
-    WHERE pspid = @p_pspid_proj.
-
-  SELECT SINGLE zreq_num
-    FROM ztb_a2r_wbshdr
-    INTO @DATA(p_req_num) "request  number
-    WHERE pspnr = @gv_pspnr_sel.
-
-ENDFORM.
-
-
-
-FORM validate_and_load_b3 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
-
-  DATA: ls_hdr TYPE ztb_a2r_wbshdr.
-
-  SELECT SINGLE zreq_num
-    FROM ztb_a2r_wbshdr
-    INTO @DATA(lv_reqnum_b3)
-    WHERE pspnr = @gv_pspnr_sel.
-
-  IF lv_reqnum_b3 IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'(m31).
+  IF gv_pspnr_sel IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Project is required.'.
   ENDIF.
 
-  IF lv_reqnum_b3 IS NOT INITIAL.
-    pv_reqnum = lv_reqnum_b3.
-  ENDIF.
+  "------------------------------------------------------------
+  " 2) Read OLD request (original A1) - reference only
+  "    DO NOT UPDATE THIS RECORD
+  "------------------------------------------------------------
+  CLEAR ls_header_old.
 
-  "Read Header
-  SELECT SINGLE *
-    FROM ztb_a2r_wbshdr
-    INTO @ls_hdr
-    WHERE zreq_num = @pv_reqnum.
+  IF gv_loaded_reqnum IS NOT INITIAL.
+    SELECT SINGLE *
+      FROM ztb_a2r_wbshdr
+      INTO @ls_header_old
+      WHERE zreq_num = @gv_loaded_reqnum.
+  ELSEIF p_req_num IS NOT INITIAL.
+    SELECT SINGLE *
+      FROM ztb_a2r_wbshdr
+      INTO @ls_header_old
+      WHERE zreq_num = @p_req_num.
+  ENDIF.
 
   IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
-  ENDIF.
-
-
-  "Only creator can edit
-  IF ls_hdr-ernam <> sy-uname.
-    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
-  ENDIF.
-
-  ls_hdr-z_reqtype = 'B3'. "keep locally
-
-  "Must be Draft
-  "Field from your table screenshot: REQUEST_STATUS
-  IF ls_hdr-request_status <> 'APPROVED'.
-  ELSEIF ls_hdr-request_status IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'(m31).
-  ENDIF.
-
-  "Reset buffers (important)
-  CLEAR: gs_header.
-  FREE:  gt_wbs_items, gt_wbs_display.
-
-  "Load header to screen2 structure
-  MOVE-CORRESPONDING ls_hdr TO gs_header.
-
-  "Load items to internal table used by screen2
-  SELECT *
-    FROM ztb_a2r_wbsitem
-    INTO TABLE @gt_wbs_items
-    WHERE zreq_num = @pv_reqnum.
-
-  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
-  p_posnr = gs_header-posnr.
-  p_prnam = gs_header-prnam.
-  p_verna = gs_header-vernr.
-  p_kostl = gs_header-kostl.
-  p_post1 = gs_header-post1.
-  p_prctr = gs_header-prctr.
-  p_plsez = gs_header-plsez.
-  p_profl = gs_header-profl.
-
-  IF p_posnr IS NOT INITIAL.
-
-    SELECT SINGLE posnr
-      FROM ztb_a2r_wbshdr
-      INTO @DATA(lv_edit_posnr)
-      WHERE zreq_num = @p_req_num.
-
-    SELECT SINGLE gjahr
-      FROM impr
-      INTO @DATA(lv_edit_gjahr)
-      WHERE posnr = @lv_edit_posnr.
-  ENDIF.
-
-  "Mark edit mode so prepare_screen2 will NOT copy template
-  gv_gjahr              = lv_edit_gjahr.
-  gv_edit_mode          = abap_true.
-  gv_loaded_reqnum      = pv_reqnum.
-  gv_header_initialized = abap_false.
-
-ENDFORM.
-
-
-FORM prepare_screen2.
-
-  "Always get IM data (safe, doesn't overwrite screen2 edits)
-  PERFORM get_additional_im_data USING p_posnr.
-
-  "Initialize screen2 ONCE only
-  IF gv_header_initialized = abap_true.
-    RETURN.
+    MESSAGE e000(zmsg_a2r) WITH 'Original request not found.'.
   ENDIF.
 
   "------------------------------------------------------------
-  "FIRST ENTRY ONLY
+  " 3) Generate NEW request number for B3
   "------------------------------------------------------------
+  lv_new_reqnum = go_builder->get_next_request_number( ).
 
-  "=============================
-  "EDIT SAVED REQUEST (F1)
-  "=============================
-  IF gv_edit_mode = abap_true.
+  IF lv_new_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Unable to generate request number.'.
+  ENDIF.
 
-    "At this point, caller already loaded:
-    " - gs_header from ZTB_A2R_WBSHDR
-    " - gt_wbs_items from ZTB_A2R_WBSITEM
-    "So DO NOT rebuild anything from template.
-*    PERFORM refresh_gt_wbs_items_from_db USING gv_loaded_reqnum.
+  "------------------------------------------------------------
+  " 4) Build NEW header for B3
+  "    - copy old header first so all old fields are retained
+  "    - overlay current changed screen values
+  "------------------------------------------------------------
+  CLEAR ls_header_new.
+  MOVE-CORRESPONDING ls_header_old TO ls_header_new.
+  MOVE-CORRESPONDING gs_header     TO ls_header_new.
 
-    PERFORM convert_to_display.
-    PERFORM set_wbs_default_values.  "only fills INITIAL values (safe)
+  ls_header_new-mandt          = sy-mandt.
+  ls_header_new-zreq_num       = lv_new_reqnum.
+  ls_header_new-z_reqtype      = 'B3'.
+  ls_header_new-request_status = 'PENDING'.
 
-    "IMPORTANT: Do NOT call populate_header_structure in edit mode
-    "because it may overwrite DB header values (erdat/ernam etc.)
+  "new request audit fields
+  ls_header_new-ernam = sy-uname.
+  ls_header_new-erdat = sy-datum.
+  ls_header_new-aenam = sy-uname.
+  ls_header_new-aedat = sy-datum.
 
-    gv_header_initialized = abap_true.
-    RETURN.
+  "important: this is still same project, only new request record
+  ls_header_new-pspnr = gv_pspnr_sel.
+
+  "clear approval/rejection fields for new request
+  CLEAR: ls_header_new-zapproved_by,
+         ls_header_new-zrequest_approved_on,
+         ls_header_new-zrejecte_by,
+         ls_header_new-zrequest_rejected_on,
+         ls_header_new-zrejectionreason.
+
+  "------------------------------------------------------------
+  " 5) Insert NEW B3 record only
+  "    DO NOT TOUCH OLD A1 RECORD
+  "------------------------------------------------------------
+  INSERT ztb_a2r_wbshdr FROM @ls_header_new.
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create new B3 request.'.
+  ENDIF.
+
+  COMMIT WORK AND WAIT.
+
+  "------------------------------------------------------------
+  " 6) Call your existing method
+  "    old = original A1
+  "    new = new B3 request data
+  "------------------------------------------------------------
+  CLEAR lt_return.
+  lv_success = go_builder->change_project_critical(
+                 iv_pspnr      = gv_pspnr_sel
+                 is_header     = ls_header_new
+                 is_header_old = ls_header_old
+                 et_return     = lt_return ).
+
+  "------------------------------------------------------------
+  " 7) Update ONLY the NEW B3 request row
+  "------------------------------------------------------------
+  IF lv_success = abap_true.
+
+    UPDATE ztb_a2r_wbshdr
+       SET request_status       = 'APPROVED'
+           aenam                = @sy-uname
+           aedat                = @sy-datum
+           zapproved_by         = @sy-uname
+           zrequest_approved_on = @sy-datum
+     WHERE zreq_num = @lv_new_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE s000(zmsg_a2r) WITH
+      |B3 request { lv_new_reqnum } created successfully.|.
+
+  ELSE.
+
+    CLEAR lv_errmsg.
+    LOOP AT lt_return INTO ls_return
+      WHERE type = 'E'
+         OR type = 'A'
+         OR type = 'X'.
+      lv_errmsg = ls_return-message.
+      EXIT.
+    ENDLOOP.
+
+    IF lv_errmsg IS INITIAL.
+      lv_errmsg = 'Critical change failed.'.
+    ENDIF.
+
+    UPDATE ztb_a2r_wbshdr
+       SET request_status = 'PENDING'
+           aenam          = @sy-uname
+           aedat          = @sy-datum
+     WHERE zreq_num = @lv_new_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE e000(zmsg_a2r) WITH lv_errmsg.
 
   ENDIF.
 
-  "=============================
-  "CREATE MODE (A1)
-  "=============================
-
-  " Build WBS items in correct PRHIS order
-  CLEAR gt_wbs_items.
-  CALL METHOD go_builder->copy_template_structure
-    EXPORTING
-      iv_pspid     = p_pspid
-      iv_kostl     = p_kostl
-    CHANGING
-      ct_wbs_items = gt_wbs_items.
-
-  PERFORM convert_to_display.
-  PERFORM set_wbs_default_values.
-  PERFORM populate_header_structure.
-
-  gv_header_initialized = abap_true.
-
 ENDFORM.
-
-
-MODULE user_command_0100 INPUT.
-  DATA: lv_ok_code1 TYPE sy-ucomm.
-
-  lv_ok_code1 = sy-ucomm.
-  CLEAR sy-ucomm.
-
- CASE lv_ok_code1.
-    WHEN 'ENTER' OR ''.
-
-    WHEN 'SAVE'.
-      PERFORM get_text.
-      PERFORM save_request.
-
-    WHEN 'SOP'.
-      CLEAR gv_url.
-      gv_url = TEXT-s04.
-      PERFORM show_dms_link USING gv_url.
-
-    WHEN 'CHECK'.
-      PERFORM validate_screen2 USING abap_false.
-
-    WHEN 'SUBMIT'.
-      PERFORM get_text.
-      PERFORM validate_screen2 USING abap_false.
-*      PERFORM check_data.
-      IF sy-uname = 'HQ75177' OR sy-uname = 'CL83960' OR sy-uname = 'KP05750'.
-        IF gv_req_type = 'B3'.
-          "perform submit B3
-        ENDIF.
-      ELSE.
-        PERFORM submit_direct_creation.
-      ENDIF.
