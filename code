@@ -1,76 +1,94 @@
-  METHOD change_project_critical.
+METHOD change_project_critical.
 
-    DATA: ls_proj_chg TYPE bapi_bus2001_chg,
-          ls_proj_upd TYPE bapi_bus2001_upd,
-          lt_return   TYPE TABLE OF bapiret2,
-          ls_return   TYPE bapiret2,
-          lv_error    TYPE char1.
+  DATA: ls_proj_chg TYPE bapi_bus2001_chg,
+        ls_proj_upd TYPE bapi_bus2001_upd,
+        lt_return   TYPE TABLE OF bapiret2,
+        ls_return   TYPE bapiret2,
+        lv_error    TYPE char1.
 
-    rv_success = abap_false.
+  rv_success = abap_false.
+  CLEAR: lt_return, lv_error.
 
 *---------------------------------------------------------------------*
 * 1) Initialize PS BAPI
 *---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
 *---------------------------------------------------------------------*
 * 2) Fill change structure
 *---------------------------------------------------------------------*
-
-    ls_proj_chg-project_definition = iv_pspid.
-
-    ls_proj_chg-description      = is_header-post1.
-    ls_proj_chg-responsible_no   = is_header-vernr.
-    ls_proj_chg-finish           = is_header-plsez.
-    ls_proj_chg-company_code     = is_header-bukrs.
-    ls_proj_chg-plant            = is_header-werks.
-    ls_proj_chg-profit_ctr       = is_header-prctr.
+  ls_proj_chg-project_definition = iv_pspid.
+  ls_proj_chg-description        = is_header-post1.
+  ls_proj_chg-responsible_no     = is_header-vernr.
+  ls_proj_chg-finish             = is_header-plsez.
+  ls_proj_chg-company_code       = is_header-bukrs.
+  ls_proj_chg-plant              = is_header-werks.
+  ls_proj_chg-profit_ctr         = is_header-prctr.
 
 *---------------------------------------------------------------------*
-* 3) Set UPDATE FLAGS (VERY IMPORTANT)
+* 3) Set update flags
 *---------------------------------------------------------------------*
-
-    ls_proj_upd-description    = 'X'.
-    ls_proj_upd-responsible_no = 'X'.
-    ls_proj_upd-finish         = 'X'.
-    ls_proj_upd-company_code   = 'X'.
-    ls_proj_upd-plant          = 'X'.
-    ls_proj_upd-profit_ctr     = 'X'.
-
-*---------------------------------------------------------------------*
-* 4) Call Change BAPI
-*---------------------------------------------------------------------*
-
-    CALL FUNCTION 'BAPI_BUS2001_CHANGE'
-      EXPORTING
-        i_project_definition     = ls_proj_chg
-        i_project_definition_upd = ls_proj_upd
-      TABLES
-        et_return                = lt_return.
+  ls_proj_upd-description    = 'X'.
+  ls_proj_upd-responsible_no = 'X'.
+  ls_proj_upd-finish         = 'X'.
+  ls_proj_upd-company_code   = 'X'.
+  ls_proj_upd-plant          = 'X'.
+  ls_proj_upd-profit_ctr     = 'X'.
 
 *---------------------------------------------------------------------*
-* 5) Check Errors
+* 4) Call change BAPI
 *---------------------------------------------------------------------*
-
-    LOOP AT lt_return INTO ls_return WHERE type CA 'EA'.
-      lv_error = 'X'.
-      EXIT.
-    ENDLOOP.
-
-    IF lv_error = 'X'.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
+  CALL FUNCTION 'BAPI_BUS2001_CHANGE'
+    EXPORTING
+      i_project_definition     = ls_proj_chg
+      i_project_definition_upd = ls_proj_upd
+    TABLES
+      et_return                = lt_return.
 
 *---------------------------------------------------------------------*
-* 6) Commit
+* 5) Check errors after CHANGE
 *---------------------------------------------------------------------*
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+    lv_error = 'X'.
+    EXIT.
+  ENDLOOP.
 
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
+  IF lv_error = 'X'.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    et_return = lt_return.
+    RETURN.
+  ENDIF.
 
-    rv_success = abap_true.
+*---------------------------------------------------------------------*
+* 6) PRECOMMIT for PS
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+    TABLES
+      et_return = lt_return.
 
-  ENDMETHOD.
+*---------------------------------------------------------------------*
+* 7) Check errors after PRECOMMIT
+*---------------------------------------------------------------------*
+  CLEAR lv_error.
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+    lv_error = 'X'.
+    EXIT.
+  ENDLOOP.
+
+  IF lv_error = 'X'.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    et_return = lt_return.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 8) Final COMMIT
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  et_return = lt_return.
+  rv_success = abap_true.
+
+ENDMETHOD.
