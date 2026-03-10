@@ -2,15 +2,16 @@ MODULE status_0100 OUTPUT.
   SET PF-STATUS 'STATUS_100'.
   SET TITLEBAR 'TITLE_100' ##TITL_UNDEF.
 
-  " Gray out all header information fields (read-only in Screen 2)
   LOOP AT SCREEN.
 
-    " Make all header fields non-editable
+    "=========================================================
+    " Default: Header fields are display-only
+    "=========================================================
     IF screen-name = 'P_POST1'
     OR screen-name = 'P_VERNA'
     OR screen-name = 'P_PLSEZ'
     OR screen-name = 'P_PRNAM'
-    "OR screen-name = 'GV_IM_POSID_DISPLAY'
+    OR screen-name = 'GV_IM_POSID_DISPLAY'
     OR screen-name = 'GV_AVAILABLE_BUDGET'
     OR screen-name = 'GV_AVAIL_BUDGET_TEXT'
     OR screen-name = 'GV_BUKRS'
@@ -24,9 +25,46 @@ MODULE status_0100 OUTPUT.
     OR screen-name = 'GS_HEADER-REQUEST_STATUS'
     OR screen-name = 'GV_REQTYPE_DISPLAY'.
 
-      screen-input = 0.           " Disable input
-      screen-intensified = 0.     " Gray out appearance
+      screen-input = 0.
+      screen-intensified = 0.
       MODIFY SCREEN.
+
+    ENDIF.
+
+    "=========================================================
+    " A1 editable fields only
+    "=========================================================
+    IF gv_req_type = 'A1'.
+      IF screen-name = 'P_POST1'
+      OR screen-name = 'P_VERNA'
+      OR screen-name = 'P_PLSEZ'
+      OR screen-name = 'P_USR10_C'
+      OR screen-name = 'GV_USR008'.
+
+        screen-input = 1.
+        screen-intensified = 1.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDIF.
+
+    "=========================================================
+    " B3 editable fields like B1 / FDS
+    "=========================================================
+    IF gv_req_type = 'B3'.
+      IF screen-name = 'P_POST1'
+      OR screen-name = 'P_VERNA'
+      OR screen-name = 'P_PLSEZ'
+      OR screen-name = 'P_PRNAM'
+      OR screen-name = 'GV_IM_POSID_DISPLAY'
+      OR screen-name = 'GV_BUKRS'
+      OR screen-name = 'GV_WERKS'
+      OR screen-name = 'P_PRCTR'
+      OR screen-name = 'GV_IZWEK'.
+
+        screen-input = 1.
+        screen-intensified = 1.
+        MODIFY SCREEN.
+      ENDIF.
     ENDIF.
 
   ENDLOOP.
