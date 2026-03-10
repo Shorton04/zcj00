@@ -1,133 +1,89 @@
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_COST_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_cost_center USING iv_kokrs TYPE kokrs
-                                iv_kostl TYPE kostl
-                                iv_plsez TYPE ps_plsez_chg
-                          CHANGING cv_error TYPE abap_bool.
+FORM validate_pc_fr_unit
+  USING
+    iv_gjahr TYPE gjahr
+    iv_posnr TYPE impr-posnr
+    iv_prnam TYPE impr-prnam.
 
-  " Check cost center validity against Finish Date
-  SELECT SINGLE @abap_true
-    FROM csks
-    WHERE kostl = @iv_kostl
-      AND kokrs = @iv_kokrs
-      AND datab <= @iv_plsez
-      AND datbi >= @iv_plsez
-   INTO @DATA(lv_found) .
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e000(zmsg_a2r) WITH 'Matrix does not exist. Approver not determined.'(m36).
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
+  DATA: lv_fr_unit_screen TYPE zzfrunit,
+        lv_fr_unit_im     TYPE zzfrunit,
+        lv_im_bukrs       TYPE bukrs,
+        lv_im_prctr       TYPE prctr.
 
+  CLEAR: lv_fr_unit_screen,
+         lv_fr_unit_im,
+         lv_im_bukrs,
+         lv_im_prctr.
 
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_PROFIT_CENTER
-*&---------------------------------------------------------------------*
-FORM validate_profit_center USING iv_kokrs TYPE kokrs
-                                  iv_prctr TYPE prctr
-                                  iv_plsez TYPE ps_plsez_chg
-                         CHANGING cv_error TYPE abap_bool.
+  "---------------------------------------------------------------*
+  "* 1) Read FR Unit of Profit Center entered on screen
+  "*    Key: Fiscal Year + Company Code + Profit Center
+  "---------------------------------------------------------------*
+  SELECT SINGLE fr_unit
+    INTO @lv_fr_unit_screen
+    FROM ztxca_org01
+    WHERE gjahr = @iv_gjahr
+      AND bukrs = @gs_header-bukrs
+      AND prctr = @gs_header-prctr.
 
-  " Check profit center validity against Finish Date
-  SELECT SINGLE @abap_true FROM cepc
-    INTO @DATA(lv_found)
-  WHERE prctr = @iv_prctr
-    AND kokrs = @iv_kokrs
-    AND datbi >= @iv_plsez.
-
-  IF sy-subrc = 0.
-    CLEAR cv_error.
-  ELSE.
-    MESSAGE e000(zmsg_a2r) WITH 'Finish Date:'(m45) iv_plsez 'is not a date scope of'(m46) iv_prctr.
-    cv_error = gc_x.
-  ENDIF.
-ENDFORM.
-
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_CC_PC_ASSIGNMENT
-*&---------------------------------------------------------------------*
-FORM validate_cc_pc_assignment USING iv_kokrs TYPE kokrs
-                                     iv_kostl TYPE kostl
-                                     iv_prctr TYPE prctr
-                            CHANGING cv_error TYPE abap_bool.
-
-  SELECT kokrs, kostl, datbi, datab, bukrs, prctr
-    FROM csks
-    INTO @DATA(ls_csks)
-     WHERE kokrs = @iv_kokrs
-     AND   kostl = @iv_kostl
-     AND   prctr = @iv_prctr
-     AND datab <= @sy-datum
-     AND datbi >= @sy-datum
-    ORDER BY datab.
-  ENDSELECT.
-
-
-  IF ls_csks-prctr <> iv_prctr.
-    MESSAGE e000(zmsg_a2r) WITH iv_kostl 'is not assigned to'(m47) iv_prctr.
-    cv_error = gc_x.
-    RETURN.
+  IF sy-subrc <> 0.
+    MESSAGE e001(zcj00)
+      WITH 'No Functional Reporting Unit found in ZTXCA_ORG01 for Screen Profit Center'
+           gs_header-prctr gs_header-bukrs iv_gjahr.
+    EXIT.
   ENDIF.
 
-  SELECT prctr, datbi, kokrs, bukrs
-    FROM cepc
-    INTO @DATA(ls_cepc)
-    WHERE prctr = @iv_prctr
-    AND kokrs = @iv_kokrs
-    ORDER BY datbi.
-  ENDSELECT.
+  "---------------------------------------------------------------*
+  "* 2) Get IM values (Company Code / Profit Center)
+  "*    based on selected IM Program + IM Position
+  "---------------------------------------------------------------*
+  SELECT SINGLE bukrs, prctr
+    INTO (@lv_im_bukrs, @lv_im_prctr)
+    FROM impr
+    WHERE prnam = @iv_prnam
+      AND posnr = @iv_posnr
+      AND gjahr = @iv_gjahr.
 
-  IF ls_cepc-bukrs IS NOT INITIAL AND
-      ls_cepc-bukrs NE ls_csks-bukrs.
-    MESSAGE e000(zmsg_a2r) WITH 'No Company Code Assigned'."ERROR ASSIGNEE
-    cv_error = gc_x.
+  IF sy-subrc <> 0.
+    MESSAGE e001(zcj00)
+      WITH 'IM data not found in IMPR for validation'
+           iv_prnam iv_posnr iv_gjahr.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 3) Read FR Unit stored in ECC IM header custom table
+  "*    Spec says IM FR Unit is in ZIMP_REQ_HEADER-FR_UNIT
+  "---------------------------------------------------------------*
+  SELECT SINGLE fr_unit
+    INTO @lv_fr_unit_im
+    FROM zimp_req_header
+    WHERE gjahr = @iv_gjahr
+      AND bukrs = @lv_im_bukrs
+      AND prctr = @lv_im_prctr
+      AND prnam = @iv_prnam.
+
+  IF sy-subrc <> 0.
+    MESSAGE e001(zcj00)
+      WITH 'No FR Unit found in ZIMP_REQ_HEADER for selected IM'
+           iv_prnam lv_im_prctr iv_gjahr.
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  "* 4) Compare Screen Profit Center FR Unit vs IM FR Unit
+  "---------------------------------------------------------------*
+  IF lv_fr_unit_screen <> lv_fr_unit_im.
+    MESSAGE e001(zcj00)
+      WITH 'Functional Reporting Unit mismatch between Screen Profit Center and IM'
+           gs_header-prctr lv_fr_unit_screen lv_fr_unit_im.
+    EXIT.
   ENDIF.
 
 ENDFORM.
 
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_FR_UNIT
-*&---------------------------------------------------------------------*
-FORM validate_fr_unit USING iv_posnr TYPE im_posnr
-                            iv_prctr TYPE prctr
-                      CHANGING cv_error TYPE abap_bool.
-
-"ADD LOGIC HERE
-
-ENDFORM.
 
 
-
-
-
-Screen 2 fields
-
-GS_HEADER-POST1
-GS_HEADER-BUKRS
-GS_HEADER-VERNR
-GV_PROJECT_CURRENCY
-GV_REQUESTOR_DISPLAY
-GS_HEADER-PLSEZ
-GS_HEADER-WERKS
-GS_HEADER-REQUEST_STATUS
-GV_IM_POSID_DISPLAY
-GS_HEADER-PRCTR
-GV_REQTYPE_DISPLAY
-GS_HEADER-PRNAM
-GS_HEADER-KOSTL
-GV_GJAHR
-GS_HEADER-IZWEK
-GV_AVAIL_BUDGET_TEXT
-GS_HEADER-ZUNIFIER_PROJ
-GS_HEADER-USR008
-
-
-
-System validation for Profit Center to check that IM will have the same Functional Reporting Unit assigned to Profit Center in table ZTXCA_ORG01. 
-Select FR unit from table ZTXCA_ORG01 where and check if the the fiscal year + co.code + profit center in selection screen is equal to fiscal year + co.code + profit center in IM 
-If FR unit in IM is not the same with ZTXCA_ORG01 is not the same as the one of the profit center in selection screen, throw an error message. 
-FR unit in ECC of IM stored in table ZIMP_REQ_HEADER, field FR_UNIT, data element ZZFRUNIT- For further discussion since this is a custom field on IM 
+PERFORM validate_pc_fr_unit
+  USING gv_gjahr
+        gs_header-posnr
+        gs_header-prnam.
