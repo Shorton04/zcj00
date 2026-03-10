@@ -1,72 +1,133 @@
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100' ##TITL_UNDEF.
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_COST_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_cost_center USING iv_kokrs TYPE kokrs
+                                iv_kostl TYPE kostl
+                                iv_plsez TYPE ps_plsez_chg
+                          CHANGING cv_error TYPE abap_bool.
 
-  LOOP AT SCREEN.
+  " Check cost center validity against Finish Date
+  SELECT SINGLE @abap_true
+    FROM csks
+    WHERE kostl = @iv_kostl
+      AND kokrs = @iv_kokrs
+      AND datab <= @iv_plsez
+      AND datbi >= @iv_plsez
+   INTO @DATA(lv_found) .
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH 'Matrix does not exist. Approver not determined.'(m36).
+    cv_error = gc_x.
+  ENDIF.
+ENDFORM.
 
-    "=========================================================
-    " Default: Header fields are display-only
-    "=========================================================
-    IF screen-name = 'P_POST1'
-    OR screen-name = 'P_VERNA'
-    OR screen-name = 'P_PLSEZ'
-    OR screen-name = 'P_PRNAM'
-    OR screen-name = 'GV_IM_POSID_DISPLAY'
-    OR screen-name = 'GV_AVAILABLE_BUDGET'
-    OR screen-name = 'GV_AVAIL_BUDGET_TEXT'
-    OR screen-name = 'GV_BUKRS'
-    OR screen-name = 'GV_WERKS'
-    OR screen-name = 'GV_PROJECT_CURRENCY'
-    OR screen-name = 'P_PRCTR'
-    OR screen-name = 'GV_IZWEK'
-    OR screen-name = 'P_USR10_C'
-    OR screen-name = 'GV_USR008'
-    OR screen-name = 'GV_REQUESTOR_DISPLAY'
-    OR screen-name = 'GS_HEADER-REQUEST_STATUS'
-    OR screen-name = 'GV_REQTYPE_DISPLAY'.
 
-      screen-input = 0.
-      screen-intensified = 0.
-      MODIFY SCREEN.
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_PROFIT_CENTER
+*&---------------------------------------------------------------------*
+FORM validate_profit_center USING iv_kokrs TYPE kokrs
+                                  iv_prctr TYPE prctr
+                                  iv_plsez TYPE ps_plsez_chg
+                         CHANGING cv_error TYPE abap_bool.
 
-    ENDIF.
+  " Check profit center validity against Finish Date
+  SELECT SINGLE @abap_true FROM cepc
+    INTO @DATA(lv_found)
+  WHERE prctr = @iv_prctr
+    AND kokrs = @iv_kokrs
+    AND datbi >= @iv_plsez.
 
-    "=========================================================
-    " A1 editable fields only
-    "=========================================================
-    IF gv_req_type = 'A1'.
-      IF screen-name = 'P_POST1'
-      OR screen-name = 'P_VERNA'
-      OR screen-name = 'P_PLSEZ'
-      OR screen-name = 'P_USR10_C'
-      OR screen-name = 'GV_USR008'.
+  IF sy-subrc = 0.
+    CLEAR cv_error.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH 'Finish Date:'(m45) iv_plsez 'is not a date scope of'(m46) iv_prctr.
+    cv_error = gc_x.
+  ENDIF.
+ENDFORM.
 
-        screen-input = 1.
-        screen-intensified = 1.
-        MODIFY SCREEN.
-      ENDIF.
-    ENDIF.
 
-    "=========================================================
-    " B3 editable fields like B1 / FDS
-    "=========================================================
-    IF gv_req_type = 'B3'.
-      IF screen-name = 'P_POST1'
-      OR screen-name = 'P_VERNA'
-      OR screen-name = 'P_PLSEZ'
-      OR screen-name = 'P_PRNAM'
-      OR screen-name = 'GV_IM_POSID_DISPLAY'
-      OR screen-name = 'GV_BUKRS'
-      OR screen-name = 'GV_WERKS'
-      OR screen-name = 'P_PRCTR'
-      OR screen-name = 'GV_IZWEK'.
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_CC_PC_ASSIGNMENT
+*&---------------------------------------------------------------------*
+FORM validate_cc_pc_assignment USING iv_kokrs TYPE kokrs
+                                     iv_kostl TYPE kostl
+                                     iv_prctr TYPE prctr
+                            CHANGING cv_error TYPE abap_bool.
 
-        screen-input = 1.
-        screen-intensified = 1.
-        MODIFY SCREEN.
-      ENDIF.
-    ENDIF.
+  SELECT kokrs, kostl, datbi, datab, bukrs, prctr
+    FROM csks
+    INTO @DATA(ls_csks)
+     WHERE kokrs = @iv_kokrs
+     AND   kostl = @iv_kostl
+     AND   prctr = @iv_prctr
+     AND datab <= @sy-datum
+     AND datbi >= @sy-datum
+    ORDER BY datab.
+  ENDSELECT.
 
-  ENDLOOP.
 
-ENDMODULE.
+  IF ls_csks-prctr <> iv_prctr.
+    MESSAGE e000(zmsg_a2r) WITH iv_kostl 'is not assigned to'(m47) iv_prctr.
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  SELECT prctr, datbi, kokrs, bukrs
+    FROM cepc
+    INTO @DATA(ls_cepc)
+    WHERE prctr = @iv_prctr
+    AND kokrs = @iv_kokrs
+    ORDER BY datbi.
+  ENDSELECT.
+
+  IF ls_cepc-bukrs IS NOT INITIAL AND
+      ls_cepc-bukrs NE ls_csks-bukrs.
+    MESSAGE e000(zmsg_a2r) WITH 'No Company Code Assigned'."ERROR ASSIGNEE
+    cv_error = gc_x.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form VALIDATE_FR_UNIT
+*&---------------------------------------------------------------------*
+FORM validate_fr_unit USING iv_posnr TYPE im_posnr
+                            iv_prctr TYPE prctr
+                      CHANGING cv_error TYPE abap_bool.
+
+"ADD LOGIC HERE
+
+ENDFORM.
+
+
+
+
+
+Screen 2 fields
+
+GS_HEADER-POST1
+GS_HEADER-BUKRS
+GS_HEADER-VERNR
+GV_PROJECT_CURRENCY
+GV_REQUESTOR_DISPLAY
+GS_HEADER-PLSEZ
+GS_HEADER-WERKS
+GS_HEADER-REQUEST_STATUS
+GV_IM_POSID_DISPLAY
+GS_HEADER-PRCTR
+GV_REQTYPE_DISPLAY
+GS_HEADER-PRNAM
+GS_HEADER-KOSTL
+GV_GJAHR
+GS_HEADER-IZWEK
+GV_AVAIL_BUDGET_TEXT
+GS_HEADER-ZUNIFIER_PROJ
+GS_HEADER-USR008
+
+
+
+System validation for Profit Center to check that IM will have the same Functional Reporting Unit assigned to Profit Center in table ZTXCA_ORG01. 
+Select FR unit from table ZTXCA_ORG01 where and check if the the fiscal year + co.code + profit center in selection screen is equal to fiscal year + co.code + profit center in IM 
+If FR unit in IM is not the same with ZTXCA_ORG01 is not the same as the one of the profit center in selection screen, throw an error message. 
+FR unit in ECC of IM stored in table ZIMP_REQ_HEADER, field FR_UNIT, data element ZZFRUNIT- For further discussion since this is a custom field on IM 
