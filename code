@@ -1,11 +1,16 @@
-FORM validate_approver_matrix.
+FORM validate_approver_matrix CHANGING cv_error TYPE abap_bool.
 
   DATA: ls_conf2 TYPE ztb_a2r_conftab2.
+
+  cv_error = abap_false.
+  CLEAR ls_conf2.
 
   IF gs_header-bukrs IS INITIAL
   OR gs_header-profl IS INITIAL
   OR gs_header-z_reqtype IS INITIAL.
+    cv_error = abap_true.
     MESSAGE e000(zmsg_a2r) WITH 'Company Code, Project Profile, and Request Type are required.'.
+    RETURN.
   ENDIF.
 
   SELECT SINGLE *
@@ -16,13 +21,17 @@ FORM validate_approver_matrix.
       AND z_reqtype = @gs_header-z_reqtype.
 
   IF sy-subrc <> 0.
+    cv_error = abap_true.
     MESSAGE e037(zmsg_02c) WITH 'Matrix does not exist. Approver not determined.'.
+    RETURN.
   ENDIF.
 
   IF ls_conf2-zaproval_1 IS INITIAL
      AND ls_conf2-zaproval_2 IS INITIAL
      AND ls_conf2-zerror_handling IS INITIAL.
+    cv_error = abap_true.
     MESSAGE e037(zmsg_02c) WITH 'Matrix does not exist. Approver not determined.'.
+    RETURN.
   ENDIF.
 
 ENDFORM.
