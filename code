@@ -5,125 +5,63 @@ MODULE user_command_0100 INPUT.
   CLEAR sy-ucomm.
 
   "------------------------------------------------------------
-  " Sync ALL editable screen fields on every PAI
-  " Store latest user-edited values into shadow structure
+  " Screen 0100 values are already transported by dynpro into:
+  "   - GS_HEADER-*  for bound header fields
+  "   - GV_*         for helper/display fields
+  "
+  " So do NOT copy from P_* here.
+  " Only keep sticky/shadow values for fields that are editable
+  " on screen 0100 and helper fields that need conversion later.
   "------------------------------------------------------------
 
-  IF p_post1 <> gs_header-post1.
-    gs_header-post1      = p_post1.
-    gs_header_user-post1 = p_post1.
-    gv_u_post1           = abap_true.
-  ELSEIF gv_u_post1 = abap_true.
-    gs_header-post1      = p_post1.
-    gs_header_user-post1 = p_post1.
-  ENDIF.
+  " Description
+  gs_header_user-post1 = gs_header-post1.
+  gv_u_post1           = abap_true.
 
-  IF p_verna <> gs_header-vernr.
-    gs_header-vernr      = p_verna.
-    gs_header_user-vernr = p_verna.
-    gv_u_vernr           = abap_true.
-  ELSEIF gv_u_vernr = abap_true.
-    gs_header-vernr      = p_verna.
-    gs_header_user-vernr = p_verna.
-  ENDIF.
+  " Person Responsible
+  gs_header_user-vernr = gs_header-vernr.
+  gv_u_vernr           = abap_true.
 
-  IF p_plsez <> gs_header-plsez.
-    gs_header-plsez      = p_plsez.
-    gs_header_user-plsez = p_plsez.
-    gv_u_plsez           = abap_true.
-  ELSEIF gv_u_plsez = abap_true.
-    gs_header-plsez      = p_plsez.
-    gs_header_user-plsez = p_plsez.
-  ENDIF.
+  " Finish Date
+  gs_header_user-plsez = gs_header-plsez.
+  gv_u_plsez           = abap_true.
 
   " IM Program
-  IF p_prnam <> gs_header-prnam.
-    gs_header-prnam      = p_prnam.
-    gs_header_user-prnam = p_prnam.
-    gv_u_prnam           = abap_true.
-  ELSEIF gv_u_prnam = abap_true.
-    gs_header-prnam      = p_prnam.
-    gs_header_user-prnam = p_prnam.
-  ENDIF.
+  gs_header_user-prnam = gs_header-prnam.
+  gv_u_prnam           = abap_true.
 
   " Company Code
-  IF gv_bukrs <> gs_header-bukrs.
-    gs_header-bukrs      = gv_bukrs.
-    gs_header_user-bukrs = gv_bukrs.
-    gv_u_bukrs           = abap_true.
-  ELSEIF gv_u_bukrs = abap_true.
-    gs_header-bukrs      = gv_bukrs.
-    gs_header_user-bukrs = gv_bukrs.
-  ENDIF.
+  gs_header_user-bukrs = gs_header-bukrs.
+  gv_u_bukrs           = abap_true.
 
   " Plant
-  IF gv_werks <> gs_header-werks.
-    gs_header-werks      = gv_werks.
-    gs_header_user-werks = gv_werks.
-    gv_u_werks           = abap_true.
-  ELSEIF gv_u_werks = abap_true.
-    gs_header-werks      = gv_werks.
-    gs_header_user-werks = gv_werks.
-  ENDIF.
+  gs_header_user-werks = gs_header-werks.
+  gv_u_werks           = abap_true.
 
   " Profit Center
-  IF p_prctr <> gs_header-prctr.
-    gs_header-prctr      = p_prctr.
-    gs_header_user-prctr = p_prctr.
-    gv_u_prctr           = abap_true.
-  ELSEIF gv_u_prctr = abap_true.
-    gs_header-prctr      = p_prctr.
-    gs_header_user-prctr = p_prctr.
-  ENDIF.
+  gs_header_user-prctr = gs_header-prctr.
+  gv_u_prctr           = abap_true.
 
   " Cost Center
-  IF p_kostl <> gs_header-kostl.
-    gs_header-kostl      = p_kostl.
-    gs_header_user-kostl = p_kostl.
-    gv_u_kostl           = abap_true.
-  ELSEIF gv_u_kostl = abap_true.
-    gs_header-kostl      = p_kostl.
-    gs_header_user-kostl = p_kostl.
-  ENDIF.
+  gs_header_user-kostl = gs_header-kostl.
+  gv_u_kostl           = abap_true.
 
   " Investment Reason
-  IF gv_izwek <> gs_header-izwek.
-    gs_header-izwek      = gv_izwek.
-    gs_header_user-izwek = gv_izwek.
-    gv_u_izwek           = abap_true.
-  ELSEIF gv_u_izwek = abap_true.
-    gs_header-izwek      = gv_izwek.
-    gs_header_user-izwek = gv_izwek.
-  ENDIF.
+  gs_header_user-izwek = gs_header-izwek.
+  gv_u_izwek           = abap_true.
 
   " GE Ariba WF Flag / Unifier
-  IF p_usr10_c <> gs_header-zunifier_proj.
-    gs_header-zunifier_proj      = p_usr10_c.
-    gs_header_user-zunifier_proj = p_usr10_c.
-    gv_u_zunifier_proj           = abap_true.
-  ELSEIF gv_u_zunifier_proj = abap_true.
-    gs_header-zunifier_proj      = p_usr10_c.
-    gs_header_user-zunifier_proj = p_usr10_c.
-  ENDIF.
+  gs_header_user-zunifier_proj = gs_header-zunifier_proj.
+  gv_u_zunifier_proj           = abap_true.
 
   " CAR Approval / USR008
-  IF gv_usr008 <> gs_header-usr008.
-    gs_header-usr008      = gv_usr008.
-    gs_header_user-usr008 = gv_usr008.
-    gv_u_usr008           = abap_true.
-  ELSEIF gv_u_usr008 = abap_true.
-    gs_header-usr008      = gv_usr008.
-    gs_header_user-usr008 = gv_usr008.
-  ENDIF.
+  gs_header_user-usr008 = gs_header-usr008.
+  gv_u_usr008           = abap_true.
 
   " IM Program Position display field -> keep external value sticky
   IF gv_im_posid_display IS NOT INITIAL.
-    IF gv_im_posid_display <> gv_im_posid_user.
-      gv_im_posid_user = gv_im_posid_display.
-      gv_u_im_posid    = abap_true.
-    ELSEIF gv_u_im_posid = abap_true.
-      gv_im_posid_user = gv_im_posid_display.
-    ENDIF.
+    gv_im_posid_user = gv_im_posid_display.
+    gv_u_im_posid    = abap_true.
   ENDIF.
 
   CASE lv_ok_code1.
@@ -191,11 +129,14 @@ ENDMODULE.
 
 
 
+
 FORM sync_screen_to_header.
 
   DATA: lv_posnr TYPE im_posnr.
 
-  " Push shadow (user-edited) values into gs_header before save
+  "------------------------------------------------------------
+  " Push shadow values into GS_HEADER before save/submit
+  "------------------------------------------------------------
   IF gv_u_post1 = abap_true.
     gs_header-post1 = gs_header_user-post1.
   ENDIF.
@@ -240,19 +181,21 @@ FORM sync_screen_to_header.
     gs_header-usr008 = gs_header_user-usr008.
   ENDIF.
 
-  " Sync IM Position display value back to internal POSNR before saving
+  "------------------------------------------------------------
+  " Convert IM Position display value back to internal POSNR
+  "------------------------------------------------------------
   IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
 
     CLEAR lv_posnr.
 
-    " Try direct match by POSID
+    "Direct match by POSID
     SELECT SINGLE posnr
       FROM impr
       INTO @lv_posnr
       WHERE posid = @gv_im_posid_user.
 
     IF sy-subrc <> 0.
-      " Fallback: ALPHA conversion
+      "Fallback: user may have entered internal-like value
       CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
         EXPORTING
           input  = gv_im_posid_user
@@ -276,4 +219,3 @@ FORM sync_screen_to_header.
   ENDIF.
 
 ENDFORM.
-
