@@ -1,32 +1,9 @@
-Some of the fields in B# when i changed the value and submit, the old value are still used.
-
-here's the fields of header:
-GS_HEADER-POST1
-GS_HEADER-BUKRS
-GS_HEADER-VERNR
-GV_PROJECT_CURRENCY
-GV_REQUESTOR_DISPLAY
-GS_HEADER-PLSEZ
-GS_HEADER-WERKS
-GS_HEADER-REQUEST_STATUS
-GV_IM_POSID_DISPLAY
-GS_HEADER-PRCTR
-GV_REQTYPE_DISPLAY
-GS_HEADER-PRNAM
-GS_HEADER-KOSTL
-GV_GJAHR
-GS_HEADER-IZWEK
-GV_AVAIL_BUDGET_TEXT
-GS_HEADER-ZUNIFIER_PROJ
-GS_HEADER-USR008
-
-
 MODULE set_header_display_values OUTPUT.
 
-  DATA: lv_reqtype_text TYPE char20.
-  DATA: lv_posnr_for_budget TYPE im_posnr.
+  DATA: lv_reqtype_text     TYPE char20,
+        lv_posnr_for_budget TYPE im_posnr.
 
-  " Derive gv_im_posid_display only when user hasn't edited it
+  " IM position display - derive only if user did not edit
   IF gv_u_im_posid IS INITIAL.
     IF gs_header-posnr IS NOT INITIAL.
       PERFORM get_im_posid_for_display
@@ -36,8 +13,7 @@ MODULE set_header_display_values OUTPUT.
     ENDIF.
   ENDIF.
 
-
-  " Step 1: Let display-only fields re-derive normally
+  " Requestor display
   IF gs_header-ernam IS NOT INITIAL.
     PERFORM get_user_fullname
       USING    gs_header-ernam
@@ -50,39 +26,34 @@ MODULE set_header_display_values OUTPUT.
     gv_requestor_display = lv_fullname.
   ENDIF.
 
+  " Request type text
   IF gs_header-z_reqtype IS NOT INITIAL.
     PERFORM get_request_type_text
       USING    gs_header-z_reqtype
       CHANGING lv_reqtype_text.
     gv_reqtype_display = lv_reqtype_text.
   ELSE.
-    gv_reqtype_display = 'Create'(c01).
+    gv_reqtype_display = 'Create'.
   ENDIF.
 
-  IF gs_header-posnr IS NOT INITIAL.
-    PERFORM get_im_posid_for_display
-      USING    gs_header-posnr
-      CHANGING gv_im_posid_display.
-  ENDIF.
-
-
-  " Budget display: re-derive based on whether user changed posid or not
+  " Budget display
   IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
-    " User replaced posid - resolve to posnr first, then get budget
-    SELECT SINGLE posnr FROM impr
-      INTO lv_posnr_for_budget
-      WHERE posid = gv_im_posid_user.
+
+    SELECT SINGLE posnr
+      FROM impr
+      INTO @lv_posnr_for_budget
+      WHERE posid = @gv_im_posid_user.
 
     IF sy-subrc <> 0.
-      " Try ALPHA conversion fallback
       CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
         EXPORTING
           input  = gv_im_posid_user
         IMPORTING
           output = lv_posnr_for_budget.
 
-      SELECT SINGLE posnr FROM impr
-        INTO @lv_check
+      SELECT SINGLE posnr
+        FROM impr
+        INTO @DATA(lv_check)
         WHERE posnr = @lv_posnr_for_budget.
 
       IF sy-subrc <> 0.
@@ -90,20 +61,18 @@ MODULE set_header_display_values OUTPUT.
       ENDIF.
     ENDIF.
 
-    " Re-derive budget using resolved posnr from user input
     IF lv_posnr_for_budget IS NOT INITIAL.
       PERFORM get_available_budget_display
         USING    lv_posnr_for_budget
         CHANGING gv_avail_budget_text
                  gv_available_budget.
     ELSE.
-      " User typed invalid posid - show No budget
       gv_avail_budget_text = 'No'.
       CLEAR gv_available_budget.
     ENDIF.
 
   ELSE.
-    " No user edit - use original gs_header-posnr as normal
+
     IF gs_header-posnr IS NOT INITIAL.
       PERFORM get_available_budget_display
         USING    gs_header-posnr
@@ -113,24 +82,28 @@ MODULE set_header_display_values OUTPUT.
       gv_avail_budget_text = 'No'.
       CLEAR gv_available_budget.
     ENDIF.
+
   ENDIF.
 
+  " Project currency display only
   IF gs_header-pspnr IS NOT INITIAL.
     PERFORM get_project_currency
       USING    gs_header-pspnr
       CHANGING gv_project_currency.
-  ELSE.
-    IF gv_bukrs IS NOT INITIAL.
-      SELECT SINGLE waers FROM t001
-        INTO gv_project_currency
-        WHERE bukrs = gv_bukrs.
-    ENDIF.
+  ELSEIF gs_header-bukrs IS NOT INITIAL.
+    SELECT SINGLE waers
+      FROM t001
+      INTO @gv_project_currency
+      WHERE bukrs = @gs_header-bukrs.
   ENDIF.
 
-  " Step 2: ALWAYS restore user-edited values LAST
-  " This overwrites anything that auto-population may have put into gs_header
+  " Restore user-edited values LAST
   IF gv_u_post1 = abap_true.
     gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+
+  IF gv_u_bukrs = abap_true.
+    gs_header-bukrs = gs_header_user-bukrs.
   ENDIF.
 
   IF gv_u_vernr = abap_true.
@@ -141,19 +114,36 @@ MODULE set_header_display_values OUTPUT.
     gs_header-plsez = gs_header_user-plsez.
   ENDIF.
 
+  IF gv_u_werks = abap_true.
+    gs_header-werks = gs_header_user-werks.
+  ENDIF.
+
   IF gv_u_prctr = abap_true.
     gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+
+  IF gv_u_prnam = abap_true.
+    gs_header-prnam = gs_header_user-prnam.
   ENDIF.
 
   IF gv_u_kostl = abap_true.
     gs_header-kostl = gs_header_user-kostl.
   ENDIF.
 
+  IF gv_u_izwek = abap_true.
+    gs_header-izwek = gs_header_user-izwek.
+  ENDIF.
+
+  IF gv_u_zunifier_proj = abap_true.
+    gs_header-zunifier_proj = gs_header_user-zunifier_proj.
+  ENDIF.
+
+  IF gv_u_usr008 = abap_true.
+    gs_header-usr008 = gs_header_user-usr008.
+  ENDIF.
+
   IF gv_u_im_posid = abap_true.
     gv_im_posid_display = gv_im_posid_user.
-
   ENDIF.
 
 ENDMODULE.
-
-
