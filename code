@@ -1,12 +1,13 @@
-FORM submit_b3.
+FORM submit_b2.
 
-  DATA: lv_reqnum  TYPE ztb_a2r_wbshdr-zreq_num,
-        lv_success TYPE abap_bool.
+  DATA: lv_reqnum   TYPE ztb_a2r_wbshdr-zreq_num,
+        lv_success  TYPE abap_bool,
+        lt_return   TYPE TABLE OF bapiret2,
+        ls_return   TYPE bapiret2.
 
 *---------------------------------------------------------------------*
 * STEP 1 : Sync screen
 *---------------------------------------------------------------------*
-
   PERFORM sync_screen_to_header.
   PERFORM convert_from_display.
 
@@ -15,47 +16,31 @@ FORM submit_b3.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 2 : SAVE B3 REQUEST
+* STEP 2 : SAVE B2 REQUEST
 *---------------------------------------------------------------------*
-
-  lv_reqnum = go_builder->save_request_for_submit_b3(
+  lv_reqnum = go_builder->save_request_for_submit_b2(
     is_header    = gs_header
     it_wbs_items = gt_wbs_items ).
 
   IF lv_reqnum IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B3 request'.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B2 request'.
     RETURN.
   ENDIF.
 
   gs_header-zreq_num = lv_reqnum.
 
 *---------------------------------------------------------------------*
-* STEP 3 : Execute Critical Change
+* STEP 3 : Execute Project Change
 *---------------------------------------------------------------------*
+  CLEAR lt_return.
 
-  lv_success = go_builder->change_project_critical(
-    iv_pspid      = gs_header-pspid
-    is_header     = gs_header
-    is_header_old = gs_header ).
+  lv_success = go_builder->change_project_non_critical_b2(
+    iv_pspid   = gs_header-pspid
+    is_header  = gs_header
+    IMPORTING
+      et_return = lt_return ).
 
-*---------------------------------------------------------------------*
-* STEP 4 : Update Status
-*---------------------------------------------------------------------*
-
-  IF lv_success = abap_true.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status       = 'APPROVED',
-          zapproved_by         = @sy-uname,
-          zrequest_approved_on = @sy-datum
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    MESSAGE s000(zmsg_a2r) WITH 'B3 request approved'(m21) lv_reqnum.
-    LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
-
-  ELSE.
+  IF lv_success <> abap_true.
 
     UPDATE ztb_a2r_wbshdr
       SET request_status = 'ERROR'
@@ -63,8 +48,102 @@ FORM submit_b3.
 
     COMMIT WORK AND WAIT.
 
-    MESSAGE e000(zmsg_a2r) WITH 'Critical change failed'.
+    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
+    IF sy-subrc <> 0.
+      READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
+    ENDIF.
 
+    IF ls_return-message IS NOT INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH ls_return-message.
+    ELSE.
+      MESSAGE e000(zmsg_a2r) WITH 'B2 project change failed'.
+    ENDIF.
+
+    RETURN.
   ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 4 : Execute WBS Change
+*---------------------------------------------------------------------*
+  CLEAR lt_return.
+
+  lv_success = go_builder->change_wbs_non_critical_b2(
+    iv_pspid     = gs_header-pspid
+    it_wbs_items = gt_wbs_items
+    IMPORTING
+      et_return  = lt_return ).
+
+  IF lv_success <> abap_true.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = @lv_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
+    IF sy-subrc <> 0.
+      READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
+    ENDIF.
+
+    IF ls_return-message IS NOT INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH ls_return-message.
+    ELSE.
+      MESSAGE e000(zmsg_a2r) WITH 'B2 WBS change failed'.
+    ENDIF.
+
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 5 : Assign Plan Values
+*---------------------------------------------------------------------*
+  lv_success = go_builder->assign_plan_values_b2(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items ).
+
+  IF lv_success <> abap_true.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = @lv_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE e000(zmsg_a2r) WITH 'B2 plan value update failed'.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 6 : Assign Budget CJ30
+*---------------------------------------------------------------------*
+  lv_success = go_builder->assign_budget_cj30_b2(
+    is_header = gs_header ).
+
+  IF lv_success <> abap_true.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = @lv_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE e000(zmsg_a2r) WITH 'B2 budget update failed'.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 7 : Update Status
+*---------------------------------------------------------------------*
+  UPDATE ztb_a2r_wbshdr
+    SET request_status       = 'APPROVED',
+        zapproved_by         = @sy-uname,
+        zrequest_approved_on = @sy-datum
+    WHERE zreq_num = @lv_reqnum.
+
+  COMMIT WORK AND WAIT.
+
+  MESSAGE s000(zmsg_a2r) WITH 'B2 request approved' lv_reqnum.
+  LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
 
 ENDFORM.
