@@ -1,4 +1,103 @@
-  METHOD copy_template_structure.
+FORM validate_and_load_b1 USING pv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr  TYPE ztb_a2r_wbshdr,
+        ls_proj TYPE proj.
+  DATA: lv_reqnum_b3    TYPE ztb_a2r_wbshdr-zreq_num,
+        lv_request_stat TYPE ztb_a2r_wbshdr-request_status,
+        lv_pending_b3   TYPE ztb_a2r_wbshdr-z_reqtype.
+
+  SELECT SINGLE MAX( zreq_num )
+    FROM ztb_a2r_wbshdr
+    INTO @lv_reqnum_b3
+    WHERE pspnr = @gv_pspnr_sel.
+
+  IF lv_reqnum_b3 IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+  ENDIF.
+
+  IF lv_reqnum_b3 IS NOT INITIAL.
+    pv_reqnum = lv_reqnum_b3.
+  ENDIF.
+
+  SELECT SINGLE request_status, z_reqtype
+   FROM ztb_a2r_wbshdr
+   INTO (@lv_request_stat, @lv_pending_b3)
+   WHERE zreq_num = @lv_reqnum_b3.
+
+  IF lv_request_stat <> 'APPROVED' AND lv_pending_b3 = 'B1'.
+    MESSAGE e000(zmsg_a2r) WITH 'You have a pending request for CAR'(m55).
+  ENDIF.
+
+  "Read Header
+  SELECT SINGLE *
+    FROM ztb_a2r_wbshdr
+    INTO @ls_hdr
+    WHERE zreq_num = @pv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+  ENDIF.
+
+
+  "Only creator can edit
+  IF ls_hdr-ernam <> sy-uname.
+    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+  ENDIF.
+
+  "Must be Draft
+  "Field from your table screenshot: REQUEST_STATUS
+  IF ls_hdr-request_status <> 'APPROVED'.
+  ELSEIF ls_hdr-request_status IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project created from ZA2R_ZCJ00.'(m31).
+  ENDIF.
+
+  "Reset buffers (important)
+  CLEAR: gs_header.
+  FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header to screen2 structure
+  MOVE-CORRESPONDING ls_hdr TO gs_header.
+
+  "Load items to internal table used by screen2
+  SELECT *
+    FROM ztb_a2r_wbsitem
+    INTO TABLE @gt_wbs_items
+    WHERE zreq_num = @pv_reqnum.
+
+  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+  p_posnr = gs_header-posnr.
+  p_prnam = gs_header-prnam.
+  p_verna = gs_header-vernr.
+  p_kostl = gs_header-kostl.
+  p_post1 = gs_header-post1.
+  p_prctr = gs_header-prctr.
+  p_plsez = gs_header-plsez.
+  p_profl = gs_header-profl.
+
+  IF p_posnr IS NOT INITIAL.
+
+    SELECT SINGLE posnr
+      FROM ztb_a2r_wbshdr
+      INTO @DATA(lv_edit_posnr)
+      WHERE zreq_num = @p_req_num.
+
+    SELECT SINGLE gjahr
+      FROM impr
+      INTO @DATA(lv_edit_gjahr)
+      WHERE posnr = @lv_edit_posnr.
+  ENDIF.
+
+  "Mark edit mode so prepare_screen2 will NOT copy template
+  gv_gjahr              = lv_edit_gjahr.
+  gv_edit_mode          = abap_true.
+  gv_loaded_reqnum      = pv_reqnum.
+  gv_header_initialized = abap_false.
+
+ENDFORM.
+
+
+
+METHOD copy_template_structure.
 
     "------------------------------------------------------------
     " Correct template sequencing using PRHIS hierarchy pointers
