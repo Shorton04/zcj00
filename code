@@ -1,306 +1,265 @@
-FORM submit_b3.
+  METHOD assign_plan_values.
 
-  DATA: lv_reqnum  TYPE ztb_a2r_wbshdr-zreq_num,
-        lv_success TYPE abap_bool.
+    DATA: lv_errors_found TYPE oax,
+          lt_bpak         TYPE TABLE OF bpak,
+          ls_bpak         TYPE bpak,
+          ls_item         TYPE ztb_a2r_wbsitem,
+          lv_objnr        TYPE j_objnr,
+          lv_rollup       TYPE c,
+          lv_delta        TYPE c,
+          lt_return       TYPE TABLE OF bapiret2.
+    DATA: lv_waers        TYPE waers.
 
-*---------------------------------------------------------------------*
-* STEP 1 : Sync screen
-*---------------------------------------------------------------------*
+    ">>> NEW: max stufe
+    DATA: lv_max_stufe    TYPE ztb_a2r_wbsitem-stufe.
 
-  PERFORM sync_screen_to_header.
-  PERFORM convert_from_display.
+    rv_success = abap_false.
+    CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  IF go_builder IS INITIAL.
-    CREATE OBJECT go_builder.
-  ENDIF.
+    lv_rollup = 'X'.
+    lv_delta  = 'X'.
 
-*---------------------------------------------------------------------*
-* STEP 2 : SAVE B3 REQUEST
-*---------------------------------------------------------------------*
+    "1) Primary: read from header table
+    SELECT SINGLE waers
+      INTO @lv_waers
+      FROM ztb_a2r_wbshdr
+      WHERE zreq_num = @is_header-zreq_num.
 
-  lv_reqnum = go_builder->save_request_for_submit_b3(
-    is_header    = gs_header
-    it_wbs_items = gt_wbs_items ).
-
-  IF lv_reqnum IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B3 request'.
-    RETURN.
-  ENDIF.
-
-  gs_header-zreq_num = lv_reqnum.
-
-*---------------------------------------------------------------------*
-* STEP 3 : Execute Critical Change
-*---------------------------------------------------------------------*
-
-  lv_success = go_builder->change_project_critical(
-    iv_pspid      = gs_header-pspid
-    is_header     = gs_header
-    is_header_old = gs_header ).
-
-*---------------------------------------------------------------------*
-* STEP 4 : Update Status
-*---------------------------------------------------------------------*
-
-  IF lv_success = abap_true.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status       = 'APPROVED',
-          zapproved_by         = @sy-uname,
-          zrequest_approved_on = @sy-datum
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    MESSAGE s000(zmsg_a2r) WITH 'B3 request approved'(m21) lv_reqnum.
-    LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
-
-  ELSE.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'ERROR'
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    MESSAGE e000(zmsg_a2r) WITH 'Critical change failed'.
-
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-METHOD save_request_for_submit_b3.
-
-    DATA: ls_header TYPE ztb_a2r_wbshdr,
-          ls_item   TYPE ztb_a2r_wbsitem,
-          ls_wbs    TYPE ztb_a2r_wbsitem,
-          lv_error  TYPE abap_bool.
-
-    DATA: lv_vkokr        TYPE kokrs,
-          lv_zreq_num_old TYPE ztb_a2r_wbsitem-zreq_num,
-          lv_pspnr        TYPE ps_pspnr.
-
-*---------------------------------------------------------------------*
-* Determine controlling area
-*---------------------------------------------------------------------*
-
-    lv_vkokr = is_header-vkokr.
-
-    IF lv_vkokr IS INITIAL.
-
-        SELECT SINGLE vkokr
-          INTO lv_vkokr
-          FROM ztb_a2r_wbsitem
-          WHERE zreq_num = is_header-zreq_num AND stufe = 1.
-
+    "2) Fallback: from is_header if already passed in
+    IF lv_waers IS INITIAL.
+      lv_waers = is_header-waers.
     ENDIF.
 
-*---------------------------------------------------------------------*
-* STEP 1 : ALWAYS GENERATE NEW REQUEST NUMBER
-*---------------------------------------------------------------------*
-
-    rv_reqnum = get_next_request_number( ).
-
-    IF rv_reqnum IS INITIAL.
-      RETURN.
+    "3) Fallback: derive from company code (T001) if still initial
+    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+      SELECT SINGLE waers
+        INTO @lv_waers
+        FROM t001
+        WHERE bukrs = @is_header-bukrs.
     ENDIF.
 
-*---------------------------------------------------------------------*
-* STEP 2 : PREPARE HEADER
-*---------------------------------------------------------------------*
-
-    CLEAR ls_header.
-
-    ls_header-mandt = sy-mandt.
-    ls_header-zreq_num = rv_reqnum.
-
-    ls_header-posnr = is_header-posnr.
-    ls_header-prnam = is_header-prnam.
-    ls_header-pspnr = is_header-pspnr.
-    ls_header-post1 = is_header-post1.
-    ls_header-vernr = is_header-vernr.
-    ls_header-plsez = is_header-plsez.
-    ls_header-bukrs = is_header-bukrs.
-    ls_header-werks = is_header-werks.
-    ls_header-waers = is_header-waers.
-    ls_header-prctr = is_header-prctr.
-    ls_header-kostl = is_header-kostl.
-
-    ls_header-vkokr = lv_vkokr.
-
-    ls_header-izwek = is_header-izwek.
-    ls_header-zunifier_proj = is_header-zunifier_proj.
-    ls_header-usr008 = is_header-usr008.
-    ls_header-profl = is_header-profl.
-
-*---------------------------------------------------------------------*
-* B3 specific
-*---------------------------------------------------------------------*
-
-    ls_header-z_reqtype = 'B3'.
-    ls_header-request_status = 'PENDING'.
-
-    ls_header-ernam = sy-uname.
-    ls_header-erdat = sy-datum.
-
-    IF is_header-z_remarks IS NOT INITIAL.
-      ls_header-z_remarks = is_header-z_remarks.
-    ENDIF.
-
-*---------------------------------------------------------------------*
-* STEP 3 : INSERT HEADER
-*---------------------------------------------------------------------*
-
-    INSERT ztb_a2r_wbshdr FROM ls_header.
-
-    IF sy-subrc <> 0.
-      CLEAR rv_reqnum.
-      RETURN.
-    ENDIF.
-
-*---------------------------------------------------------------------*
-* STEP 4 : INSERT ITEMS
-*---------------------------------------------------------------------*
-
-    LOOP AT it_wbs_items INTO ls_wbs WHERE wert2 > 0.
-
-      CLEAR ls_item.
-
-      ls_item-mandt = sy-mandt.
-      ls_item-zreq_num = rv_reqnum.
-      ls_item-bukrs = ls_header-bukrs.
-
-      ls_item-vkokr = lv_vkokr.
-
-      ls_item-posid = ls_wbs-posid.
-      ls_item-stufe = ls_wbs-stufe.
-      ls_item-post1 = ls_wbs-post1.
-      ls_item-kostl = ls_wbs-kostl.
-      ls_item-wert2 = ls_wbs-wert2.
-
-      ls_item-zbudget_check = ls_wbs-zbudget_check.
-
-      ls_item-imprf = ls_wbs-imprf.
-      ls_item-prart = ls_wbs-prart.
-
-      ls_item-werks = ls_header-werks.
-
-      IF ls_wbs-posnr IS NOT INITIAL.
-        ls_item-posnr = ls_wbs-posnr.
+    ">>> NEW: get highest level (max STUFE) from the passed WBS items
+    lv_max_stufe = 0.
+    LOOP AT it_wbs_items INTO ls_item WHERE stufe IS NOT INITIAL.
+      IF ls_item-stufe > lv_max_stufe.
+        lv_max_stufe = ls_item-stufe.
       ENDIF.
-
-      INSERT ztb_a2r_wbsitem FROM ls_item.
-
-      IF sy-subrc <> 0.
-        lv_error = abap_true.
-        EXIT.
-      ENDIF.
-
     ENDLOOP.
 
-*---------------------------------------------------------------------*
-* COMMIT
-*---------------------------------------------------------------------*
+    "If no stufe found, nothing to do (or you can decide to proceed as before)
+    IF lv_max_stufe = 0.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
+
+    LOOP AT it_wbs_items INTO ls_item.
+
+      ">>> NEW: only highest level
+      IF ls_item-stufe <> lv_max_stufe.
+        CONTINUE.
+      ENDIF.
+
+      IF ls_item-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA: lv_posid_db TYPE ps_posid.
+      lv_posid_db = ls_item-posid.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = lv_posid_db
+        IMPORTING
+          output = lv_posid_db.
+
+      SELECT SINGLE objnr
+        FROM prps
+        INTO @lv_objnr
+        WHERE posid = @lv_posid_db.
+
+      IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_bpak.
+      ls_bpak-e_objnr = lv_objnr.
+      ls_bpak-e_versn = '000'.
+      ls_bpak-e_perio = '001'.
+      ls_bpak-e_wrttp = '01'.         "PLAN
+      ls_bpak-wert    = ls_item-wert2.
+      ls_bpak-twaer   = lv_waers.     "MANDATORY
+
+      APPEND ls_bpak TO lt_bpak.
+    ENDLOOP.
+
+    IF lt_bpak IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+      EXPORTING
+        i_budget_activity = 'KSTP'    "CJ40
+        i_delta_amounts   = lv_delta
+        i_rollup_data     = lv_rollup
+        i_check_plan_data = 'X'
+        i_application     = 'P'
+        i_commit_all      = 'X'
+      IMPORTING
+        e_errors_found    = lv_errors_found
+      TABLES
+        it_bpak           = lt_bpak
+        it_return         = lt_return.
+
+    IF lv_errors_found EQ abap_false.
+      rv_success = abap_true.
       COMMIT WORK AND WAIT.
+    ENDIF.
 
   ENDMETHOD.
 
 
 
-METHOD change_project_critical.
 
-  DATA: ls_proj_chg TYPE bapi_bus2001_chg,
-        ls_proj_upd TYPE bapi_bus2001_upd,
-        lt_return   TYPE TABLE OF bapiret2,
-        ls_return   TYPE bapiret2,
-        lv_error    TYPE char1.
+  METHOD assign_budget_cj30.
 
-  rv_success = abap_false.
-  CLEAR: lt_return, lv_error.
+    DATA: lv_errors_found TYPE oax,
+          lt_bpak         TYPE STANDARD TABLE OF bpak,
+          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          ls_bpak         TYPE bpak,
+          ls_wbs_db       TYPE ztb_a2r_wbsitem,
+          lv_objnr        TYPE j_objnr,
+          lv_waers        TYPE waers,
+          lv_delta        TYPE c,
+          lv_rollup       TYPE c,
+          lt_return       TYPE STANDARD TABLE OF bapiret2,
+          lv_posid_db     TYPE ps_posid,
+          lv_has_error    TYPE abap_bool.
 
-*---------------------------------------------------------------------*
-* 1) Initialize PS BAPI
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+    rv_success = abap_false.
+    CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-*---------------------------------------------------------------------*
-* 2) Fill change structure
-*---------------------------------------------------------------------*
-  ls_proj_chg-project_definition = iv_pspid.
-  ls_proj_chg-description        = is_header-post1.
-  ls_proj_chg-responsible_no     = is_header-vernr.
-  ls_proj_chg-finish             = is_header-plsez.
-  ls_proj_chg-company_code       = is_header-bukrs.
-  ls_proj_chg-plant              = is_header-werks.
-  ls_proj_chg-profit_ctr         = is_header-prctr.
+    lv_delta = ''.
+    lv_rollup = ''.
 
 *---------------------------------------------------------------------*
-* 3) Set update flags
+* 1) Get Currency
 *---------------------------------------------------------------------*
-  ls_proj_upd-description    = 'X'.
-  ls_proj_upd-responsible_no = 'X'.
-  ls_proj_upd-finish         = 'X'.
-  ls_proj_upd-company_code   = 'X'.
-  ls_proj_upd-plant          = 'X'.
-  ls_proj_upd-profit_ctr     = 'X'.
+    SELECT SINGLE waers
+      INTO @lv_waers
+      FROM ztb_a2r_wbshdr
+      WHERE zreq_num = @is_header-zreq_num.
+
+    IF lv_waers IS INITIAL.
+      lv_waers = is_header-waers.
+    ENDIF.
+
+    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+      SELECT SINGLE waers
+        INTO @lv_waers
+        FROM t001
+        WHERE bukrs = @is_header-bukrs.
+    ENDIF.
+
+    IF lv_waers IS INITIAL.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
-* 4) Call change BAPI
+* 2) Read ONLY flagged WBS from DB
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_BUS2001_CHANGE'
-    EXPORTING
-      i_project_definition     = ls_proj_chg
-      i_project_definition_upd = ls_proj_upd
-    TABLES
-      et_return                = lt_return.
+    SELECT *
+      FROM ztb_a2r_wbsitem
+      INTO TABLE @lt_wbs_db
+      WHERE zreq_num      = @is_header-zreq_num
+        AND zbudget_check = 'X'
+        AND wert2         > 0.
+
+    IF lt_wbs_db IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
-* 5) Check errors after CHANGE
+* 3) Build BPAK from DB records
 *---------------------------------------------------------------------*
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = 'X'.
-    EXIT.
-  ENDLOOP.
+    LOOP AT lt_wbs_db INTO ls_wbs_db.
 
-  IF lv_error = 'X'.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
-  ENDIF.
+      CLEAR lv_objnr.
+
+      "Convert POSID external -> internal
+      lv_posid_db = ls_wbs_db-posid.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = lv_posid_db
+        IMPORTING
+          output = lv_posid_db
+        EXCEPTIONS
+          OTHERS = 1.
+
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE posid = @lv_posid_db.
+
+      IF lv_objnr IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_bpak.
+      ls_bpak-e_objnr = lv_objnr.
+      ls_bpak-e_versn = '000'.
+      ls_bpak-e_perio = '001'.
+      ls_bpak-e_wrttp = '41'.     "CJ30 Budget
+      ls_bpak-wert    = ls_wbs_db-wert2.
+      ls_bpak-twaer   = lv_waers.
+
+      APPEND ls_bpak TO lt_bpak.
+
+    ENDLOOP.
+
+    IF lt_bpak IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
-* 6) PRECOMMIT for PS
+* 4) Call FM
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
+    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+      EXPORTING
+        i_budget_activity             = 'KBUD'
+        i_budget_distribution_allowed = 'X'
+        i_delta_amounts               = lv_delta
+        i_rollup_data                 = lv_rollup
+        i_check_plan_data             = 'X'
+        i_application                 = 'P'
+        i_commit_all                  = 'X'
+      IMPORTING
+        e_errors_found                = lv_errors_found
+      TABLES
+        it_bpak                       = lt_bpak
+        it_return                     = lt_return.
+
+    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
-* 7) Check errors after PRECOMMIT
+* 5) Check Return Messages
 *---------------------------------------------------------------------*
-  CLEAR lv_error.
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = 'X'.
-    EXIT.
-  ENDLOOP.
 
-  IF lv_error = 'X'.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
-  ENDIF.
+    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
+      EXIT.
+    ENDLOOP.
 
-*---------------------------------------------------------------------*
-* 8) Final COMMIT
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  et_return = lt_return.
-  rv_success = abap_true.
-
-ENDMETHOD.
+    IF sy-subrc EQ 0.
+      rv_success = abap_false. " Error updating
+    ELSE.
+      COMMIT WORK AND WAIT.
+      WAIT UP TO 2 SECONDS.
+      rv_success = abap_true.
+    ENDIF.
+  ENDMETHOD.
