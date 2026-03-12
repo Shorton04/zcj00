@@ -1,3 +1,42 @@
+METHODS save_request_for_submit_b2
+  IMPORTING
+    is_header        TYPE ztb_a2r_wbshdr
+    it_wbs_items     TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  RETURNING
+    VALUE(rv_reqnum) TYPE ztb_a2r_wbshdr-zreq_num.
+
+METHODS change_project_b2
+  IMPORTING
+    iv_pspid          TYPE proj-pspid
+    is_header         TYPE ztb_a2r_wbshdr
+  EXPORTING
+    et_return         TYPE STANDARD TABLE OF bapiret2
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+METHODS change_wbs_b2
+  IMPORTING
+    iv_pspid          TYPE proj-pspid
+    it_wbs_items      TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  EXPORTING
+    et_return         TYPE STANDARD TABLE OF bapiret2
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+METHODS assign_plan_values_b2
+  IMPORTING
+    is_header         TYPE ztb_a2r_wbshdr
+    it_wbs_items      TYPE STANDARD TABLE OF ztb_a2r_wbsitem
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+METHODS assign_budget_cj30_b2
+  IMPORTING
+    is_header         TYPE ztb_a2r_wbshdr
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
+
+
 METHOD save_request_for_submit_b2.
 
   DATA: ls_header TYPE ztb_a2r_wbshdr,
