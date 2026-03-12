@@ -28,7 +28,7 @@ METHOD save_request_for_submit_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 1 : ALWAYS GENERATE NEW REQUEST NUMBER
+* Generate new request number
 *---------------------------------------------------------------------*
   rv_reqnum = get_next_request_number( ).
 
@@ -37,13 +37,12 @@ METHOD save_request_for_submit_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 2 : PREPARE HEADER
+* Prepare header
 *---------------------------------------------------------------------*
   CLEAR ls_header.
 
   ls_header-mandt         = sy-mandt.
   ls_header-zreq_num      = rv_reqnum.
-
   ls_header-posnr         = is_header-posnr.
   ls_header-prnam         = is_header-prnam.
   ls_header-pspnr         = is_header-pspnr.
@@ -60,21 +59,17 @@ METHOD save_request_for_submit_b2.
   ls_header-zunifier_proj = is_header-zunifier_proj.
   ls_header-usr008        = is_header-usr008.
   ls_header-profl         = is_header-profl.
-
-*---------------------------------------------------------------------*
-* B2 specific
-*---------------------------------------------------------------------*
-  ls_header-z_reqtype      = 'B2'.
+  ls_header-z_reqtype     = 'B2'.
   ls_header-request_status = 'PENDING'.
-  ls_header-ernam          = sy-uname.
-  ls_header-erdat          = sy-datum.
+  ls_header-ernam         = sy-uname.
+  ls_header-erdat         = sy-datum.
 
   IF is_header-z_remarks IS NOT INITIAL.
     ls_header-z_remarks = is_header-z_remarks.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 3 : INSERT HEADER
+* Insert header
 *---------------------------------------------------------------------*
   INSERT ztb_a2r_wbshdr FROM @ls_header.
 
@@ -84,8 +79,7 @@ METHOD save_request_for_submit_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 4 : INSERT ITEMS
-* B2 = existing WBS only, save snapshot
+* Insert item snapshot
 *---------------------------------------------------------------------*
   LOOP AT it_wbs_items INTO ls_wbs.
 
@@ -107,7 +101,6 @@ METHOD save_request_for_submit_b2.
     ls_item-posnr         = ls_wbs-posnr.
 
     INSERT ztb_a2r_wbsitem FROM @ls_item.
-
     IF sy-subrc <> 0.
       lv_error = abap_true.
       EXIT.
@@ -115,18 +108,12 @@ METHOD save_request_for_submit_b2.
 
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* STEP 5 : HANDLE ERROR
-*---------------------------------------------------------------------*
   IF lv_error = abap_true.
     ROLLBACK WORK.
     CLEAR rv_reqnum.
     RETURN.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* COMMIT
-*---------------------------------------------------------------------*
   COMMIT WORK AND WAIT.
 
 ENDMETHOD.
@@ -134,24 +121,24 @@ ENDMETHOD.
 
 
 
-METHOD change_project_non_critical_b2.
+METHOD change_project_b2.
 
   DATA: ls_proj_chg TYPE bapi_bus2001_chg,
         ls_proj_upd TYPE bapi_bus2001_upd,
         lt_return   TYPE TABLE OF bapiret2,
         ls_return   TYPE bapiret2,
-        lv_error    TYPE char1.
+        lv_error    TYPE abap_bool.
 
   rv_success = abap_false.
   CLEAR: lt_return, lv_error.
 
 *---------------------------------------------------------------------*
-* 1) Initialize PS BAPI
+* Init
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
 *---------------------------------------------------------------------*
-* 2) Fill change structure
+* Fill project fields from HEADER
 *---------------------------------------------------------------------*
   ls_proj_chg-project_definition = iv_pspid.
   ls_proj_chg-description        = is_header-post1.
@@ -159,14 +146,14 @@ METHOD change_project_non_critical_b2.
   ls_proj_chg-finish             = is_header-plsez.
 
 *---------------------------------------------------------------------*
-* 3) Set update flags
+* Update flags
 *---------------------------------------------------------------------*
   ls_proj_upd-description    = 'X'.
   ls_proj_upd-responsible_no = 'X'.
   ls_proj_upd-finish         = 'X'.
 
 *---------------------------------------------------------------------*
-* 4) Call change BAPI
+* Change project
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_BUS2001_CHANGE'
     EXPORTING
@@ -175,44 +162,38 @@ METHOD change_project_non_critical_b2.
     TABLES
       et_return                = lt_return.
 
-*---------------------------------------------------------------------*
-* 5) Check errors after CHANGE
-*---------------------------------------------------------------------*
   LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = 'X'.
+    lv_error = abap_true.
     EXIT.
   ENDLOOP.
 
-  IF lv_error = 'X'.
+  IF lv_error = abap_true.
     CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
     et_return = lt_return.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 6) PRECOMMIT
+* Precommit
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'
     TABLES
       et_return = lt_return.
 
-*---------------------------------------------------------------------*
-* 7) Check errors after PRECOMMIT
-*---------------------------------------------------------------------*
   CLEAR lv_error.
   LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = 'X'.
+    lv_error = abap_true.
     EXIT.
   ENDLOOP.
 
-  IF lv_error = 'X'.
+  IF lv_error = abap_true.
     CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
     et_return = lt_return.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 8) Final COMMIT
+* Commit
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
@@ -226,7 +207,7 @@ ENDMETHOD.
 
 
 
-METHOD change_wbs_non_critical_b2.
+METHOD change_wbs_b2.
 
   DATA: lt_wbs_element      TYPE TABLE OF bapi_bus2054_chg_multi,
         ls_wbs_element      TYPE bapi_bus2054_chg_multi,
@@ -246,19 +227,14 @@ METHOD change_wbs_non_critical_b2.
          lv_error.
 
 *---------------------------------------------------------------------*
-* Initialize
+* Init
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
 *---------------------------------------------------------------------*
-* Prepare WBS changes
-* B2 editable WBS values are still existing rows only
+* Fill WBS change tables from IT_WBS_ITEMS
 *---------------------------------------------------------------------*
-  LOOP AT it_wbs_items INTO ls_wbs WHERE stufe > 1.
-
-    IF ls_wbs-posid IS INITIAL.
-      CONTINUE.
-    ENDIF.
+  LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
 
     CLEAR: ls_wbs_element, ls_wbs_element_upd.
 
@@ -273,26 +249,23 @@ METHOD change_wbs_non_critical_b2.
 
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Call BAPI
-*---------------------------------------------------------------------*
-  IF lt_wbs_element IS NOT INITIAL OR lt_extensionin IS NOT INITIAL.
-    CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
-      EXPORTING
-        i_project_definition  = iv_pspid
-      TABLES
-        it_wbs_element        = lt_wbs_element
-        it_update_wbs_element = lt_wbs_element_upd
-        et_return             = lt_return
-        extensionin           = lt_extensionin.
-  ELSE.
+  IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
     rv_success = abap_true.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Check errors after CHANGE
+* Change WBS
 *---------------------------------------------------------------------*
+  CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
+    EXPORTING
+      i_project_definition  = iv_pspid
+    TABLES
+      it_wbs_element        = lt_wbs_element
+      it_update_wbs_element = lt_wbs_element_upd
+      et_return             = lt_return
+      extensionin           = lt_extensionin.
+
   LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
     lv_error = abap_true.
     EXIT.
@@ -305,7 +278,7 @@ METHOD change_wbs_non_critical_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* PRECOMMIT
+* Precommit
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_PS_PRECOMMIT'
     TABLES
@@ -324,7 +297,7 @@ METHOD change_wbs_non_critical_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* COMMIT
+* Commit
 *---------------------------------------------------------------------*
   CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
     EXPORTING
@@ -334,3 +307,5 @@ METHOD change_wbs_non_critical_b2.
   rv_success = abap_true.
 
 ENDMETHOD.
+
+
