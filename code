@@ -3,7 +3,8 @@ FORM submit_b2.
   DATA: lv_reqnum   TYPE ztb_a2r_wbshdr-zreq_num,
         lv_success  TYPE abap_bool,
         lt_return   TYPE TABLE OF bapiret2,
-        ls_return   TYPE bapiret2.
+        ls_return   TYPE bapiret2,
+        lv_message  TYPE string.
 
 *---------------------------------------------------------------------*
 * STEP 1 : Sync screen
@@ -30,11 +31,11 @@ FORM submit_b2.
   gs_header-zreq_num = lv_reqnum.
 
 *---------------------------------------------------------------------*
-* STEP 3 : Execute Project Change
+* STEP 3 : Change Project (BAPI_BUS2001)
 *---------------------------------------------------------------------*
   CLEAR lt_return.
 
-  lv_success = go_builder->change_project_non_critical_b2(
+  lv_success = go_builder->change_project_b2(
     iv_pspid   = gs_header-pspid
     is_header  = gs_header
     IMPORTING
@@ -52,6 +53,9 @@ FORM submit_b2.
     IF sy-subrc <> 0.
       READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
     ENDIF.
+    IF sy-subrc <> 0.
+      READ TABLE lt_return INTO ls_return INDEX 1.
+    ENDIF.
 
     IF ls_return-message IS NOT INITIAL.
       MESSAGE e000(zmsg_a2r) WITH ls_return-message.
@@ -63,11 +67,11 @@ FORM submit_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 4 : Execute WBS Change
+* STEP 4 : Change WBS (BAPI_BUS2054)
 *---------------------------------------------------------------------*
   CLEAR lt_return.
 
-  lv_success = go_builder->change_wbs_non_critical_b2(
+  lv_success = go_builder->change_wbs_b2(
     iv_pspid     = gs_header-pspid
     it_wbs_items = gt_wbs_items
     IMPORTING
@@ -84,6 +88,9 @@ FORM submit_b2.
     READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
     IF sy-subrc <> 0.
       READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
+    ENDIF.
+    IF sy-subrc <> 0.
+      READ TABLE lt_return INTO ls_return INDEX 1.
     ENDIF.
 
     IF ls_return-message IS NOT INITIAL.
@@ -133,7 +140,7 @@ FORM submit_b2.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 7 : Update Status
+* STEP 7 : Update Status Approved
 *---------------------------------------------------------------------*
   UPDATE ztb_a2r_wbshdr
     SET request_status       = 'APPROVED',
