@@ -1,4 +1,78 @@
-  METHOD save_request_for_submit_b3.
+FORM submit_b3.
+
+  DATA: lv_reqnum  TYPE ztb_a2r_wbshdr-zreq_num,
+        lv_success TYPE abap_bool.
+
+*---------------------------------------------------------------------*
+* STEP 1 : Sync screen
+*---------------------------------------------------------------------*
+
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 2 : SAVE B3 REQUEST
+*---------------------------------------------------------------------*
+
+  lv_reqnum = go_builder->save_request_for_submit_b3(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B3 request'.
+    RETURN.
+  ENDIF.
+
+  gs_header-zreq_num = lv_reqnum.
+
+*---------------------------------------------------------------------*
+* STEP 3 : Execute Critical Change
+*---------------------------------------------------------------------*
+
+  lv_success = go_builder->change_project_critical(
+    iv_pspid      = gs_header-pspid
+    is_header     = gs_header
+    is_header_old = gs_header ).
+
+*---------------------------------------------------------------------*
+* STEP 4 : Update Status
+*---------------------------------------------------------------------*
+
+  IF lv_success = abap_true.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status       = 'APPROVED',
+          zapproved_by         = @sy-uname,
+          zrequest_approved_on = @sy-datum
+      WHERE zreq_num = @lv_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE s000(zmsg_a2r) WITH 'B3 request approved'(m21) lv_reqnum.
+    LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+  ELSE.
+
+    UPDATE ztb_a2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = @lv_reqnum.
+
+    COMMIT WORK AND WAIT.
+
+    MESSAGE e000(zmsg_a2r) WITH 'Critical change failed'.
+
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+METHOD save_request_for_submit_b3.
 
     DATA: ls_header TYPE ztb_a2r_wbshdr,
           ls_item   TYPE ztb_a2r_wbsitem,
