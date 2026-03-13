@@ -1,156 +1,118 @@
-FORM submit_b2.
+METHOD change_wbs_b2.
 
-  DATA: lv_reqnum   TYPE ztb_a2r_wbshdr-zreq_num,
-        lv_success  TYPE abap_bool,
-        lt_return   TYPE TABLE OF bapiret2,
-        ls_return   TYPE bapiret2,
-        lv_message  TYPE string.
+  DATA: lt_wbs_element      TYPE TABLE OF bapi_bus2054_chg_multi,
+        ls_wbs_element      TYPE bapi_bus2054_chg_multi,
+        lt_wbs_element_upd  TYPE TABLE OF bapi_bus2054_upd_multi,
+        ls_wbs_element_upd  TYPE bapi_bus2054_upd_multi,
+        lt_extensionin      TYPE TABLE OF bapiparex,
+        lt_return           TYPE TABLE OF bapiret2,
+        ls_return           TYPE bapiret2,
+        ls_wbs              TYPE ztb_a2r_wbsitem,
+        lv_error            TYPE abap_bool,
+        lv_posid_ext        TYPE ps_posid.
 
-*---------------------------------------------------------------------*
-* STEP 1 : Sync screen
-*---------------------------------------------------------------------*
-  PERFORM sync_screen_to_header.
-  PERFORM convert_from_display.
-
-  IF go_builder IS INITIAL.
-    CREATE OBJECT go_builder.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* STEP 2 : SAVE B2 REQUEST
-*---------------------------------------------------------------------*
-  lv_reqnum = go_builder->save_request_for_submit_b2(
-    is_header    = gs_header
-    it_wbs_items = gt_wbs_items ).
-
-  IF lv_reqnum IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B2 request'.
-    RETURN.
-  ENDIF.
-
-  gs_header-zreq_num = lv_reqnum.
+  rv_success = abap_false.
+  CLEAR: lt_wbs_element,
+         lt_wbs_element_upd,
+         lt_extensionin,
+         lt_return,
+         lv_error.
 
 *---------------------------------------------------------------------*
-* STEP 3 : Change Project (BAPI_BUS2001)
+* Init
 *---------------------------------------------------------------------*
-  CLEAR lt_return.
+  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-  lv_success = go_builder->change_project_b2(
-    iv_pspid   = gs_header-pspid
-    is_header  = gs_header
-    IMPORTING
-      et_return = lt_return ).
+*---------------------------------------------------------------------*
+* Fill WBS change tables from IT_WBS_ITEMS
+* BAPI_BUS2054_CHANGE_MULTI expects EXTERNAL WBS element format
+*---------------------------------------------------------------------*
+  LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
 
-  IF lv_success <> abap_true.
+    CLEAR: ls_wbs_element,
+           ls_wbs_element_upd,
+           lv_posid_ext.
 
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'ERROR'
-      WHERE zreq_num = @lv_reqnum.
+    lv_posid_ext = ls_wbs-posid.
 
-    COMMIT WORK AND WAIT.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_posid_ext
+      IMPORTING
+        output = lv_posid_ext
+      EXCEPTIONS
+        OTHERS = 1.
 
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-    IF sy-subrc <> 0.
-      READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-    ENDIF.
-    IF sy-subrc <> 0.
-      READ TABLE lt_return INTO ls_return INDEX 1.
+    IF lv_posid_ext IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    IF ls_return-message IS NOT INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH ls_return-message.
-    ELSE.
-      MESSAGE e000(zmsg_a2r) WITH 'B2 project change failed'.
-    ENDIF.
+    ls_wbs_element-wbs_element = lv_posid_ext.
+    ls_wbs_element-description = ls_wbs-post1.
 
-    RETURN.
-  ENDIF.
+    ls_wbs_element_upd-wbs_element = lv_posid_ext.
+    ls_wbs_element_upd-description = 'X'.
 
-*---------------------------------------------------------------------*
-* STEP 4 : Change WBS (BAPI_BUS2054)
-*---------------------------------------------------------------------*
-  CLEAR lt_return.
+    APPEND ls_wbs_element TO lt_wbs_element.
+    APPEND ls_wbs_element_upd TO lt_wbs_element_upd.
 
-  lv_success = go_builder->change_wbs_b2(
-    iv_pspid     = gs_header-pspid
-    it_wbs_items = gt_wbs_items
-    IMPORTING
-      et_return  = lt_return ).
+  ENDLOOP.
 
-  IF lv_success <> abap_true.
-
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'ERROR'
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
-    IF sy-subrc <> 0.
-      READ TABLE lt_return INTO ls_return WITH KEY type = 'A'.
-    ENDIF.
-    IF sy-subrc <> 0.
-      READ TABLE lt_return INTO ls_return INDEX 1.
-    ENDIF.
-
-    IF ls_return-message IS NOT INITIAL.
-      MESSAGE e000(zmsg_a2r) WITH ls_return-message.
-    ELSE.
-      MESSAGE e000(zmsg_a2r) WITH 'B2 WBS change failed'.
-    ENDIF.
-
+  IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
+    rv_success = abap_true.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 5 : Assign Plan Values
+* Change WBS
 *---------------------------------------------------------------------*
-  lv_success = go_builder->assign_plan_values_b2(
-    is_header    = gs_header
-    it_wbs_items = gt_wbs_items ).
+  CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
+    EXPORTING
+      i_project_definition  = iv_pspid
+    TABLES
+      it_wbs_element        = lt_wbs_element
+      it_update_wbs_element = lt_wbs_element_upd
+      et_return             = lt_return
+      extensionin           = lt_extensionin.
 
-  IF lv_success <> abap_true.
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+    lv_error = abap_true.
+    EXIT.
+  ENDLOOP.
 
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'ERROR'
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    MESSAGE e000(zmsg_a2r) WITH 'B2 plan value update failed'.
+  IF lv_error = abap_true.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    et_return = lt_return.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 6 : Assign Budget CJ30
+* Precommit
 *---------------------------------------------------------------------*
-  lv_success = go_builder->assign_budget_cj30_b2(
-    is_header = gs_header ).
+  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+    TABLES
+      et_return = lt_return.
 
-  IF lv_success <> abap_true.
+  CLEAR lv_error.
+  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+    lv_error = abap_true.
+    EXIT.
+  ENDLOOP.
 
-    UPDATE ztb_a2r_wbshdr
-      SET request_status = 'ERROR'
-      WHERE zreq_num = @lv_reqnum.
-
-    COMMIT WORK AND WAIT.
-
-    MESSAGE e000(zmsg_a2r) WITH 'B2 budget update failed'.
+  IF lv_error = abap_true.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    et_return = lt_return.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* STEP 7 : Update Status Approved
+* Commit
 *---------------------------------------------------------------------*
-  UPDATE ztb_a2r_wbshdr
-    SET request_status       = 'APPROVED',
-        zapproved_by         = @sy-uname,
-        zrequest_approved_on = @sy-datum
-    WHERE zreq_num = @lv_reqnum.
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
 
-  COMMIT WORK AND WAIT.
+  et_return  = lt_return.
+  rv_success = abap_true.
 
-  MESSAGE s000(zmsg_a2r) WITH 'B2 request approved' lv_reqnum.
-  LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
-
-ENDFORM.
+ENDMETHOD.
