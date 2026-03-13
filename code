@@ -1,100 +1,57 @@
-  METHOD change_wbs_b2.
+FORM convert_from_display.
 
-    DATA: lt_wbs_element     TYPE TABLE OF bapi_bus2054_chg,
-          ls_wbs_element     TYPE bapi_bus2054_chg,
-          lt_wbs_element_upd TYPE TABLE OF bapi_bus2054_upd,
-          ls_wbs_element_upd TYPE bapi_bus2054_upd,
-          lt_extensionin     TYPE TABLE OF bapiparex,
-          lt_return          TYPE TABLE OF bapiret2,
-          ls_return          TYPE bapiret2,
-          ls_wbs             TYPE ztb_a2r_wbsitem,
-          lv_error           TYPE abap_bool.
+  DATA: lv_posid_internal TYPE ps_posid,
+        lv_vkokr          TYPE ztb_a2r_wbsitem-vkokr.
 
-    rv_success = abap_false.
-    CLEAR: lt_wbs_element,
-           lt_wbs_element_upd,
-           lt_extensionin,
-           lt_return,
-           lv_error.
 
-*---------------------------------------------------------------------*
-* Init
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+  FREE gt_wbs_items.
 
-*---------------------------------------------------------------------*
-* Fill WBS change tables from IT_WBS_ITEMS
-*---------------------------------------------------------------------*
-    LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
+  LOOP AT gt_wbs_display INTO gs_wbs_display.
+    CLEAR: gs_wbs_item, lv_posid_internal.
 
-      CLEAR: ls_wbs_element, ls_wbs_element_upd.
+    " Map from display table to internal table
+    gs_wbs_item-stufe = gs_wbs_display-stufe.
+    gs_wbs_item-post1 = gs_wbs_display-post1.
+    gs_wbs_item-kostl = gs_wbs_display-kostl.
+    gs_wbs_item-wert2 = gs_wbs_display-zapproved_budg.
+    gs_wbs_item-zbudget_check = gs_wbs_display-zbudget_check.
+    gs_wbs_item-bukrs = gs_wbs_display-bukrs.
+    gs_wbs_item-vkokr = gv_vkokr.
+    gs_wbs_item-posnr = gs_wbs_display-posnr.
+    gs_wbs_item-imprf = gs_wbs_display-imprf.
+    gs_wbs_item-prart = gs_wbs_display-prart.
 
-      ls_wbs_element-wbs_element = ls_wbs-posid.
-      ls_wbs_element-description = ls_wbs-post1.
+    " Convert POSID from external back to internal
+    IF gs_wbs_display-posid IS NOT INITIAL.
+      PERFORM convert_wbs_posid_to_internal
+        USING    gs_wbs_display-posid
+        CHANGING lv_posid_internal.
 
-      ls_wbs_element_upd-wbs_element = ls_wbs-posid.
-      ls_wbs_element_upd-description = 'X'.
-
-      APPEND ls_wbs_element TO lt_wbs_element.
-      APPEND ls_wbs_element_upd TO lt_wbs_element_upd.
-
-    ENDLOOP.
-
-    IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
-      rv_success = abap_true.
-      RETURN.
+      IF lv_posid_internal IS NOT INITIAL.
+        gs_wbs_item-posid = lv_posid_internal.
+      ELSE.
+        gs_wbs_item-posid = gs_wbs_display-posid.
+      ENDIF.
     ENDIF.
 
-*---------------------------------------------------------------------*
-* Change WBS
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
-      EXPORTING
-        i_project_definition  = iv_pspid
-      TABLES
-        it_wbs_element        = lt_wbs_element
-        it_update_wbs_element = lt_wbs_element_upd
-        et_return             = lt_return
-        extensionin           = lt_extensionin.
+    "  CRITICAL FIX: Convert POSID from external (PC.000001) back to internal (PC000001)
+    IF gs_wbs_display-posid IS NOT INITIAL.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+        EXPORTING
+          input  = gs_wbs_display-posid
+        IMPORTING
+          output = lv_posid_internal
+        EXCEPTIONS
+          OTHERS = 1.
 
-    LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-      lv_error = abap_true.
-      EXIT.
-    ENDLOOP.
-
-    IF lv_error = abap_true.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      et_return = lt_return.
-      RETURN.
+      IF sy-subrc = 0 AND lv_posid_internal IS NOT INITIAL.
+        gs_wbs_item-posid = lv_posid_internal.
+      ELSE.
+        gs_wbs_item-posid = gs_wbs_display-posid.
+      ENDIF.
     ENDIF.
 
-*---------------------------------------------------------------------*
-* Precommit
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-      TABLES
-        et_return = lt_return.
+    APPEND gs_wbs_item TO gt_wbs_items.
 
-    CLEAR lv_error.
-    LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-      lv_error = abap_true.
-      EXIT.
-    ENDLOOP.
-
-    IF lv_error = abap_true.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      et_return = lt_return.
-      RETURN.
-    ENDIF.
-
-*---------------------------------------------------------------------*
-* Commit
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
-
-    et_return  = lt_return.
-    rv_success = abap_true.
-
-  ENDMETHOD.
+  ENDLOOP.
+ENDFORM.
