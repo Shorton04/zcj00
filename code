@@ -1,118 +1,100 @@
-METHOD change_wbs_b2.
+  METHOD change_wbs_b2.
 
-  DATA: lt_wbs_element      TYPE TABLE OF bapi_bus2054_chg_multi,
-        ls_wbs_element      TYPE bapi_bus2054_chg_multi,
-        lt_wbs_element_upd  TYPE TABLE OF bapi_bus2054_upd_multi,
-        ls_wbs_element_upd  TYPE bapi_bus2054_upd_multi,
-        lt_extensionin      TYPE TABLE OF bapiparex,
-        lt_return           TYPE TABLE OF bapiret2,
-        ls_return           TYPE bapiret2,
-        ls_wbs              TYPE ztb_a2r_wbsitem,
-        lv_error            TYPE abap_bool,
-        lv_posid_ext        TYPE ps_posid.
+    DATA: lt_wbs_element     TYPE TABLE OF bapi_bus2054_chg,
+          ls_wbs_element     TYPE bapi_bus2054_chg,
+          lt_wbs_element_upd TYPE TABLE OF bapi_bus2054_upd,
+          ls_wbs_element_upd TYPE bapi_bus2054_upd,
+          lt_extensionin     TYPE TABLE OF bapiparex,
+          lt_return          TYPE TABLE OF bapiret2,
+          ls_return          TYPE bapiret2,
+          ls_wbs             TYPE ztb_a2r_wbsitem,
+          lv_error           TYPE abap_bool.
 
-  rv_success = abap_false.
-  CLEAR: lt_wbs_element,
-         lt_wbs_element_upd,
-         lt_extensionin,
-         lt_return,
-         lv_error.
+    rv_success = abap_false.
+    CLEAR: lt_wbs_element,
+           lt_wbs_element_upd,
+           lt_extensionin,
+           lt_return,
+           lv_error.
 
 *---------------------------------------------------------------------*
 * Init
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
 *---------------------------------------------------------------------*
 * Fill WBS change tables from IT_WBS_ITEMS
-* BAPI_BUS2054_CHANGE_MULTI expects EXTERNAL WBS element format
 *---------------------------------------------------------------------*
-  LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
+    LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
 
-    CLEAR: ls_wbs_element,
-           ls_wbs_element_upd,
-           lv_posid_ext.
+      CLEAR: ls_wbs_element, ls_wbs_element_upd.
 
-    lv_posid_ext = ls_wbs-posid.
+      ls_wbs_element-wbs_element = ls_wbs-posid.
+      ls_wbs_element-description = ls_wbs-post1.
 
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-      EXPORTING
-        input  = lv_posid_ext
-      IMPORTING
-        output = lv_posid_ext
-      EXCEPTIONS
-        OTHERS = 1.
+      ls_wbs_element_upd-wbs_element = ls_wbs-posid.
+      ls_wbs_element_upd-description = 'X'.
 
-    IF lv_posid_ext IS INITIAL.
-      CONTINUE.
+      APPEND ls_wbs_element TO lt_wbs_element.
+      APPEND ls_wbs_element_upd TO lt_wbs_element_upd.
+
+    ENDLOOP.
+
+    IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
     ENDIF.
-
-    ls_wbs_element-wbs_element = lv_posid_ext.
-    ls_wbs_element-description = ls_wbs-post1.
-
-    ls_wbs_element_upd-wbs_element = lv_posid_ext.
-    ls_wbs_element_upd-description = 'X'.
-
-    APPEND ls_wbs_element TO lt_wbs_element.
-    APPEND ls_wbs_element_upd TO lt_wbs_element_upd.
-
-  ENDLOOP.
-
-  IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
 
 *---------------------------------------------------------------------*
 * Change WBS
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
-    EXPORTING
-      i_project_definition  = iv_pspid
-    TABLES
-      it_wbs_element        = lt_wbs_element
-      it_update_wbs_element = lt_wbs_element_upd
-      et_return             = lt_return
-      extensionin           = lt_extensionin.
+    CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
+      EXPORTING
+        i_project_definition  = iv_pspid
+      TABLES
+        it_wbs_element        = lt_wbs_element
+        it_update_wbs_element = lt_wbs_element_upd
+        et_return             = lt_return
+        extensionin           = lt_extensionin.
 
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = abap_true.
-    EXIT.
-  ENDLOOP.
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+      lv_error = abap_true.
+      EXIT.
+    ENDLOOP.
 
-  IF lv_error = abap_true.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
-  ENDIF.
+    IF lv_error = abap_true.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      et_return = lt_return.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
 * Precommit
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+      TABLES
+        et_return = lt_return.
+
+    CLEAR lv_error.
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+      lv_error = abap_true.
+      EXIT.
+    ENDLOOP.
+
+    IF lv_error = abap_true.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
       et_return = lt_return.
-
-  CLEAR lv_error.
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = abap_true.
-    EXIT.
-  ENDLOOP.
-
-  IF lv_error = abap_true.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
-  ENDIF.
+      RETURN.
+    ENDIF.
 
 *---------------------------------------------------------------------*
 * Commit
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
 
-  et_return  = lt_return.
-  rv_success = abap_true.
+    et_return  = lt_return.
+    rv_success = abap_true.
 
-ENDMETHOD.
+  ENDMETHOD.
