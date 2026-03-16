@@ -1,119 +1,159 @@
-  METHOD save_request_for_submit_b2.
+METHOD save_request_for_submit_b2.
 
-    DATA: ls_header TYPE ztb_a2r_wbshdr,
-          ls_item   TYPE ztb_a2r_wbsitem,
-          ls_wbs    TYPE ztb_a2r_wbsitem,
-          lv_error  TYPE abap_bool.
+  TYPES: BEGIN OF ty_prps_map,
+           pspnr TYPE prps-pspnr,
+           posid TYPE prps-posid,
+         END OF ty_prps_map.
 
-    DATA: lv_vkokr TYPE kokrs.
+  DATA: ls_header   TYPE ztb_a2r_wbshdr,
+        ls_item     TYPE ztb_a2r_wbsitem,
+        ls_wbs      TYPE ztb_a2r_wbsitem,
+        lv_error    TYPE abap_bool,
+        lv_vkokr    TYPE kokrs,
+        lt_pspnr    TYPE SORTED TABLE OF prps-pspnr WITH UNIQUE KEY table_line,
+        lt_prps_map TYPE HASHED TABLE OF ty_prps_map WITH UNIQUE KEY pspnr,
+        ls_prps_map TYPE ty_prps_map.
 
 *---------------------------------------------------------------------*
 * Determine controlling area
 *---------------------------------------------------------------------*
-    lv_vkokr = is_header-vkokr.
+  lv_vkokr = is_header-vkokr.
 
-    IF lv_vkokr IS INITIAL.
-      SELECT SINGLE vkokr
-        INTO @lv_vkokr
-        FROM ztb_a2r_wbsitem
-        WHERE zreq_num = @is_header-zreq_num
-          AND stufe    = 1.
-    ENDIF.
+  IF lv_vkokr IS INITIAL.
+    SELECT SINGLE vkokr
+      INTO @lv_vkokr
+      FROM ztb_a2r_wbsitem
+      WHERE zreq_num = @is_header-zreq_num
+        AND stufe    = 1.
+  ENDIF.
 
-    IF lv_vkokr IS INITIAL AND is_header-pspnr IS NOT INITIAL.
-      SELECT SINGLE vkokr
-        INTO @lv_vkokr
-        FROM proj
-        WHERE pspnr = @is_header-pspnr.
-    ENDIF.
+  IF lv_vkokr IS INITIAL AND is_header-pspnr IS NOT INITIAL.
+    SELECT SINGLE vkokr
+      INTO @lv_vkokr
+      FROM proj
+      WHERE pspnr = @is_header-pspnr.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * Generate new request number
 *---------------------------------------------------------------------*
-    rv_reqnum = get_next_request_number( ).
+  rv_reqnum = get_next_request_number( ).
 
-    IF rv_reqnum IS INITIAL.
-      RETURN.
-    ENDIF.
+  IF rv_reqnum IS INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * Prepare header
 *---------------------------------------------------------------------*
-    CLEAR ls_header.
+  CLEAR ls_header.
 
-    ls_header-mandt         = sy-mandt.
-    ls_header-zreq_num      = rv_reqnum.
-    ls_header-posnr         = is_header-posnr.
-    ls_header-prnam         = is_header-prnam.
-    ls_header-pspnr         = is_header-pspnr.
-    ls_header-post1         = is_header-post1.
-    ls_header-vernr         = is_header-vernr.
-    ls_header-plsez         = is_header-plsez.
-    ls_header-bukrs         = is_header-bukrs.
-    ls_header-werks         = is_header-werks.
-    ls_header-waers         = is_header-waers.
-    ls_header-prctr         = is_header-prctr.
-    ls_header-kostl         = is_header-kostl.
-    ls_header-vkokr         = lv_vkokr.
-    ls_header-izwek         = is_header-izwek.
-    ls_header-zunifier_proj = is_header-zunifier_proj.
-    ls_header-usr008        = is_header-usr008.
-    ls_header-profl         = is_header-profl.
-    ls_header-z_reqtype     = 'B2'.
-    ls_header-request_status = 'PENDING'.
-    ls_header-ernam         = sy-uname.
-    ls_header-erdat         = sy-datum.
+  ls_header-mandt          = sy-mandt.
+  ls_header-zreq_num       = rv_reqnum.
+  ls_header-posnr          = is_header-posnr.
+  ls_header-prnam          = is_header-prnam.
+  ls_header-pspnr          = is_header-pspnr.
+  ls_header-post1          = is_header-post1.
+  ls_header-vernr          = is_header-vernr.
+  ls_header-plsez          = is_header-plsez.
+  ls_header-bukrs          = is_header-bukrs.
+  ls_header-werks          = is_header-werks.
+  ls_header-waers          = is_header-waers.
+  ls_header-prctr          = is_header-prctr.
+  ls_header-kostl          = is_header-kostl.
+  ls_header-vkokr          = lv_vkokr.
+  ls_header-izwek          = is_header-izwek.
+  ls_header-zunifier_proj  = is_header-zunifier_proj.
+  ls_header-usr008         = is_header-usr008.
+  ls_header-profl          = is_header-profl.
+  ls_header-z_reqtype      = 'B2'.
+  ls_header-request_status = 'PENDING'.
+  ls_header-ernam          = sy-uname.
+  ls_header-erdat          = sy-datum.
 
-    IF is_header-z_remarks IS NOT INITIAL.
-      ls_header-z_remarks = is_header-z_remarks.
-    ENDIF.
+  IF is_header-z_remarks IS NOT INITIAL.
+    ls_header-z_remarks = is_header-z_remarks.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * Insert header
 *---------------------------------------------------------------------*
-    INSERT ztb_a2r_wbshdr FROM @ls_header.
+  INSERT ztb_a2r_wbshdr FROM @ls_header.
 
-    IF sy-subrc <> 0.
-      CLEAR rv_reqnum.
-      RETURN.
+  IF sy-subrc <> 0.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read all external POSID from PRPS in one shot
+*---------------------------------------------------------------------*
+  LOOP AT it_wbs_items INTO ls_wbs.
+    IF ls_wbs-posid IS NOT INITIAL.
+      INSERT CONV prps-pspnr( ls_wbs-posid ) INTO TABLE lt_pspnr.
     ENDIF.
+  ENDLOOP.
+
+  IF lt_pspnr IS NOT INITIAL.
+    SELECT pspnr, posid
+      FROM prps
+      INTO TABLE @DATA(lt_prps_raw)
+      FOR ALL ENTRIES IN @lt_pspnr
+      WHERE pspnr = @lt_pspnr-table_line.
+
+    IF sy-subrc = 0.
+      LOOP AT lt_prps_raw INTO DATA(ls_prps_raw).
+        ls_prps_map-pspnr = ls_prps_raw-pspnr.
+        ls_prps_map-posid = ls_prps_raw-posid.
+        INSERT ls_prps_map INTO TABLE lt_prps_map.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * Insert item snapshot
 *---------------------------------------------------------------------*
-    LOOP AT it_wbs_items INTO ls_wbs.
+  LOOP AT it_wbs_items INTO ls_wbs.
 
-      CLEAR ls_item.
+    CLEAR: ls_item, ls_prps_map.
 
-      ls_item-mandt         = sy-mandt.
-      ls_item-zreq_num      = rv_reqnum.
-      ls_item-bukrs         = ls_header-bukrs.
-      ls_item-vkokr         = lv_vkokr.
-      ls_item-posid         = ls_wbs-posid.
-      ls_item-stufe         = ls_wbs-stufe.
-      ls_item-post1         = ls_wbs-post1.
-      ls_item-kostl         = ls_wbs-kostl.
-      ls_item-wert2         = ls_wbs-wert2.
-      ls_item-zbudget_check = ls_wbs-zbudget_check.
-      ls_item-imprf         = ls_wbs-imprf.
-      ls_item-prart         = ls_wbs-prart.
-      ls_item-werks         = ls_header-werks.
-      ls_item-posnr         = ls_wbs-posnr.
+    ls_item-mandt         = sy-mandt.
+    ls_item-zreq_num      = rv_reqnum.
+    ls_item-bukrs         = ls_header-bukrs.
+    ls_item-vkokr         = lv_vkokr.
+    ls_item-stufe         = ls_wbs-stufe.
+    ls_item-post1         = ls_wbs-post1.
+    ls_item-kostl         = ls_wbs-kostl.
+    ls_item-wert2         = ls_wbs-wert2.
+    ls_item-zbudget_check = ls_wbs-zbudget_check.
+    ls_item-imprf         = ls_wbs-imprf.
+    ls_item-prart         = ls_wbs-prart.
+    ls_item-werks         = ls_header-werks.
+    ls_item-posnr         = ls_wbs-posnr.
 
-      INSERT ztb_a2r_wbsitem FROM @ls_item.
-      IF sy-subrc <> 0.
-        lv_error = abap_true.
-        EXIT.
-      ENDIF.
+    READ TABLE lt_prps_map INTO ls_prps_map
+      WITH TABLE KEY pspnr = CONV prps-pspnr( ls_wbs-posid ).
 
-    ENDLOOP.
-
-    IF lv_error = abap_true.
-      ROLLBACK WORK.
-      CLEAR rv_reqnum.
-      RETURN.
+    IF sy-subrc = 0 AND ls_prps_map-posid IS NOT INITIAL.
+      ls_item-posid = ls_prps_map-posid.
+    ELSE.
+      ls_item-posid = ls_wbs-posid.
     ENDIF.
 
-    COMMIT WORK AND WAIT.
+    INSERT ztb_a2r_wbsitem FROM @ls_item.
+    IF sy-subrc <> 0.
+      lv_error = abap_true.
+      EXIT.
+    ENDIF.
 
-  ENDMETHOD.
+  ENDLOOP.
+
+  IF lv_error = abap_true.
+    ROLLBACK WORK.
+    CLEAR rv_reqnum.
+    RETURN.
+  ENDIF.
+
+  COMMIT WORK AND WAIT.
+
+ENDMETHOD.
