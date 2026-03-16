@@ -1,149 +1,215 @@
-FORM get_im_available_budget_s2
-  CHANGING cv_im_budget TYPE bpge-wlges
-           cv_im_waers  TYPE imtp-waers.
+FORM load_tree_hierarchy.
 
-  DATA: lv_objnr      TYPE j_objnr,
-        lv_prnam      TYPE impr-prnam,
-        lv_gjahr      TYPE impr-gjahr,
-        lv_sum_wtges  TYPE bpge-wtges,
-        lv_sum_wtgev  TYPE bpge-wtgev,
-        lv_sum_wlgev  TYPE bpge-wlgev.
+  DATA:
+    lv_pspnr_templ TYPE ps_pspnr,
+    lv_parent_key  TYPE lvc_nkey,
+    ls_node        TYPE treev_node,
+    ls_item        TYPE cnpb_h_treeitm,
+    lv_last_key    TYPE lvc_nkey VALUE 0,
+    lt_pspnr_list  TYPE STANDARD TABLE OF ps_pspnr,
+    lv_level       TYPE i,
+    lv_max_levels  TYPE i VALUE 10.
 
-  CLEAR: cv_im_budget,
-         cv_im_waers,
-         lv_objnr,
-         lv_prnam,
-         lv_gjahr,
-         lv_sum_wtges,
-         lv_sum_wtgev,
-         lv_sum_wlgev.
+*  FIELD-SYMBOLS: <fs_prpss> TYPE prpss.
 
-  " Get IM object number / program / year
-  SELECT SINGLE objnr
-                prnam
-                gjahr
-    INTO (lv_objnr, lv_prnam, lv_gjahr)
-    FROM impr
-    WHERE posnr = gs_header-posnr.
+  TYPES: BEGIN OF ty_node_map,
+           pspnr    TYPE ps_pspnr,
+           node_key TYPE lvc_nkey,
+         END OF ty_node_map.
 
-  IF sy-subrc <> 0
-     OR lv_objnr IS INITIAL
-     OR lv_prnam IS INITIAL
-     OR lv_gjahr IS INITIAL.
-    RETURN.
-  ENDIF.
+  DATA: lt_node_map TYPE STANDARD TABLE OF ty_node_map,
+        ls_node_map TYPE ty_node_map.
 
-  " Get IM currency
-  SELECT SINGLE waers
-    INTO cv_im_waers
-    FROM imtp
-    WHERE prnam = lv_prnam
-      AND gjahr = lv_gjahr.
+  CHECK p_pspid IS NOT INITIAL.
+  CHECK lo_tree_preview IS NOT INITIAL.
 
-  IF sy-subrc <> 0 OR cv_im_waers IS INITIAL.
-    CLEAR cv_im_waers.
-    RETURN.
-  ENDIF.
+  TRY.
+      CLEAR: gt_treev_node, gt_treeitm, lt_node_map.
 
-  " Available IM budget = WTGES - WTGEV - WLGEV
-  SELECT SUM( wtges )
-         SUM( wtgev )
-         SUM( wlgev )
-    INTO (lv_sum_wtges, lv_sum_wtgev, lv_sum_wlgev)
-    FROM bpge
-    WHERE objnr = lv_objnr
-      AND vorga = 'KBUD'
-      AND twaer = cv_im_waers.
+      " Get template from PROJS
+      SELECT SINGLE pspid, post1, pspnr
+         FROM projs
+         INTO @DATA(ls_projs)
+        WHERE pspid = @p_pspid.
 
-  IF sy-subrc = 0.
-    cv_im_budget = lv_sum_wtges - lv_sum_wtgev - lv_sum_wlgev.
-  ENDIF.
+      IF sy-subrc <> 0.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+          EXPORTING
+            input  = p_pspid
+          IMPORTING
+            output = p_pspid.
 
+        SELECT SINGLE pspid, post1, pspnr
+          FROM projs
+          INTO @ls_projs
+          WHERE pspid = @p_pspid.
+
+        IF sy-subrc <> 0.
+          MESSAGE 'Template project not found in PROJS table'(m01) TYPE 'S' DISPLAY LIKE 'W'.
+          RETURN.
+        ENDIF.
+      ENDIF.
+
+      lv_pspnr_templ = ls_projs-pspnr.
+
+      " ★ CORRECTED: Get ALL levels recursively
+      " Step 1: Direct children (Level 1 & 2 from screenshot)
+      SELECT pspnr, posid, post1, psphi, stufe
+        FROM prpss
+        INTO TABLE @DATA(lt_prpss_all)
+        WHERE psphi = @lv_pspnr_templ
+        ORDER BY stufe, posid.
+
+      IF sy-subrc <> 0.
+        MESSAGE 'No WBS elements found for template'(m02) TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
+
+      " Step 2: Get children of children recursively (Level 3+)
+      lv_level = 1.
+      WHILE lv_level < lv_max_levels.
+
+        CLEAR lt_pspnr_list.
+        LOOP AT lt_prpss_all ASSIGNING FIELD-SYMBOL(<fs_prpss>).
+          APPEND <fs_prpss>-pspnr TO lt_pspnr_list.
+        ENDLOOP.
+
+        IF lt_pspnr_list IS INITIAL.
+          EXIT.
+        ENDIF.
+
+        IF lt_pspnr_list IS NOT INITIAL.
+          SELECT pspnr, posid, post1, psphi, stufe
+            FROM prpss
+            INTO TABLE @DATA(lt_prpss_level)
+            FOR ALL ENTRIES IN @lt_pspnr_list
+            WHERE psphi = @lt_pspnr_list-table_line.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
+
+          APPEND LINES OF lt_prpss_level TO lt_prpss_all.
+          lv_level = lv_level + 1.
+        ENDIF.
+      ENDWHILE.
+
+      SORT lt_prpss_all BY stufe posid.
+
+      " Build tree structure
+      lv_last_key = lv_last_key + 1.
+      CLEAR ls_node.
+      ls_node-node_key    = lv_last_key.
+      ls_node-relatkey    = ''.
+      ls_node-relatship   = cl_gui_column_tree=>relat_last_child.
+      ls_node-hidden      = space.
+      ls_node-disabled    = space.
+      ls_node-isfolder    = abap_true.
+      ls_node-expander    = abap_true.
+      APPEND ls_node TO gt_treev_node.
+
+      CLEAR ls_item.
+      ls_item-node_key = lv_last_key.
+      ls_item-item_name = lc_hierarchy_short_text.
+      ls_item-class = cl_gui_column_tree=>item_class_text.
+      CONCATENATE 'Template:'(m04) ls_projs-post1 INTO ls_item-text SEPARATED BY space.
+      APPEND ls_item TO gt_treeitm.
+
+      CLEAR ls_item.
+      ls_item-node_key = lv_last_key.
+      ls_item-item_name = lc_hierarchy_technical_key.
+      ls_item-class = cl_gui_column_tree=>item_class_text.
+      ls_item-text = ls_projs-pspid.
+      APPEND ls_item TO gt_treeitm.
+
+      ls_node_map-pspnr = lv_pspnr_templ.
+      ls_node_map-node_key = lv_last_key.
+      APPEND ls_node_map TO lt_node_map.
+
+      " Add WBS nodes with correct parent tracking
+      LOOP AT lt_prpss_all INTO DATA(ls_prpss).
+
+        lv_last_key = lv_last_key + 1.
+
+        " Find parent by PSPHI
+        CLEAR lv_parent_key.
+        READ TABLE lt_node_map INTO ls_node_map
+          WITH KEY pspnr = ls_prpss-psphi.
+
+        IF sy-subrc = 0.
+          lv_parent_key = ls_node_map-node_key.
+        ELSE.
+          lv_parent_key = 1. " Fallback to root
+        ENDIF.
+
+        CLEAR ls_node.
+        ls_node-node_key    = lv_last_key.
+        ls_node-relatkey    = lv_parent_key.
+        ls_node-relatship   = cl_gui_column_tree=>relat_last_child.
+        ls_node-hidden      = space.
+        ls_node-disabled    = space.
+        ls_node-isfolder    = abap_false.
+        ls_node-expander    = space.
+        APPEND ls_node TO gt_treev_node.
+
+        CLEAR ls_item.
+        ls_item-node_key = lv_last_key.
+        ls_item-item_name = lc_hierarchy_short_text.
+        ls_item-class = cl_gui_column_tree=>item_class_text.
+        ls_item-text = ls_prpss-post1.
+        APPEND ls_item TO gt_treeitm.
+
+        CLEAR ls_item.
+        ls_item-node_key = lv_last_key.
+        ls_item-item_name = lc_hierarchy_technical_key.
+        ls_item-class = cl_gui_column_tree=>item_class_text.
+        ls_item-text = ls_prpss-posid.
+        APPEND ls_item TO gt_treeitm.
+
+        ls_node_map-pspnr = ls_prpss-pspnr.
+        ls_node_map-node_key = lv_last_key.
+        APPEND ls_node_map TO lt_node_map.
+
+      ENDLOOP.
+
+      " Display tree
+      CALL METHOD lo_tree_preview->delete_all_nodes.
+
+      CALL METHOD lo_tree_preview->hierarchy_header_set_text
+        EXPORTING
+          text = 'Project Structure: Description' ##NO_TEXT.
+
+      CALL METHOD lo_tree_preview->add_nodes_and_items
+        EXPORTING
+          node_table                = gt_treev_node
+          item_table                = gt_treeitm
+          item_table_structure_name = 'CNPB_H_TREEITM' ##NO_TEXT.
+
+      CALL METHOD lo_tree_preview->expand_root_nodes
+        EXPORTING
+          level_count    = 0
+          expand_subtree = abap_true.
+
+      CALL METHOD lo_tree_preview->hierarchy_header_set_width
+        EXPORTING
+          width     = 50
+          width_pix = space.
+
+      CALL METHOD lo_tree_preview->column_set_width
+        EXPORTING
+          column_name = lc_hierarchy_technical_key
+          width       = 25
+          width_pix   = space.
+
+      CALL METHOD cl_gui_cfw=>flush
+        EXCEPTIONS
+          cntl_system_error = 1
+          cntl_error        = 2.
+
+      IF sy-subrc = 0.
+        lv_tree_loaded = abap_true.
+      ENDIF.
+
+    CATCH cx_root INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
 ENDFORM.
-
-
-
-
-FORM get_exchange_rate_to_im
-  USING    iv_im_waers      TYPE waers
-           iv_proj_waers    TYPE waers
-  CHANGING cv_ukurs         TYPE tcurr-ukurs.
-
-  DATA: lt_tcurr TYPE STANDARD TABLE OF tcurr,
-        ls_tcurr TYPE tcurr.
-
-  CLEAR cv_ukurs.
-
-  SELECT *
-    INTO TABLE lt_tcurr
-    FROM tcurr
-    WHERE kurst = 'M'
-      AND fcurr = iv_im_waers
-      AND tcurr = iv_proj_waers.
-
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
-
-  SORT lt_tcurr BY gdatu ASCENDING.
-  READ TABLE lt_tcurr INTO ls_tcurr INDEX 1.
-  IF sy-subrc = 0.
-    cv_ukurs = ls_tcurr-ukurs.
-  ENDIF.
-
-ENDFORM.
-
-
-
-DATA: lv_im_budget       TYPE bpge-wlges,
-      lv_level1_budget   TYPE bpge-wlges,
-      lv_budget_im_curr  TYPE bpge-wlges,
-      lv_im_waers        TYPE imtp-waers,
-      lv_ukurs           TYPE tcurr-ukurs.
-
-*---------------------------------------------------------------------*
-* 5. Level 1 budget vs IM available budget
-*---------------------------------------------------------------------*
-PERFORM get_im_available_budget_s2
-  CHANGING lv_im_budget
-           lv_im_waers.
-
-PERFORM get_level1_total_budget
-  CHANGING lv_level1_budget.
-
-" Optional: no level 1 budget entered
-IF lv_level1_budget IS INITIAL.
-  RETURN.
-ENDIF.
-
-" Optional: cannot validate if no IM currency found
-IF lv_im_waers IS INITIAL.
-  RETURN.
-ENDIF.
-
-" Convert Level 1 budget to IM currency if needed
-IF gv_project_currency = lv_im_waers.
-
-  lv_budget_im_curr = lv_level1_budget.
-
-ELSE.
-
-  PERFORM get_exchange_rate_to_im
-    USING    lv_im_waers
-             gv_project_currency
-    CHANGING lv_ukurs.
-
-  IF lv_ukurs IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Unable to determine exchange rate'.
-    EXIT.
-  ENDIF.
-
-  lv_budget_im_curr = lv_level1_budget / lv_ukurs.
-
-ENDIF.
-
-" Final comparison
-IF lv_budget_im_curr > lv_im_budget.
-  MESSAGE e000(zmsg_a2r) WITH 'Amount is greater than the available IM budget'.
-  EXIT.
-ENDIF.
