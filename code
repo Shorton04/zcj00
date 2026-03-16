@@ -1,118 +1,149 @@
-METHOD change_wbs_b2.
+FORM get_im_available_budget_s2
+  CHANGING cv_im_budget TYPE bpge-wlges
+           cv_im_waers  TYPE imtp-waers.
 
-  DATA: lt_wbs_element      TYPE TABLE OF bapi_bus2054_chg_multi,
-        ls_wbs_element      TYPE bapi_bus2054_chg_multi,
-        lt_wbs_element_upd  TYPE TABLE OF bapi_bus2054_upd_multi,
-        ls_wbs_element_upd  TYPE bapi_bus2054_upd_multi,
-        lt_extensionin      TYPE TABLE OF bapiparex,
-        lt_return           TYPE TABLE OF bapiret2,
-        ls_return           TYPE bapiret2,
-        ls_wbs              TYPE ztb_a2r_wbsitem,
-        lv_error            TYPE abap_bool,
-        lv_wbs_element_ext  TYPE bapi_bus2054_chg_multi-wbs_element,
-        lv_pspnr            TYPE ps_pspnr.
+  DATA: lv_objnr      TYPE j_objnr,
+        lv_prnam      TYPE impr-prnam,
+        lv_gjahr      TYPE impr-gjahr,
+        lv_sum_wtges  TYPE bpge-wtges,
+        lv_sum_wtgev  TYPE bpge-wtgev,
+        lv_sum_wlgev  TYPE bpge-wlgev.
 
-  rv_success = abap_false.
-  CLEAR: lt_wbs_element,
-         lt_wbs_element_upd,
-         lt_extensionin,
-         lt_return,
-         lv_error.
+  CLEAR: cv_im_budget,
+         cv_im_waers,
+         lv_objnr,
+         lv_prnam,
+         lv_gjahr,
+         lv_sum_wtges,
+         lv_sum_wtgev,
+         lv_sum_wlgev.
 
-*---------------------------------------------------------------------*
-* Init
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+  " Get IM object number / program / year
+  SELECT SINGLE objnr
+                prnam
+                gjahr
+    INTO (lv_objnr, lv_prnam, lv_gjahr)
+    FROM impr
+    WHERE posnr = gs_header-posnr.
 
-*---------------------------------------------------------------------*
-* Fill WBS change tables from IT_WBS_ITEMS
-* IT_WBS_ITEMS-POSID currently contains PSPNR like 00000635
-* BAPI expects external WBS element like PC.000410.00.1
-*---------------------------------------------------------------------*
-  LOOP AT it_wbs_items INTO ls_wbs WHERE posid IS NOT INITIAL.
-
-    CLEAR: ls_wbs_element,
-           ls_wbs_element_upd,
-           lv_wbs_element_ext,
-           lv_pspnr.
-
-    lv_pspnr = ls_wbs-posid.
-
-    SELECT SINGLE posid
-      INTO @lv_wbs_element_ext
-      FROM prps
-      WHERE pspnr = @lv_pspnr.
-
-    IF sy-subrc <> 0 OR lv_wbs_element_ext IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    ls_wbs_element-wbs_element = lv_wbs_element_ext.
-    ls_wbs_element-description = ls_wbs-post1.
-
-    ls_wbs_element_upd-wbs_element = lv_wbs_element_ext.
-    ls_wbs_element_upd-description = 'X'.
-
-    APPEND ls_wbs_element TO lt_wbs_element.
-    APPEND ls_wbs_element_upd TO lt_wbs_element_upd.
-
-  ENDLOOP.
-
-  IF lt_wbs_element IS INITIAL AND lt_extensionin IS INITIAL.
-    rv_success = abap_true.
+  IF sy-subrc <> 0
+     OR lv_objnr IS INITIAL
+     OR lv_prnam IS INITIAL
+     OR lv_gjahr IS INITIAL.
     RETURN.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Change WBS
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_BUS2054_CHANGE_MULTI'
-    EXPORTING
-      i_project_definition  = iv_pspid
-    TABLES
-      it_wbs_element        = lt_wbs_element
-      it_update_wbs_element = lt_wbs_element_upd
-      et_return             = lt_return
-      extensionin           = lt_extensionin.
+  " Get IM currency
+  SELECT SINGLE waers
+    INTO cv_im_waers
+    FROM imtp
+    WHERE prnam = lv_prnam
+      AND gjahr = lv_gjahr.
 
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = abap_true.
+  IF sy-subrc <> 0 OR cv_im_waers IS INITIAL.
+    CLEAR cv_im_waers.
+    RETURN.
+  ENDIF.
+
+  " Available IM budget = WTGES - WTGEV - WLGEV
+  SELECT SUM( wtges )
+         SUM( wtgev )
+         SUM( wlgev )
+    INTO (lv_sum_wtges, lv_sum_wtgev, lv_sum_wlgev)
+    FROM bpge
+    WHERE objnr = lv_objnr
+      AND vorga = 'KBUD'
+      AND twaer = cv_im_waers.
+
+  IF sy-subrc = 0.
+    cv_im_budget = lv_sum_wtges - lv_sum_wtgev - lv_sum_wlgev.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+FORM get_exchange_rate_to_im
+  USING    iv_im_waers      TYPE waers
+           iv_proj_waers    TYPE waers
+  CHANGING cv_ukurs         TYPE tcurr-ukurs.
+
+  DATA: lt_tcurr TYPE STANDARD TABLE OF tcurr,
+        ls_tcurr TYPE tcurr.
+
+  CLEAR cv_ukurs.
+
+  SELECT *
+    INTO TABLE lt_tcurr
+    FROM tcurr
+    WHERE kurst = 'M'
+      AND fcurr = iv_im_waers
+      AND tcurr = iv_proj_waers.
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  SORT lt_tcurr BY gdatu ASCENDING.
+  READ TABLE lt_tcurr INTO ls_tcurr INDEX 1.
+  IF sy-subrc = 0.
+    cv_ukurs = ls_tcurr-ukurs.
+  ENDIF.
+
+ENDFORM.
+
+
+
+DATA: lv_im_budget       TYPE bpge-wlges,
+      lv_level1_budget   TYPE bpge-wlges,
+      lv_budget_im_curr  TYPE bpge-wlges,
+      lv_im_waers        TYPE imtp-waers,
+      lv_ukurs           TYPE tcurr-ukurs.
+
+*---------------------------------------------------------------------*
+* 5. Level 1 budget vs IM available budget
+*---------------------------------------------------------------------*
+PERFORM get_im_available_budget_s2
+  CHANGING lv_im_budget
+           lv_im_waers.
+
+PERFORM get_level1_total_budget
+  CHANGING lv_level1_budget.
+
+" Optional: no level 1 budget entered
+IF lv_level1_budget IS INITIAL.
+  RETURN.
+ENDIF.
+
+" Optional: cannot validate if no IM currency found
+IF lv_im_waers IS INITIAL.
+  RETURN.
+ENDIF.
+
+" Convert Level 1 budget to IM currency if needed
+IF gv_project_currency = lv_im_waers.
+
+  lv_budget_im_curr = lv_level1_budget.
+
+ELSE.
+
+  PERFORM get_exchange_rate_to_im
+    USING    lv_im_waers
+             gv_project_currency
+    CHANGING lv_ukurs.
+
+  IF lv_ukurs IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Unable to determine exchange rate'.
     EXIT.
-  ENDLOOP.
-
-  IF lv_error = abap_true.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Precommit
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
+  lv_budget_im_curr = lv_level1_budget / lv_ukurs.
 
-  CLEAR lv_error.
-  LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
-    lv_error = abap_true.
-    EXIT.
-  ENDLOOP.
+ENDIF.
 
-  IF lv_error = abap_true.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    et_return = lt_return.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Commit
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  et_return  = lt_return.
-  rv_success = abap_true.
-
-ENDMETHOD.
+" Final comparison
+IF lv_budget_im_curr > lv_im_budget.
+  MESSAGE e000(zmsg_a2r) WITH 'Amount is greater than the available IM budget'.
+  EXIT.
+ENDIF.
