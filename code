@@ -1,255 +1,176 @@
-FORM load_tree_hierarchy.
+  METHOD copy_template_structure.
 
-  TYPES: BEGIN OF ty_prpss_tree,
-           pspnr TYPE ps_pspnr,
-           posid TYPE ps_posid,
-           post1 TYPE post1,
-           stufe TYPE prps-stufe,
-         END OF ty_prpss_tree.
+    "------------------------------------------------------------
+    " Correct template sequencing using PRHIS hierarchy pointers
+    "   - Read template project PSPNR (internal) from PROJS/PROJ
+    "   - Read PRHIS edges (UP/DOWN/RIGHT) for that PSPHI
+    "   - Traverse PRE-ORDER (node -> down subtree -> right sibling)
+    "   - Fetch WBS attributes from PRPSS by PSPNR
+    "------------------------------------------------------------
 
-  TYPES: BEGIN OF ty_level_map,
-           stufe    TYPE i,
-           node_key TYPE lvc_nkey,
-         END OF ty_level_map.
+    TYPES: BEGIN OF ty_prhis,
+             pspnr TYPE ps_pspnr,   "node (WBS internal)
+             psphi TYPE ps_pspnr,   "project internal
+             up    TYPE ps_pspnr,
+             down  TYPE ps_pspnr,
+             left  TYPE ps_pspnr,
+             right TYPE ps_pspnr,
+           END OF ty_prhis.
 
-  DATA: lv_pspnr_templ TYPE ps_pspnr,
-        ls_node        TYPE treev_node,
-        ls_item        TYPE cnpb_h_treeitm,
-        lv_last_key    TYPE lvc_nkey VALUE 0,
-        lv_parent_key  TYPE lvc_nkey,
-        lv_curr_index  TYPE sy-tabix,
-        lv_next_stufe  TYPE i.
+    TYPES: BEGIN OF ty_prpss,
+             pspnr TYPE prpss-pspnr,
+             stufe TYPE prpss-stufe,
+             posid TYPE prpss-posid,
+             post1 TYPE prpss-post1,
+             imprf TYPE prpss-imprf,
+             pkokr TYPE prpss-pkokr,
+             prart TYPE prpss-prart,
+             pbukr TYPE prpss-pbukr,
+           END OF ty_prpss.
 
-  DATA: lt_prpss_all   TYPE STANDARD TABLE OF ty_prpss_tree,
-        ls_prpss       TYPE ty_prpss_tree,
-        ls_next_prpss  TYPE ty_prpss_tree,
-        lt_level_map   TYPE STANDARD TABLE OF ty_level_map,
-        ls_level_map   TYPE ty_level_map.
+    DATA: lv_psphi   TYPE ps_pspnr,
+          lt_prhis   TYPE STANDARD TABLE OF ty_prhis,
+          ls_prhis   TYPE ty_prhis,
+          lt_prhis_h TYPE HASHED TABLE OF ty_prhis WITH UNIQUE KEY pspnr,
+          lt_prpss   TYPE STANDARD TABLE OF ty_prpss,
+          lt_prpss_h TYPE HASHED TABLE OF ty_prpss WITH UNIQUE KEY pspnr,
+          ls_prpss   TYPE ty_prpss,
+          lt_stack   TYPE STANDARD TABLE OF ps_pspnr,
+          lv_node    TYPE ps_pspnr,
+          lv_root    TYPE ps_pspnr,
+          ls_wbs     TYPE ztb_a2r_wbsitem.
 
-  FIELD-SYMBOLS: <fs_level_map> TYPE ty_level_map.
+    FIELD-SYMBOLS: <fs_prhis> TYPE ty_prhis,
+                   <fs_prpss> TYPE ty_prpss.
 
-  CHECK p_pspid IS NOT INITIAL.
-  CHECK lo_tree_preview IS NOT INITIAL.
+    "Optional: keep clean output
+    CLEAR ct_wbs_items.
 
-  TRY.
+    "1) Get template project internal number (PSPHI/PSPNR)
+    SELECT SINGLE pspnr
+      INTO @lv_psphi
+      FROM projs
+      WHERE pspid = @iv_pspid.
 
-      CLEAR: gt_treev_node,
-             gt_treeitm,
-             lt_prpss_all,
-             lt_level_map.
+    IF sy-subrc <> 0.
+      SELECT SINGLE pspnr
+        INTO @lv_psphi
+        FROM proj
+        WHERE pspid = @iv_pspid.
+    ENDIF.
 
-*--------------------------------------------------------------------*
-* Get project template from PROJS
-*--------------------------------------------------------------------*
-      SELECT SINGLE pspid, post1, pspnr
-        FROM projs
-        INTO @DATA(ls_projs)
-        WHERE pspid = @p_pspid.
+    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
+      RETURN.
+    ENDIF.
 
-      IF sy-subrc <> 0.
-        DATA(lv_pspid_input) = p_pspid.
+    "2) Read PRHIS (hierarchy pointers) for this template project
+    SELECT posnr, psphi, up, down, left, right
+      FROM prhis
+      INTO TABLE @lt_prhis
+      WHERE psphi = @lv_psphi.
 
-        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-          EXPORTING
-            input  = lv_pspid_input
-          IMPORTING
-            output = lv_pspid_input.
-
-        SELECT SINGLE pspid, post1, pspnr
-          FROM projs
-          INTO @ls_projs
-          WHERE pspid = @lv_pspid_input.
-
-        IF sy-subrc <> 0.
-          MESSAGE 'Template project not found in PROJS table'(m01) TYPE 'S' DISPLAY LIKE 'W'.
-          RETURN.
-        ENDIF.
-      ENDIF.
-
-      lv_pspnr_templ = ls_projs-pspnr.
-
-*--------------------------------------------------------------------*
-* Get all WBS elements of template project
-* IMPORTANT:
-* Sort by POSID so sequence stays hierarchical
-*--------------------------------------------------------------------*
-      SELECT pspnr, posid, post1, stufe
-        FROM prps
-        INTO TABLE @lt_prpss_all
-        WHERE psphi = @lv_pspnr_templ
-        ORDER BY posid.
-
-      IF sy-subrc <> 0 OR lt_prpss_all IS INITIAL.
-        MESSAGE 'No WBS elements found for template'(m02) TYPE 'S' DISPLAY LIKE 'W'.
-        RETURN.
-      ENDIF.
-
-*--------------------------------------------------------------------*
-* Root node (Project Definition)
-*--------------------------------------------------------------------*
-      lv_last_key = lv_last_key + 1.
-
-      CLEAR ls_node.
-      ls_node-node_key   = lv_last_key.
-      ls_node-relatkey   = ''.
-      ls_node-relatship  = cl_gui_column_tree=>relat_last_child.
-      ls_node-hidden     = space.
-      ls_node-disabled   = space.
-      ls_node-isfolder   = abap_true.
-      ls_node-expander   = abap_true.
-      APPEND ls_node TO gt_treev_node.
-
-      CLEAR ls_item.
-      ls_item-node_key  = lv_last_key.
-      ls_item-item_name = lc_hierarchy_short_text.
-      ls_item-class     = cl_gui_column_tree=>item_class_text.
-      CONCATENATE 'Template:' ls_projs-post1 INTO ls_item-text SEPARATED BY space.
-      APPEND ls_item TO gt_treeitm.
-
-      CLEAR ls_item.
-      ls_item-node_key  = lv_last_key.
-      ls_item-item_name = lc_hierarchy_technical_key.
-      ls_item-class     = cl_gui_column_tree=>item_class_text.
-      ls_item-text      = ls_projs-pspid.
-      APPEND ls_item TO gt_treeitm.
-
-      CLEAR ls_level_map.
-      ls_level_map-stufe    = 0.
-      ls_level_map-node_key = lv_last_key.
-      APPEND ls_level_map TO lt_level_map.
-
-*--------------------------------------------------------------------*
-* Build tree in correct sequence
-*--------------------------------------------------------------------*
-      LOOP AT lt_prpss_all INTO ls_prpss.
-        lv_curr_index = sy-tabix.
-
-        CLEAR ls_next_prpss.
-        CLEAR lv_next_stufe.
-
-        READ TABLE lt_prpss_all INTO ls_next_prpss INDEX lv_curr_index + 1.
-        IF sy-subrc = 0.
-          lv_next_stufe = ls_next_prpss-stufe.
-        ELSE.
-          lv_next_stufe = 0.
-        ENDIF.
-
-*------------------------------------------------------------------*
-* Determine parent node from previous level
-*------------------------------------------------------------------*
-        IF ls_prpss-stufe = 1.
-          READ TABLE lt_level_map INTO ls_level_map WITH KEY stufe = 0.
-        ELSE.
-          READ TABLE lt_level_map INTO ls_level_map WITH KEY stufe = ls_prpss-stufe - 1.
-        ENDIF.
-
-        IF sy-subrc = 0.
-          lv_parent_key = ls_level_map-node_key.
-        ELSE.
-          lv_parent_key = 1.
-        ENDIF.
-
-*------------------------------------------------------------------*
-* Create node
-* Parent becomes folder if next row is deeper
-*------------------------------------------------------------------*
-        lv_last_key = lv_last_key + 1.
-
-        CLEAR ls_node.
-        ls_node-node_key   = lv_last_key.
-        ls_node-relatkey   = lv_parent_key.
-        ls_node-relatship  = cl_gui_column_tree=>relat_last_child.
-        ls_node-hidden     = space.
-        ls_node-disabled   = space.
-
-        IF lv_next_stufe > ls_prpss-stufe.
-          ls_node-isfolder = abap_true.
-          ls_node-expander = abap_true.
-        ELSE.
-          ls_node-isfolder = abap_false.
-          ls_node-expander = space.
-        ENDIF.
-
-        APPEND ls_node TO gt_treev_node.
-
-        CLEAR ls_item.
-        ls_item-node_key  = lv_last_key.
-        ls_item-item_name = lc_hierarchy_short_text.
-        ls_item-class     = cl_gui_column_tree=>item_class_text.
-        ls_item-text      = ls_prpss-post1.
-        APPEND ls_item TO gt_treeitm.
-
-        CLEAR ls_item.
-        ls_item-node_key  = lv_last_key.
-        ls_item-item_name = lc_hierarchy_technical_key.
-        ls_item-class     = cl_gui_column_tree=>item_class_text.
-        ls_item-text      = ls_prpss-posid.
-        APPEND ls_item TO gt_treeitm.
-
-*------------------------------------------------------------------*
-* Save latest node key for this level
-*------------------------------------------------------------------*
-        READ TABLE lt_level_map ASSIGNING <fs_level_map>
-          WITH KEY stufe = ls_prpss-stufe.
-        IF sy-subrc = 0.
-          <fs_level_map>-node_key = lv_last_key.
-        ELSE.
-          CLEAR ls_level_map.
-          ls_level_map-stufe    = ls_prpss-stufe.
-          ls_level_map-node_key = lv_last_key.
-          APPEND ls_level_map TO lt_level_map.
-        ENDIF.
-
-*------------------------------------------------------------------*
-* Remove deeper cached levels when hierarchy goes back up
-*------------------------------------------------------------------*
-        DELETE lt_level_map WHERE stufe > ls_prpss-stufe.
-
+    IF sy-subrc <> 0 OR lt_prhis IS INITIAL.
+      "Fallback: if PRHIS not maintained, keep old behavior (not ideal)
+      SELECT pspnr, stufe, posid, post1, imprf, pkokr, prart, pbukr
+        FROM prpss
+        INTO TABLE @lt_prpss
+        WHERE psphi = @lv_psphi
+        ORDER BY stufe, posid.
+      LOOP AT lt_prpss INTO ls_prpss.
+        CLEAR ls_wbs.
+        ls_wbs-stufe = ls_prpss-stufe.
+        ls_wbs-posid = ls_prpss-posid.
+        ls_wbs-post1 = ls_prpss-post1.
+        ls_wbs-posnr = ls_prpss-pspnr.
+        ls_wbs-kostl = iv_kostl.
+        ls_wbs-imprf = ls_prpss-imprf.
+        ls_wbs-vkokr = ls_prpss-pkokr.
+        ls_wbs-prart = ls_prpss-prart.
+        ls_wbs-bukrs = ls_prpss-pbukr.
+        APPEND ls_wbs TO ct_wbs_items.
       ENDLOOP.
+      RETURN.
+    ENDIF.
 
-*--------------------------------------------------------------------*
-* Display tree
-*--------------------------------------------------------------------*
-      CALL METHOD lo_tree_preview->delete_all_nodes.
+    lt_prhis_h = lt_prhis.
 
-      CALL METHOD lo_tree_preview->hierarchy_header_set_text
-        EXPORTING
-          text = 'Project Structure: Description'.
+    "3) Read PRPSS attributes for all nodes in this template
+    SELECT pspnr, stufe, posid, post1, imprf, pkokr, prart, pbukr
+      FROM prpss
+      INTO TABLE @lt_prpss
+      WHERE psphi = @lv_psphi.
 
-      CALL METHOD lo_tree_preview->add_nodes_and_items
-        EXPORTING
-          node_table                = gt_treev_node
-          item_table                = gt_treeitm
-          item_table_structure_name = 'CNPB_H_TREEITM'.
+    IF sy-subrc <> 0 OR lt_prpss IS INITIAL.
+      RETURN.
+    ENDIF.
 
-      CALL METHOD lo_tree_preview->expand_root_nodes
-        EXPORTING
-          level_count    = 0
-          expand_subtree = abap_true.
+    lt_prpss_h = lt_prpss.
 
-      CALL METHOD lo_tree_preview->hierarchy_header_set_width
-        EXPORTING
-          width     = 50
-          width_pix = space.
+    "4) Determine ROOT node (top WBS): UP is initial
+    CLEAR lv_root.
+    LOOP AT lt_prhis INTO ls_prhis.
+      IF ls_prhis-up IS INITIAL.
+        lv_root = ls_prhis-pspnr.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
 
-      CALL METHOD lo_tree_preview->column_set_width
-        EXPORTING
-          column_name = lc_hierarchy_technical_key
-          width       = 25
-          width_pix   = space.
-
-      CALL METHOD cl_gui_cfw=>flush
-        EXCEPTIONS
-          cntl_system_error = 1
-          cntl_error        = 2.
-
+    IF lv_root IS INITIAL.
+      "If nothing flagged as root, just stop (or pick first)
+      READ TABLE lt_prhis INTO ls_prhis INDEX 1.
       IF sy-subrc = 0.
-        lv_tree_loaded = abap_true.
+        lv_root = ls_prhis-pspnr.
+      ENDIF.
+    ENDIF.
+
+    IF lv_root IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    "5) Pre-order traversal using stack:
+    "   pop node -> append -> push RIGHT -> push DOWN
+    CLEAR lt_stack.
+    APPEND lv_root TO lt_stack.
+
+    WHILE lt_stack IS NOT INITIAL.
+
+      "POP last
+      READ TABLE lt_stack INTO lv_node INDEX lines( lt_stack ).
+      DELETE lt_stack INDEX lines( lt_stack ).
+
+      "Get PRHIS edge row for this node
+      READ TABLE lt_prhis_h ASSIGNING <fs_prhis> WITH KEY pspnr = lv_node.
+      IF sy-subrc <> 0.
+        CONTINUE.
       ENDIF.
 
-    CATCH cx_root INTO DATA(lx_error).
-      MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
+      "Get PRPSS data for this node
+      READ TABLE lt_prpss_h ASSIGNING <fs_prpss> WITH KEY pspnr = lv_node.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
 
-  ENDTRY.
+      CLEAR ls_wbs.
+      ls_wbs-stufe = <fs_prpss>-stufe.
+      ls_wbs-posid = <fs_prpss>-posid.
+      ls_wbs-post1 = <fs_prpss>-post1.
+      ls_wbs-posnr = <fs_prpss>-pspnr.      "internal WBS number
+      ls_wbs-kostl = iv_kostl.              "inherit from header
+      ls_wbs-imprf = <fs_prpss>-imprf.
+      ls_wbs-vkokr = <fs_prpss>-pkokr.
+      ls_wbs-prart = <fs_prpss>-prart.
+      ls_wbs-bukrs = <fs_prpss>-pbukr.
 
-ENDFORM.
+      APPEND ls_wbs TO ct_wbs_items.
+
+      "Push sibling first, then child (so child processed first)
+      IF <fs_prhis>-right IS NOT INITIAL.
+        APPEND <fs_prhis>-right TO lt_stack.
+      ENDIF.
+      IF <fs_prhis>-down IS NOT INITIAL.
+        APPEND <fs_prhis>-down TO lt_stack.
+      ENDIF.
+
+    ENDWHILE.
+
+  ENDMETHOD.
