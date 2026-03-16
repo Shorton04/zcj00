@@ -1,67 +1,119 @@
-FORM get_im_available_budget_s2
-  CHANGING cv_im_budget TYPE bpge-wlges
-           cv_im_waers  TYPE imtp-waers.
+  METHOD save_request_for_submit_b2.
 
-  TYPES: BEGIN OF ty_bpge_sum,
-           wlges TYPE bpge-wlges,
-           wlgev TYPE bpge-wlgev,
-         END OF ty_bpge_sum.
+    DATA: ls_header TYPE ztb_a2r_wbshdr,
+          ls_item   TYPE ztb_a2r_wbsitem,
+          ls_wbs    TYPE ztb_a2r_wbsitem,
+          lv_error  TYPE abap_bool.
 
-  DATA: lv_objnr      TYPE j_objnr,
-        lv_prnam      TYPE impr-prnam,
-        lv_gjahr      TYPE impr-gjahr,
-        lt_bpge       TYPE STANDARD TABLE OF ty_bpge_sum,
-        lv_sum_wlges  TYPE bpge-wlges,
-        lv_sum_wlgev  TYPE bpge-wlgev.
+    DATA: lv_vkokr TYPE kokrs.
 
-  FIELD-SYMBOLS: <fs_bpge> TYPE ty_bpge_sum.
+*---------------------------------------------------------------------*
+* Determine controlling area
+*---------------------------------------------------------------------*
+    lv_vkokr = is_header-vkokr.
 
-  CLEAR: cv_im_budget,
-         cv_im_waers,
-         lv_objnr,
-         lv_prnam,
-         lv_gjahr,
-         lv_sum_wlges,
-         lv_sum_wlgev.
+    IF lv_vkokr IS INITIAL.
+      SELECT SINGLE vkokr
+        INTO @lv_vkokr
+        FROM ztb_a2r_wbsitem
+        WHERE zreq_num = @is_header-zreq_num
+          AND stufe    = 1.
+    ENDIF.
 
-  SELECT SINGLE objnr
-                prnam
-                gjahr
-    INTO (@lv_objnr, @lv_prnam, @lv_gjahr)
-    FROM impr
-    WHERE posnr = @gs_header-posnr.
+    IF lv_vkokr IS INITIAL AND is_header-pspnr IS NOT INITIAL.
+      SELECT SINGLE vkokr
+        INTO @lv_vkokr
+        FROM proj
+        WHERE pspnr = @is_header-pspnr.
+    ENDIF.
 
-  IF sy-subrc <> 0 OR lv_objnr IS INITIAL.
-    RETURN.
-  ENDIF.
+*---------------------------------------------------------------------*
+* Generate new request number
+*---------------------------------------------------------------------*
+    rv_reqnum = get_next_request_number( ).
 
-  SELECT SINGLE waers
-    INTO @cv_im_waers
-    FROM imtp
-    WHERE prnam = @lv_prnam
-      AND gjahr = @lv_gjahr.
+    IF rv_reqnum IS INITIAL.
+      RETURN.
+    ENDIF.
 
-  IF sy-subrc <> 0 OR cv_im_waers IS INITIAL.
-    RETURN.
-  ENDIF.
+*---------------------------------------------------------------------*
+* Prepare header
+*---------------------------------------------------------------------*
+    CLEAR ls_header.
 
-  SELECT wlges,
-         wlgev
-    INTO TABLE @lt_bpge
-    FROM bpge
-    WHERE objnr = @lv_objnr
-      AND vorga = 'KBUD'
-      AND twaer = @cv_im_waers.
+    ls_header-mandt         = sy-mandt.
+    ls_header-zreq_num      = rv_reqnum.
+    ls_header-posnr         = is_header-posnr.
+    ls_header-prnam         = is_header-prnam.
+    ls_header-pspnr         = is_header-pspnr.
+    ls_header-post1         = is_header-post1.
+    ls_header-vernr         = is_header-vernr.
+    ls_header-plsez         = is_header-plsez.
+    ls_header-bukrs         = is_header-bukrs.
+    ls_header-werks         = is_header-werks.
+    ls_header-waers         = is_header-waers.
+    ls_header-prctr         = is_header-prctr.
+    ls_header-kostl         = is_header-kostl.
+    ls_header-vkokr         = lv_vkokr.
+    ls_header-izwek         = is_header-izwek.
+    ls_header-zunifier_proj = is_header-zunifier_proj.
+    ls_header-usr008        = is_header-usr008.
+    ls_header-profl         = is_header-profl.
+    ls_header-z_reqtype     = 'B2'.
+    ls_header-request_status = 'PENDING'.
+    ls_header-ernam         = sy-uname.
+    ls_header-erdat         = sy-datum.
 
-  IF lt_bpge IS INITIAL.
-    RETURN.
-  ENDIF.
+    IF is_header-z_remarks IS NOT INITIAL.
+      ls_header-z_remarks = is_header-z_remarks.
+    ENDIF.
 
-  LOOP AT lt_bpge ASSIGNING <fs_bpge>.
-    lv_sum_wlges = lv_sum_wlges + <fs_bpge>-wlges.
-    lv_sum_wlgev = lv_sum_wlgev + <fs_bpge>-wlgev.
-  ENDLOOP.
+*---------------------------------------------------------------------*
+* Insert header
+*---------------------------------------------------------------------*
+    INSERT ztb_a2r_wbshdr FROM @ls_header.
 
-  cv_im_budget = lv_sum_wlges - lv_sum_wlgev.
+    IF sy-subrc <> 0.
+      CLEAR rv_reqnum.
+      RETURN.
+    ENDIF.
 
-ENDFORM.
+*---------------------------------------------------------------------*
+* Insert item snapshot
+*---------------------------------------------------------------------*
+    LOOP AT it_wbs_items INTO ls_wbs.
+
+      CLEAR ls_item.
+
+      ls_item-mandt         = sy-mandt.
+      ls_item-zreq_num      = rv_reqnum.
+      ls_item-bukrs         = ls_header-bukrs.
+      ls_item-vkokr         = lv_vkokr.
+      ls_item-posid         = ls_wbs-posid.
+      ls_item-stufe         = ls_wbs-stufe.
+      ls_item-post1         = ls_wbs-post1.
+      ls_item-kostl         = ls_wbs-kostl.
+      ls_item-wert2         = ls_wbs-wert2.
+      ls_item-zbudget_check = ls_wbs-zbudget_check.
+      ls_item-imprf         = ls_wbs-imprf.
+      ls_item-prart         = ls_wbs-prart.
+      ls_item-werks         = ls_header-werks.
+      ls_item-posnr         = ls_wbs-posnr.
+
+      INSERT ztb_a2r_wbsitem FROM @ls_item.
+      IF sy-subrc <> 0.
+        lv_error = abap_true.
+        EXIT.
+      ENDIF.
+
+    ENDLOOP.
+
+    IF lv_error = abap_true.
+      ROLLBACK WORK.
+      CLEAR rv_reqnum.
+      RETURN.
+    ENDIF.
+
+    COMMIT WORK AND WAIT.
+
+  ENDMETHOD.
