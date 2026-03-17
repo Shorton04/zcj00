@@ -1,5 +1,27 @@
-I am an SAP ABAP Developer with hands-on experience in SAP S/4HANA, specializing in custom report development and business process support within A2R (Acquire-to-Retire) processes. I have developed and enhanced reports related to Maintenance Orders, working with key tables such as AUFK (Order Master), AFIH (Maintenance Order Header), and ILOA (Location and Account Assignment) to ensure accurate and efficient data processing.
-
-I have also worked on outbound ABAP development for CMX integration, handling data extraction, transformation, and transfer to external systems. In addition, I have implemented and handled various BAPIs for WBS budgeting, project creation, and WBS element creation and modification. I played a key role in building and recreating a custom transaction (ZCJ00) from scratch, automating project and WBS lifecycle processes including budgeting, status management, and workflow integration.
-
-My technical expertise includes ABAP programming, ALV reporting, data dictionary objects, modularization techniques, debugging, and working with core SAP tables such as PRPS, PROJ, and IMPR. I am committed to delivering high-quality, efficient solutions and continuously improving my technical skills. I aim to contribute to SAP development projects by building reliable and scalable ABAP solutions that support business operations.
+GS_WBS_DISPLAY-STUFE
+GS_WBS_DISPLAY-POSID
+GS_WBS_DISPLAY-IMPRF
+GS_WBS_DISPLAY-PRART
+GS_WBS_DISPLAY-POST1
+GS_WBS_DISPLAY-KOSTL
+GS_WBS_DISPLAY-ZAPPROVED_BUDG
+GS_WBS_DISPLAY-ZBUDGET_CHECK
+GS_WBS_DISPLAY-MARK
+GS_WBS_DISPLAY-STUFE
+GS_WBS_DISPLAY-POSID
+GS_WBS_DISPLAY-IMPRF
+GS_WBS_DISPLAY-PRART
+GS_WBS_DISPLAY-POST1
+GS_WBS_DISPLAY-KOSTL
+GS_WBS_DISPLAY-ZAPPROVED_BUDG
+GS_WBS_DISPLAY-ZBUDGET_CHECK
+TC_WBS_INSERT
+TC_WBS_DELETE
+TC_WBS_TOP
+TC_WBS_PREVIOUS
+TC_WBS_NEXT
+TC_WBS_BOTTOM
+TC_WBS_MARK
+TC_WBS_DEMARK
+SEARCH
+TOTAL_UP
