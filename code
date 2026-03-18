@@ -1,27 +1,142 @@
-GS_WBS_DISPLAY-STUFE
-GS_WBS_DISPLAY-POSID
-GS_WBS_DISPLAY-IMPRF
-GS_WBS_DISPLAY-PRART
-GS_WBS_DISPLAY-POST1
-GS_WBS_DISPLAY-KOSTL
-GS_WBS_DISPLAY-ZAPPROVED_BUDG
-GS_WBS_DISPLAY-ZBUDGET_CHECK
-GS_WBS_DISPLAY-MARK
-GS_WBS_DISPLAY-STUFE
-GS_WBS_DISPLAY-POSID
-GS_WBS_DISPLAY-IMPRF
-GS_WBS_DISPLAY-PRART
-GS_WBS_DISPLAY-POST1
-GS_WBS_DISPLAY-KOSTL
-GS_WBS_DISPLAY-ZAPPROVED_BUDG
-GS_WBS_DISPLAY-ZBUDGET_CHECK
-TC_WBS_INSERT
-TC_WBS_DELETE
-TC_WBS_TOP
-TC_WBS_PREVIOUS
-TC_WBS_NEXT
-TC_WBS_BOTTOM
-TC_WBS_MARK
-TC_WBS_DEMARK
-SEARCH
-TOTAL_UP
+  METHOD assign_plan_values.
+
+    DATA: lv_errors_found TYPE oax,
+          lt_bpak         TYPE STANDARD TABLE OF bpak,
+          lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          ls_bpak         TYPE bpak,
+          ls_wbs_db       TYPE ztb_a2r_wbsitem,
+          lv_objnr        TYPE j_objnr,
+          lv_waers        TYPE waers,
+          lv_version      TYPE bp_version,
+          lv_reqtype      TYPE ztb_a2r_wbshdr-z_reqtype,
+          lv_delta        TYPE c,
+          lv_rollup       TYPE c,
+          lt_return       TYPE STANDARD TABLE OF bapiret2,
+          lv_posid_db     TYPE ps_posid,
+          lv_has_error    TYPE abap_bool.
+
+    rv_success = abap_false.
+    CLEAR: lt_bpak, lt_return, lv_errors_found.
+
+    lv_delta = ''.
+    lv_rollup = ''.
+    lv_version = '000'.
+
+*---------------------------------------------------------------------*
+* 1) Get Currency
+*---------------------------------------------------------------------*
+    SELECT SINGLE waers, z_reqtype
+      INTO (@lv_waers, @lv_reqtype)
+      FROM ztb_a2r_wbshdr
+      WHERE zreq_num = @is_header-zreq_num.
+
+    IF lv_waers IS INITIAL.
+      lv_waers = is_header-waers.
+    ENDIF.
+
+    IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
+      SELECT SINGLE waers
+        INTO @lv_waers
+        FROM t001
+        WHERE bukrs = @is_header-bukrs.
+    ENDIF.
+
+    IF lv_waers IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*---------------------------------------------------------------------*
+* 2) Read ONLY flagged WBS from DB
+*---------------------------------------------------------------------*
+    SELECT *
+      FROM ztb_a2r_wbsitem
+      INTO TABLE @lt_wbs_db
+      WHERE zreq_num      = @is_header-zreq_num.
+
+    IF lt_wbs_db IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
+
+*---------------------------------------------------------------------*
+* 3) Build BPAK from DB records
+*---------------------------------------------------------------------*
+    LOOP AT lt_wbs_db INTO ls_wbs_db.
+
+      CLEAR lv_objnr.
+
+      "Convert POSID external -> internal
+      lv_posid_db = ls_wbs_db-posid.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = lv_posid_db
+        IMPORTING
+          output = lv_posid_db
+        EXCEPTIONS
+          OTHERS = 1.
+
+      SELECT SINGLE objnr
+        INTO @lv_objnr
+        FROM prps
+        WHERE posid = @lv_posid_db.
+
+      IF lv_objnr IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_bpak.
+      ls_bpak-e_objnr = lv_objnr.
+      ls_bpak-e_versn = lv_version.
+      ls_bpak-e_perio = '001'.
+      ls_bpak-e_wrttp = '01'.         "PLAN
+      ls_bpak-wert    = ls_wbs_db-wert2.
+      ls_bpak-twaer   = lv_waers.     "MANDATORY
+
+      APPEND ls_bpak TO lt_bpak.
+
+    ENDLOOP.
+
+    IF lt_bpak IS INITIAL.
+      rv_success = abap_true.
+      RETURN.
+    ENDIF.
+
+*---------------------------------------------------------------------*
+* 4) Call FM
+*---------------------------------------------------------------------*
+    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+      EXPORTING
+        i_budget_activity = 'KSTP'    "CJ40
+        i_delta_amounts   = lv_delta
+        i_rollup_data     = lv_rollup
+        i_check_plan_data = 'X'
+        i_application     = 'P'
+        i_commit_all      = 'X'
+      IMPORTING
+        e_errors_found                = lv_errors_found
+      TABLES
+        it_bpak                       = lt_bpak
+        it_return                     = lt_return.
+
+    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+*---------------------------------------------------------------------*
+* 5) Check Return Messages
+*---------------------------------------------------------------------*
+
+    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
+      EXIT.
+    ENDLOOP.
+
+    IF sy-subrc EQ 0.
+      rv_success = abap_false. " Error updating
+    ELSE.
+      COMMIT WORK AND WAIT.
+      WAIT UP TO 2 SECONDS.
+      rv_success = abap_true.
+    ENDIF.
+  ENDMETHOD.
