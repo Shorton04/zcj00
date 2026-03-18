@@ -3,6 +3,7 @@ METHOD assign_plan_values.
   DATA: lv_errors_found TYPE oax,
         lt_bpak         TYPE STANDARD TABLE OF bpak,
         lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
         ls_bpak         TYPE bpak,
         ls_wbs_db       TYPE ztb_a2r_wbsitem,
         lv_objnr        TYPE j_objnr,
@@ -13,6 +14,8 @@ METHOD assign_plan_values.
         lv_rollup       TYPE c,
         lt_return       TYPE STANDARD TABLE OF bapiret2,
         lv_posid_db     TYPE ps_posid.
+
+  FIELD-SYMBOLS: <fs_wbs> TYPE ztb_a2r_wbsitem.
 
   rv_success = abap_false.
   CLEAR: lt_bpak, lt_return, lv_errors_found.
@@ -58,24 +61,38 @@ METHOD assign_plan_values.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 3) Sort by lower level first
-*    Example: STUFE 3 -> STUFE 2 -> STUFE 1
+* 3) Arrange by original hierarchy order first
+*
+* Assumption:
+* POSNR represents the original sequence of the WBS hierarchy
+* (parent first, then children below it)
 *---------------------------------------------------------------------*
-  SORT lt_wbs_db BY stufe DESCENDING posid ASCENDING.
+  SORT lt_wbs_db BY posnr ASCENDING.
 
 *---------------------------------------------------------------------*
-* 4) Build BPAK in sorted order
+* 4) Reverse the hierarchy order
+*    -> deepest/lower nodes processed first
+*    -> parents processed last
 *---------------------------------------------------------------------*
-  LOOP AT lt_wbs_db INTO ls_wbs_db.
+  CLEAR lt_wbs_sorted.
+
+  LOOP AT lt_wbs_db ASSIGNING <fs_wbs> FROM lines( lt_wbs_db ) TO 1 STEP -1.
+    APPEND <fs_wbs> TO lt_wbs_sorted.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* 5) Build BPAK in true hierarchy reverse order
+*---------------------------------------------------------------------*
+  LOOP AT lt_wbs_sorted INTO ls_wbs_db.
 
     CLEAR: lv_objnr, lv_posid_db, ls_bpak.
 
-    " Optional: skip empty amounts
+    "Skip empty amount
     IF ls_wbs_db-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Convert external POSID -> internal
+    "Convert external POSID -> internal POSID
     lv_posid_db = ls_wbs_db-posid.
 
     CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
@@ -117,7 +134,7 @@ METHOD assign_plan_values.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 5) Call FM once only
+* 6) Call FM once only
 *---------------------------------------------------------------------*
   CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
     EXPORTING
@@ -139,7 +156,7 @@ METHOD assign_plan_values.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 6) Check Return Messages
+* 7) Check Return Messages
 *---------------------------------------------------------------------*
   LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
     EXIT.
