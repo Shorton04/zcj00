@@ -2,8 +2,8 @@ METHOD assign_plan_values.
 
   DATA: lv_errors_found TYPE oax,
         lt_bpak         TYPE STANDARD TABLE OF bpak,
-        ls_bpak         TYPE bpak,
         lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_bpak         TYPE bpak,
         ls_wbs_db       TYPE ztb_a2r_wbsitem,
         lv_objnr        TYPE j_objnr,
         lv_waers        TYPE waers,
@@ -15,8 +15,8 @@ METHOD assign_plan_values.
         lv_posid_db     TYPE ps_posid.
 
   rv_success = abap_false.
+  CLEAR: lt_bpak, lt_return, lv_errors_found.
 
-  CLEAR: lv_errors_found, lv_waers, lv_reqtype.
   lv_delta   = ''.
   lv_rollup  = ''.
   lv_version = '000'.
@@ -45,7 +45,7 @@ METHOD assign_plan_values.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2) Read WBS rows from DB
+* 2) Read WBS from DB
 *---------------------------------------------------------------------*
   SELECT *
     FROM ztb_a2r_wbsitem
@@ -58,19 +58,24 @@ METHOD assign_plan_values.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 3) Process one row at a time
+* 3) Sort by lower level first
+*    Example: STUFE 3 -> STUFE 2 -> STUFE 1
+*---------------------------------------------------------------------*
+  SORT lt_wbs_db BY stufe DESCENDING posid ASCENDING.
+
+*---------------------------------------------------------------------*
+* 4) Build BPAK in sorted order
 *---------------------------------------------------------------------*
   LOOP AT lt_wbs_db INTO ls_wbs_db.
 
-    CLEAR: lv_objnr, lv_posid_db, ls_bpak, lv_errors_found.
-    REFRESH: lt_bpak, lt_return.
+    CLEAR: lv_objnr, lv_posid_db, ls_bpak.
 
-    " Optional: skip empty plan values
+    " Optional: skip empty amounts
     IF ls_wbs_db-wert2 IS INITIAL.
       CONTINUE.
     ENDIF.
 
-    " Convert external POSID -> internal POSID
+    " Convert external POSID -> internal
     lv_posid_db = ls_wbs_db-posid.
 
     CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
@@ -82,72 +87,70 @@ METHOD assign_plan_values.
         OTHERS = 1.
 
     IF sy-subrc <> 0 OR lv_posid_db IS INITIAL.
-      rv_success = abap_false.
-      RETURN.
+      CONTINUE.
     ENDIF.
 
-    " Get OBJNR of this single WBS
     SELECT SINGLE objnr
       INTO @lv_objnr
       FROM prps
       WHERE posid = @lv_posid_db.
 
     IF lv_objnr IS INITIAL.
-      rv_success = abap_false.
-      RETURN.
+      CONTINUE.
     ENDIF.
 
-    " Build only one BPAK row
+    CLEAR ls_bpak.
     ls_bpak-e_objnr = lv_objnr.
     ls_bpak-e_versn = lv_version.
     ls_bpak-e_perio = '001'.
-    ls_bpak-e_wrttp = '01'.     " PLAN
+    ls_bpak-e_wrttp = '01'.      " PLAN
     ls_bpak-wert    = ls_wbs_db-wert2.
     ls_bpak-twaer   = lv_waers.
 
     APPEND ls_bpak TO lt_bpak.
 
-*---------------------------------------------------------------------*
-* 4) Call FM for this single row only
-*---------------------------------------------------------------------*
-    CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-      EXPORTING
-        i_budget_activity = 'KSTP'   " CJ40
-        i_delta_amounts   = lv_delta
-        i_rollup_data     = lv_rollup
-        i_check_plan_data = 'X'
-        i_application     = 'P'
-        i_commit_all      = 'X'
-      IMPORTING
-        e_errors_found    = lv_errors_found
-      TABLES
-        it_bpak           = lt_bpak
-        it_return         = lt_return.
-
-    IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-*---------------------------------------------------------------------*
-* 5) Check return messages for this row
-*---------------------------------------------------------------------*
-    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
-      EXIT.
-    ENDLOOP.
-
-    IF sy-subrc = 0.
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    COMMIT WORK AND WAIT.
-
   ENDLOOP.
 
+  IF lt_bpak IS INITIAL.
+    rv_success = abap_true.
+    RETURN.
+  ENDIF.
+
 *---------------------------------------------------------------------*
-* 6) All rows successful
+* 5) Call FM once only
 *---------------------------------------------------------------------*
-  rv_success = abap_true.
+  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
+    EXPORTING
+      i_budget_activity = 'KSTP'    "CJ40
+      i_delta_amounts   = lv_delta
+      i_rollup_data     = lv_rollup
+      i_check_plan_data = 'X'
+      i_application     = 'P'
+      i_commit_all      = 'X'
+    IMPORTING
+      e_errors_found    = lv_errors_found
+    TABLES
+      it_bpak           = lt_bpak
+      it_return         = lt_return.
+
+  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
+    rv_success = abap_false.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 6) Check Return Messages
+*---------------------------------------------------------------------*
+  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
+    EXIT.
+  ENDLOOP.
+
+  IF sy-subrc = 0.
+    rv_success = abap_false.
+  ELSE.
+    COMMIT WORK AND WAIT.
+    WAIT UP TO 2 SECONDS.
+    rv_success = abap_true.
+  ENDIF.
 
 ENDMETHOD.
