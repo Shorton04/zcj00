@@ -1,74 +1,62 @@
-FORM validate_total_up_done
-  CHANGING cv_error TYPE abap_bool.
+MODULE set_table_field_attributes OUTPUT.
 
-  DATA: ls_parent     TYPE ty_wbs_display,
-        ls_child      TYPE ty_wbs_display,
-        lv_tabix      TYPE sy-tabix,
-        lv_nextix     TYPE sy-tabix,
-        lv_lines      TYPE i,
-        lv_sum        TYPE ty_wbs_display-zapproved_budg,
-        lv_has_child  TYPE abap_bool,
-        lv_next_stufe TYPE ps_stufe.
+  DATA: lv_read_only TYPE abap_bool.
 
-  CLEAR cv_error.
-
-  lv_lines = lines( gt_wbs_display ).
-  IF lv_lines IS INITIAL.
-    RETURN.
+  " Determine if entire row should be read-only
+  " (e.g., for approved requests or specific statuses)
+  IF gs_header-request_status = 'APPROVED'
+  OR gs_header-request_status = 'REJECTED'.
+    lv_read_only = abap_true.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Dynamic hierarchy validation
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_parent.
+  LOOP AT SCREEN.
 
-    lv_tabix = sy-tabix.
-    CLEAR: lv_sum, lv_has_child.
+    " Add row (Editable)
+    IF gs_wbs_display-stufe IS INITIAL
+    AND gs_wbs_display-posid IS INITIAL
+    AND gs_wbs_display-imprf IS INITIAL.
+      screen-input = 1.
+      screen-intensified = 1.
+      MODIFY SCREEN.
+      CONTINUE.
+    ENDIF.
 
-    lv_nextix = lv_tabix + 1.
+    " ALWAYS GRAYED OUT (Template-derived fields)
+    IF screen-name = 'GS_WBS_DISPLAY-STUFE'        " Level - from template
+    OR screen-name = 'GS_WBS_DISPLAY-POSID'        " WBS Code - from template
+    OR screen-name = 'GS_WBS_DISPLAY-POSNR'        " Internal number
+    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'        " Company Code - from header
+    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'        " Investment Profile - from template
+    OR screen-name = 'GS_WBS_DISPLAY-KOSTL'        " Cost Center
+    OR screen-name = 'GS_WBS_DISPLAY-PRART'.       " Project Type - from template
 
-    WHILE lv_nextix <= lv_lines.
+      screen-input = 0.
+      screen-intensified = 0.
+      MODIFY SCREEN.
+    ENDIF.
 
-      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
-      IF sy-subrc <> 0.
-        EXIT.
+    " CONDITIONALLY EDITABLE (based on level and status)
+
+    " Description: Editable for Level 2/3, grayed for Level 1
+    IF screen-name = 'GS_WBS_DISPLAY-POST1'.
+*      IF gs_wbs_display-stufe = 1 OR lv_read_only = abap_true.
+*        screen-input = 0.
+*        screen-intensified = 0.
+*        MODIFY SCREEN.
+*      ENDIF.
+    ENDIF.
+
+
+    " Budget fields: Editable only in DRAFT status
+    IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+    OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
+      IF lv_read_only = abap_true.
+        screen-input = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
       ENDIF.
-
-      " Stop when next sibling or upper/higher parent starts
-      IF ls_child-stufe <= ls_parent-stufe.
-        EXIT.
-      ENDIF.
-
-      " Only direct children
-      lv_next_stufe = ls_parent-stufe + 1.
-
-      IF ls_child-stufe = lv_next_stufe.
-        lv_sum = lv_sum + ls_child-zapproved_budg.
-        lv_has_child = abap_true.
-      ENDIF.
-
-      lv_nextix = lv_nextix + 1.
-
-    ENDWHILE.
-
-*---------------------------------------------------------------------*
-* Validation
-*---------------------------------------------------------------------*
-    IF lv_has_child = abap_true.
-
-      " Parent must be exactly equal to total of its direct children
-      IF ls_parent-zapproved_budg <> lv_sum.
-
-        MESSAGE e000(zmsg_a2r)
-          WITH 'Parent budget must be equal to the total of its child WBS values. Please trigger Total Up.'(m35).
-
-        cv_error = abap_true.
-        RETURN.
-
-      ENDIF.
-
     ENDIF.
 
   ENDLOOP.
 
-ENDFORM.
+ENDMODULE.
