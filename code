@@ -1,217 +1,74 @@
-METHOD assign_plan_values.
+FORM validate_total_up_done
+  CHANGING cv_error TYPE abap_bool.
 
-  TYPES: BEGIN OF ty_prps_map,
-           posid TYPE prps-posid,
-           pspnr TYPE prps-pspnr,
-           psphi TYPE prps-psphi,
-           objnr TYPE prps-objnr,
-         END OF ty_prps_map.
+  DATA: ls_parent     TYPE ty_wbs_display,
+        ls_child      TYPE ty_wbs_display,
+        lv_tabix      TYPE sy-tabix,
+        lv_nextix     TYPE sy-tabix,
+        lv_lines      TYPE i,
+        lv_sum        TYPE ty_wbs_display-zapproved_budg,
+        lv_has_child  TYPE abap_bool,
+        lv_next_stufe TYPE ps_stufe.
 
-  TYPES: BEGIN OF ty_prhi_map,
-           posnr TYPE prhi-posnr,
-           psphi TYPE prhi-psphi,
-           down  TYPE prhi-down,
-         END OF ty_prhi_map.
+  CLEAR cv_error.
 
-  DATA: lv_errors_found TYPE oax,
-        lt_bpak         TYPE STANDARD TABLE OF bpak,
-        ls_bpak         TYPE bpak,
-        lt_wbs_db       TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_table_bp     TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        ls_table_bp     TYPE ztb_a2r_wbsitem,
-        ls_bp           TYPE ztb_a2r_wbsitem,
-        lv_waers        TYPE waers,
-        lv_reqtype      TYPE ztb_a2r_wbshdr-z_reqtype,
-        lv_version      TYPE bp_version,
-        lv_delta        TYPE c,
-        lv_rollup       TYPE c,
-        lt_return       TYPE STANDARD TABLE OF bapiret2,
-        lv_level        TYPE ztb_a2r_wbsitem-stufe,
-        lv_posid_db     TYPE ps_posid,
-        lt_prps_bp      TYPE STANDARD TABLE OF ty_prps_map,
-        ls_prps_bp      TYPE ty_prps_map,
-        lt_prhi         TYPE STANDARD TABLE OF ty_prhi_map,
-        ls_prhi         TYPE ty_prhi_map.
-
-  FIELD-SYMBOLS: <fs_wbs>  TYPE ztb_a2r_wbsitem,
-                 <fs_prps> TYPE ty_prps_map.
-
-  rv_success = abap_false.
-  CLEAR: lt_bpak, lt_return, lv_errors_found.
-
-  lv_delta   = ''.
-  lv_rollup  = ''.
-  lv_version = '000'.
-
-*---------------------------------------------------------------------*
-* 1) Get currency
-*---------------------------------------------------------------------*
-  SELECT SINGLE waers, z_reqtype
-    INTO (@lv_waers, @lv_reqtype)
-    FROM ztb_a2r_wbshdr
-    WHERE zreq_num = @is_header-zreq_num.
-
-  IF lv_waers IS INITIAL.
-    lv_waers = is_header-waers.
-  ENDIF.
-
-  IF lv_waers IS INITIAL AND is_header-bukrs IS NOT INITIAL.
-    SELECT SINGLE waers
-      INTO @lv_waers
-      FROM t001
-      WHERE bukrs = @is_header-bukrs.
-  ENDIF.
-
-  IF lv_waers IS INITIAL.
+  lv_lines = lines( gt_wbs_display ).
+  IF lv_lines IS INITIAL.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2) Read request WBS rows
+* Dynamic hierarchy validation
 *---------------------------------------------------------------------*
-  SELECT *
-    FROM ztb_a2r_wbsitem
-    INTO TABLE @lt_wbs_db
-    WHERE zreq_num = @is_header-zreq_num.
+  LOOP AT gt_wbs_display INTO ls_parent.
 
-  IF lt_wbs_db IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
+    lv_tabix = sy-tabix.
+    CLEAR: lv_sum, lv_has_child.
 
-*---------------------------------------------------------------------*
-* 3) Copy and sort like old system
-*---------------------------------------------------------------------*
-  lt_table_bp = lt_wbs_db.
-  SORT lt_table_bp BY stufe DESCENDING.
-  READ TABLE lt_table_bp INTO ls_bp INDEX 1.
+    lv_nextix = lv_tabix + 1.
 
-  IF sy-subrc <> 0 OR ls_bp-stufe IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
+    WHILE lv_nextix <= lv_lines.
 
-*---------------------------------------------------------------------*
-* 4) Preload PRPS using converted POSID
-*---------------------------------------------------------------------*
-  LOOP AT lt_wbs_db ASSIGNING <fs_wbs>.
-    lv_posid_db = <fs_wbs>-posid.
-
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-      EXPORTING
-        input  = lv_posid_db
-      IMPORTING
-        output = lv_posid_db
-      EXCEPTIONS
-        OTHERS = 1.
-
-    IF sy-subrc = 0 AND lv_posid_db IS NOT INITIAL.
-      <fs_wbs>-posid = lv_posid_db.
-    ENDIF.
-  ENDLOOP.
-
-  SELECT posid, pspnr, psphi, objnr
-    FROM prps
-    INTO TABLE @lt_prps_bp
-    FOR ALL ENTRIES IN @lt_wbs_db
-    WHERE posid = @lt_wbs_db-posid.
-
-*---------------------------------------------------------------------*
-* 5) Preload PRHI leaf nodes only
-*    old system uses DOWN = SPACE
-*---------------------------------------------------------------------*
-  IF lt_prps_bp IS NOT INITIAL.
-    SELECT posnr, psphi, down
-      FROM prhi
-      INTO TABLE @lt_prhi
-      FOR ALL ENTRIES IN @lt_prps_bp
-      WHERE psphi = @lt_prps_bp-psphi
-        AND down  = @space.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 6) Build BPAK level by level
-*    deepest STUFE first up to level 1
-*---------------------------------------------------------------------*
-  lv_level = ls_bp-stufe.
-
-  WHILE lv_level > 0.
-
-    LOOP AT lt_wbs_db INTO ls_table_bp WHERE stufe = lv_level.
-
-      CLEAR: ls_prps_bp, ls_prhi, ls_bpak.
-
-      READ TABLE lt_prps_bp INTO ls_prps_bp
-        WITH KEY posid = ls_table_bp-posid.
-
+      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
       IF sy-subrc <> 0.
-        CONTINUE.
+        EXIT.
       ENDIF.
 
-      "for deepest level, optionally ensure it is a leaf
-      IF lv_level = ls_bp-stufe.
-        READ TABLE lt_prhi INTO ls_prhi
-          WITH KEY posnr = ls_prps_bp-pspnr.
-        IF sy-subrc <> 0.
-          CONTINUE.
-        ENDIF.
+      " stop when next sibling or higher parent starts
+      IF ls_child-stufe <= ls_parent-stufe.
+        EXIT.
       ENDIF.
 
-      ls_bpak-e_objnr = ls_prps_bp-objnr.
-      ls_bpak-e_versn = lv_version.
-      ls_bpak-e_perio = '001'.
-      ls_bpak-e_wrttp = '01'.
-      ls_bpak-wert    = ls_table_bp-wert2.
-      ls_bpak-twaer   = lv_waers.
+      " only direct children
+      lv_next_stufe = ls_parent-stufe + 1.
 
-      APPEND ls_bpak TO lt_bpak.
+      IF ls_child-stufe = lv_next_stufe.
+        lv_sum = lv_sum + ls_child-zapproved_budg.
+        lv_has_child = abap_true.
+      ENDIF.
 
-    ENDLOOP.
+      lv_nextix = lv_nextix + 1.
 
-    lv_level = lv_level - 1.
-
-  ENDWHILE.
-
-  IF lt_bpak IS INITIAL.
-    rv_success = abap_true.
-    RETURN.
-  ENDIF.
+    ENDWHILE.
 
 *---------------------------------------------------------------------*
-* 7) Call FM once only
+* Validation
 *---------------------------------------------------------------------*
-  CALL FUNCTION 'KBPP_EXTERN_UPDATE_CO'
-    EXPORTING
-      i_budget_activity = 'KSTP'
-      i_delta_amounts   = lv_delta
-      i_rollup_data     = lv_rollup
-      i_check_plan_data = 'X'
-      i_application     = 'P'
-      i_commit_all      = 'X'
-    IMPORTING
-      e_errors_found    = lv_errors_found
-    TABLES
-      it_bpak           = lt_bpak
-      it_return         = lt_return.
+    IF lv_has_child = abap_true.
 
-  IF sy-subrc <> 0 OR lv_errors_found IS NOT INITIAL.
-    rv_success = abap_false.
-    RETURN.
-  ENDIF.
+      " Only error if children exceed parent
+      IF ls_parent-zapproved_budg < lv_sum.
 
-*---------------------------------------------------------------------*
-* 8) Return check
-*---------------------------------------------------------------------*
-  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'AEX'.
-    EXIT.
+        MESSAGE e000(zmsg_a2r)
+        WITH 'Child budget exceeds, Please trigger Total Up.'(m35).
+
+        cv_error = abap_true.
+        RETURN.
+
+      ENDIF.
+
+    ENDIF.
+
   ENDLOOP.
 
-  IF sy-subrc = 0.
-    rv_success = abap_false.
-  ELSE.
-    COMMIT WORK AND WAIT.
-    WAIT UP TO 2 SECONDS.
-    rv_success = abap_true.
-  ENDIF.
-
-ENDMETHOD.
+ENDFORM.
