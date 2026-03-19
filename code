@@ -34,12 +34,12 @@ FORM validate_total_up_done
         EXIT.
       ENDIF.
 
-      " stop when next sibling or higher parent starts
+      " Stop when next sibling or upper/higher parent starts
       IF ls_child-stufe <= ls_parent-stufe.
         EXIT.
       ENDIF.
 
-      " only direct children
+      " Only direct children
       lv_next_stufe = ls_parent-stufe + 1.
 
       IF ls_child-stufe = lv_next_stufe.
@@ -56,11 +56,11 @@ FORM validate_total_up_done
 *---------------------------------------------------------------------*
     IF lv_has_child = abap_true.
 
-      " Only error if children exceed parent
-      IF ls_parent-zapproved_budg < lv_sum.
+      " Parent must be exactly equal to total of its direct children
+      IF ls_parent-zapproved_budg <> lv_sum.
 
         MESSAGE e000(zmsg_a2r)
-        WITH 'Child budget exceeds, Please trigger Total Up.'(m35).
+          WITH 'Parent budget must be equal to the total of its child WBS values. Please trigger Total Up.'(m35).
 
         cv_error = abap_true.
         RETURN.
