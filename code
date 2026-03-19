@@ -2,59 +2,125 @@ MODULE set_table_field_attributes OUTPUT.
 
   DATA: lv_read_only TYPE abap_bool.
 
-  " Determine if entire row should be read-only
-  " (e.g., for approved requests or specific statuses)
+  CLEAR lv_read_only.
+
+  " Global read-only by request status
   IF gs_header-request_status = 'APPROVED'
   OR gs_header-request_status = 'REJECTED'.
     lv_read_only = abap_true.
   ENDIF.
 
+  " B3 = all rows/fields uneditable
+  IF gv_req_type = 'B3'.
+    lv_read_only = abap_true.
+  ENDIF.
+
   LOOP AT SCREEN.
 
-    " Add row (Editable)
+    "--------------------------------------------------------------*
+    " B3: Entire table screen uneditable
+    "--------------------------------------------------------------*
+    IF gv_req_type = 'B3'.
+      IF screen-name CP 'GS_WBS_DISPLAY-*'.
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+      ENDIF.
+      CONTINUE.
+    ENDIF.
+
+    "--------------------------------------------------------------*
+    " Add row (Editable) - not applicable for B3 due to logic above
+    "--------------------------------------------------------------*
     IF gs_wbs_display-stufe IS INITIAL
     AND gs_wbs_display-posid IS INITIAL
     AND gs_wbs_display-imprf IS INITIAL.
-      screen-input = 1.
+      screen-input       = 1.
       screen-intensified = 1.
       MODIFY SCREEN.
       CONTINUE.
     ENDIF.
 
-    " ALWAYS GRAYED OUT (Template-derived fields)
-    IF screen-name = 'GS_WBS_DISPLAY-STUFE'        " Level - from template
-    OR screen-name = 'GS_WBS_DISPLAY-POSID'        " WBS Code - from template
-    OR screen-name = 'GS_WBS_DISPLAY-POSNR'        " Internal number
-    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'        " Company Code - from header
-    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'        " Investment Profile - from template
-    OR screen-name = 'GS_WBS_DISPLAY-KOSTL'        " Cost Center
-    OR screen-name = 'GS_WBS_DISPLAY-PRART'.       " Project Type - from template
+    "--------------------------------------------------------------*
+    " Always gray out template/header-derived fields
+    "--------------------------------------------------------------*
+    IF screen-name = 'GS_WBS_DISPLAY-STUFE'
+    OR screen-name = 'GS_WBS_DISPLAY-POSID'
+    OR screen-name = 'GS_WBS_DISPLAY-POSNR'
+    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'
+    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'
+    OR screen-name = 'GS_WBS_DISPLAY-KOSTL'
+    OR screen-name = 'GS_WBS_DISPLAY-PRART'.
 
-      screen-input = 0.
+      screen-input       = 0.
       screen-intensified = 0.
       MODIFY SCREEN.
+      CONTINUE.
     ENDIF.
 
-    " CONDITIONALLY EDITABLE (based on level and status)
+    "--------------------------------------------------------------*
+    " B2 rule:
+    " Only ZAPPROVED_BUDG and ZBUDGET_CHECK editable for STUFE > 2
+    " All other fields uneditable
+    "--------------------------------------------------------------*
+    IF gv_req_type = 'B2'.
 
-    " Description: Editable for Level 2/3, grayed for Level 1
+      IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+      OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
+
+        IF lv_read_only = abap_true OR gs_wbs_display-stufe <= 2.
+          screen-input       = 0.
+          screen-intensified = 0.
+        ELSE.
+          screen-input       = 1.
+          screen-intensified = 1.
+        ENDIF.
+
+        MODIFY SCREEN.
+        CONTINUE.
+
+      ELSEIF screen-name CP 'GS_WBS_DISPLAY-*'.
+
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+        CONTINUE.
+
+      ENDIF.
+
+    ENDIF.
+
+    "--------------------------------------------------------------*
+    " Default logic for non-B2 / non-B3
+    "--------------------------------------------------------------*
+
+    " Description
     IF screen-name = 'GS_WBS_DISPLAY-POST1'.
 *      IF gs_wbs_display-stufe = 1 OR lv_read_only = abap_true.
 *        screen-input = 0.
 *        screen-intensified = 0.
-*        MODIFY SCREEN.
+*      ELSE.
+*        screen-input = 1.
+*        screen-intensified = 1.
 *      ENDIF.
+      MODIFY SCREEN.
+      CONTINUE.
     ENDIF.
 
-
-    " Budget fields: Editable only in DRAFT status
+    " Budget fields: editable only if not read-only
     IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
     OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
+
       IF lv_read_only = abap_true.
-        screen-input = 0.
+        screen-input       = 0.
         screen-intensified = 0.
-        MODIFY SCREEN.
+      ELSE.
+        screen-input       = 1.
+        screen-intensified = 1.
       ENDIF.
+
+      MODIFY SCREEN.
+      CONTINUE.
     ENDIF.
 
   ENDLOOP.
