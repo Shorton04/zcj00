@@ -1,95 +1,161 @@
 FORM total_up_wbs_tc_t.
+
   DATA: gt_wbs_display5 TYPE STANDARD TABLE OF ty_wbs_display,
         gt_wbs_display4 TYPE STANDARD TABLE OF ty_wbs_display,
         gt_wbs_display3 TYPE STANDARD TABLE OF ty_wbs_display,
         gt_wbs_display2 TYPE STANDARD TABLE OF ty_wbs_display,
         gt_wbs_display1 TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
-        lv_index4 TYPE sy-index,
-        lv_index3 TYPE sy-index,
-        lv_index2 TYPE sy-index,
-        lv_index1 TYPE sy-index.
-  DATA: lv_posid_len5 TYPE numc2.
-  DATA: lv_posid_len4 TYPE numc2.
-  DATA: lv_posid_len3 TYPE numc2.
-  DATA: lv_posid_len2 TYPE numc2.
-  DATA: lv_posid_len1 TYPE numc2.
+        lv_sum4         TYPE ty_wbs_display-zapproved_budg,
+        lv_sum3         TYPE ty_wbs_display-zapproved_budg,
+        lv_sum2         TYPE ty_wbs_display-zapproved_budg,
+        lv_sum1         TYPE ty_wbs_display-zapproved_budg,
+        lv_index4       TYPE sy-tabix,
+        lv_index3       TYPE sy-tabix,
+        lv_index2       TYPE sy-tabix.
 
+  DATA: lv_parent_posid TYPE ps_posid,
+        lv_child_posid  TYPE ps_posid,
+        lv_parent_len   TYPE i.
 
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
-    IF <wa>-stufe = '5'.
-      lv_posid_len5 = strlen( <wa>-posid ).
-      APPEND <wa> TO gt_wbs_display5.
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO gt_wbs_display4.
-      DATA(lv_posid_new4) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_posid_new4.
-      lv_posid_len4 = strlen( lv_posid_new4 ).
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO gt_wbs_display3.
-      DATA(lv_posid_new3) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_posid_new3.
-      lv_posid_len3 = strlen( lv_posid_new3 ).
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO gt_wbs_display2.
-      DATA(lv_posid_new2) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_posid_new2.
-      lv_posid_len2 = strlen( lv_posid_new2 ).
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO gt_wbs_display1.
-      DATA(lv_posid_new1) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_posid_new1.
-      lv_posid_len1 = strlen( lv_posid_new1 ).
-    ENDIF.
+  FIELD-SYMBOLS:
+    <wa>  TYPE ty_wbs_display,
+    <wa1> TYPE ty_wbs_display,
+    <wa2> TYPE ty_wbs_display,
+    <wa3> TYPE ty_wbs_display,
+    <wa4> TYPE ty_wbs_display,
+    <wa5> TYPE ty_wbs_display.
+
+* Separate per level
+  CLEAR: gt_wbs_display1, gt_wbs_display2, gt_wbs_display3,
+         gt_wbs_display4, gt_wbs_display5.
+
+  LOOP AT gt_wbs_display ASSIGNING <wa>.
+    CASE <wa>-stufe.
+      WHEN '1'.
+        APPEND <wa> TO gt_wbs_display1.
+      WHEN '2'.
+        APPEND <wa> TO gt_wbs_display2.
+      WHEN '3'.
+        APPEND <wa> TO gt_wbs_display3.
+      WHEN '4'.
+        APPEND <wa> TO gt_wbs_display4.
+      WHEN '5'.
+        APPEND <wa> TO gt_wbs_display5.
+    ENDCASE.
   ENDLOOP.
 
-* Build the Total for Level4.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
-    LOOP AT gt_wbs_display5 ASSIGNING FIELD-SYMBOL(<wa5>).
-      IF <wa5>-posid+0(lv_posid_len4) = <wa4>-posid+0(lv_posid_len4).
+* Build total for Level 4 from Level 5
+  CLEAR lv_index4.
+  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+    CLEAR: lv_sum4, lv_parent_posid, lv_parent_len.
+
+    lv_parent_posid = <wa4>-posid.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_parent_posid
+      IMPORTING
+        output = lv_parent_posid.
+
+    lv_parent_len = strlen( lv_parent_posid ).
+
+    LOOP AT gt_wbs_display5 ASSIGNING <wa5>.
+      lv_child_posid = <wa5>-posid.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = lv_child_posid
+        IMPORTING
+          output = lv_child_posid.
+
+      IF lv_child_posid IS NOT INITIAL
+         AND lv_parent_posid IS NOT INITIAL
+         AND strlen( lv_child_posid ) >= lv_parent_len
+         AND lv_child_posid+0(lv_parent_len) = lv_parent_posid.
         lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
       ENDIF.
     ENDLOOP.
+
     IF lv_sum4 IS NOT INITIAL.
       <wa4>-zapproved_budg = lv_sum4.
     ENDIF.
-    lv_index4 = lv_index4 + 1.
+
     MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
-    MODIFY gt_wbs_display4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
+    lv_index4 = sy-tabix.
+
+    READ TABLE gt_wbs_display4 ASSIGNING FIELD-SYMBOL(<wa4_sub>) INDEX lv_index4.
+    IF sy-subrc = 0.
+      <wa4_sub>-zapproved_budg = <wa4>-zapproved_budg.
+    ENDIF.
   ENDLOOP.
 
-* Build the Total for Level3.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
+* Build total for Level 3 from Level 4
+  CLEAR lv_index3.
+  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+    CLEAR: lv_sum3, lv_parent_posid, lv_parent_len.
+
+    lv_parent_posid = <wa3>-posid.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_parent_posid
+      IMPORTING
+        output = lv_parent_posid.
+
+    lv_parent_len = strlen( lv_parent_posid ).
+
     LOOP AT gt_wbs_display4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_posid_len3) = <wa3>-posid+0(lv_posid_len3).
+      lv_child_posid = <wa4>-posid.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = lv_child_posid
+        IMPORTING
+          output = lv_child_posid.
+
+      IF lv_child_posid IS NOT INITIAL
+         AND lv_parent_posid IS NOT INITIAL
+         AND strlen( lv_child_posid ) >= lv_parent_len
+         AND lv_child_posid+0(lv_parent_len) = lv_parent_posid.
         lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
       ENDIF.
     ENDLOOP.
+
     IF lv_sum3 IS NOT INITIAL.
       <wa3>-zapproved_budg = lv_sum3.
     ENDIF.
-    lv_index3 = lv_index3 + 1.
+
     MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
-    MODIFY gt_wbs_display3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
+    lv_index3 = sy-tabix.
+
+    READ TABLE gt_wbs_display3 ASSIGNING FIELD-SYMBOL(<wa3_sub>) INDEX lv_index3.
+    IF sy-subrc = 0.
+      <wa3_sub>-zapproved_budg = <wa3>-zapproved_budg.
+    ENDIF.
   ENDLOOP.
 
-* Build the Total for Level2.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
+* Build total for Level 2 from Level 3
+  CLEAR lv_index2.
+  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+    CLEAR: lv_sum2, lv_parent_posid, lv_parent_len.
+
+    lv_parent_posid = <wa2>-posid.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_parent_posid
+      IMPORTING
+        output = lv_parent_posid.
+
+    lv_parent_len = strlen( lv_parent_posid ).
+
     LOOP AT gt_wbs_display3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_posid_len2) = <wa2>-posid+0(lv_posid_len2).
+      lv_child_posid = <wa3>-posid.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = lv_child_posid
+        IMPORTING
+          output = lv_child_posid.
+
+      IF lv_child_posid IS NOT INITIAL
+         AND lv_parent_posid IS NOT INITIAL
+         AND strlen( lv_child_posid ) >= lv_parent_len
+         AND lv_child_posid+0(lv_parent_len) = lv_parent_posid.
         lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
       ENDIF.
     ENDLOOP.
@@ -97,24 +163,50 @@ FORM total_up_wbs_tc_t.
     IF lv_sum2 IS NOT INITIAL.
       <wa2>-zapproved_budg = lv_sum2.
     ENDIF.
-    lv_index2 = lv_index2 + 1.
+
     MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
-    MODIFY gt_wbs_display2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
+    lv_index2 = sy-tabix.
+
+    READ TABLE gt_wbs_display2 ASSIGNING FIELD-SYMBOL(<wa2_sub>) INDEX lv_index2.
+    IF sy-subrc = 0.
+      <wa2_sub>-zapproved_budg = <wa2>-zapproved_budg.
+    ENDIF.
   ENDLOOP.
 
-* Build the Total for Level1.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+* Build total for Level 1 from Level 2
+  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
+    CLEAR: lv_sum1, lv_parent_posid, lv_parent_len.
+
+    lv_parent_posid = <wa1>-posid.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_parent_posid
+      IMPORTING
+        output = lv_parent_posid.
+
+    lv_parent_len = strlen( lv_parent_posid ).
+
     LOOP AT gt_wbs_display2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_posid_len1) = <wa1>-posid+0(lv_posid_len1).
+      lv_child_posid = <wa2>-posid.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+        EXPORTING
+          input  = lv_child_posid
+        IMPORTING
+          output = lv_child_posid.
+
+      IF lv_child_posid IS NOT INITIAL
+         AND lv_parent_posid IS NOT INITIAL
+         AND strlen( lv_child_posid ) >= lv_parent_len
+         AND lv_child_posid+0(lv_parent_len) = lv_parent_posid.
         lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
       ENDIF.
     ENDLOOP.
+
     IF lv_sum1 IS NOT INITIAL.
       <wa1>-zapproved_budg = lv_sum1.
     ENDIF.
+
     MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
-    CLEAR: lv_sum1.
   ENDLOOP.
 
 ENDFORM.
