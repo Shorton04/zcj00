@@ -19,23 +19,14 @@ FORM total_up_wbs_tc.
 
   DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
 
-  FIELD-SYMBOLS:
-    <wa0> TYPE ty_wbs_display,
-    <wa>  TYPE ty_wbs_display,
-    <wa1> TYPE ty_wbs_display,
-    <wa2> TYPE ty_wbs_display,
-    <wa3> TYPE ty_wbs_display,
-    <wa4> TYPE ty_wbs_display,
-    <wa5> TYPE ty_wbs_display.
-
   "Auto-populate blank budget = 0 (so totals still update)
-  LOOP AT gt_wbs_display ASSIGNING <wa0>.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
     IF <wa0>-zapproved_budg IS INITIAL.
       <wa0>-zapproved_budg = 0.
     ENDIF.
   ENDLOOP.
 
-  LOOP AT gt_wbs_display ASSIGNING <wa>.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
     IF <wa>-stufe = '5'.
       APPEND <wa> TO lt_table5.
 
@@ -74,17 +65,15 @@ FORM total_up_wbs_tc.
   ENDLOOP.
 
 * Build the Total for Level4.
-  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
-    LOOP AT lt_table5 ASSIGNING <wa5>.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
+    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
       IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
         lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
       ENDIF.
     ENDLOOP.
-
     IF lv_sum4 IS NOT INITIAL.
       <wa4>-zapproved_budg = lv_sum4.
     ENDIF.
-
     lv_index4 = lv_index4 + 1.
     MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
     MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
@@ -92,17 +81,15 @@ FORM total_up_wbs_tc.
   ENDLOOP.
 
 * Build the Total for Level3.
-  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
     LOOP AT lt_table4 ASSIGNING <wa4>.
       IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
         lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
       ENDIF.
     ENDLOOP.
-
     IF lv_sum3 IS NOT INITIAL.
       <wa3>-zapproved_budg = lv_sum3.
     ENDIF.
-
     lv_index3 = lv_index3 + 1.
     MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
     MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
@@ -110,7 +97,7 @@ FORM total_up_wbs_tc.
   ENDLOOP.
 
 * Build the Total for Level2.
-  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
     LOOP AT lt_table3 ASSIGNING <wa3>.
       IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
         lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
@@ -120,38 +107,22 @@ FORM total_up_wbs_tc.
     IF lv_sum2 IS NOT INITIAL.
       <wa2>-zapproved_budg = lv_sum2.
     ENDIF.
-
     lv_index2 = lv_index2 + 1.
     MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
     MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
     CLEAR: lv_sum2.
   ENDLOOP.
 
-* Build / Fix the Total for Level1.
-  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
-
-    IF gv_req_type = 'B2'.
-      " For B2, level 1 must stay fixed from original value
-      IF <wa1>-wert2 IS NOT INITIAL.
-        <wa1>-zapproved_budg = <wa1>-wert2.
-      ELSE.
-        CLEAR <wa1>-zapproved_budg.
+* Build the Total for Level1.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
       ENDIF.
-
-    ELSE.
-      CLEAR lv_sum1.
-
-      LOOP AT lt_table2 ASSIGNING <wa2>.
-        IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
-          lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
-        ENDIF.
-      ENDLOOP.
-
-      IF lv_sum1 IS NOT INITIAL.
-        <wa1>-zapproved_budg = lv_sum1.
-      ENDIF.
+    ENDLOOP.
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-zapproved_budg = lv_sum1.
     ENDIF.
-
     MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
     CLEAR: lv_sum1.
   ENDLOOP.
