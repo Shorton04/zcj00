@@ -1,128 +1,206 @@
-MODULE set_table_field_attributes OUTPUT.
+FORM total_up_wbs_tc.
+  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
+        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
+        lv_index4 TYPE sy-index,
+        lv_index3 TYPE sy-index,
+        lv_index2 TYPE sy-index.
 
-  DATA: lv_read_only TYPE abap_bool.
+  DATA: lv_pspid_len4 TYPE numc2.
+  DATA: lv_pspid_len3 TYPE numc2.
+  DATA: lv_pspid_len2 TYPE numc2.
+  DATA: lv_pspid_len1 TYPE numc2.
 
-  CLEAR lv_read_only.
+  DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
 
-  " Global read-only by request status
-  IF gs_header-request_status = 'APPROVED'
-  OR gs_header-request_status = 'REJECTED'.
-    lv_read_only = abap_true.
-  ENDIF.
-
-  " B3 = all rows/fields uneditable
-  IF gv_req_type = 'B3'.
-    lv_read_only = abap_true.
-  ENDIF.
-
-  LOOP AT SCREEN.
-
-    "--------------------------------------------------------------*
-    " B3: Entire table screen uneditable
-    "--------------------------------------------------------------*
-    IF gv_req_type = 'B3'.
-      IF screen-name CP 'GS_WBS_DISPLAY-*'.
-        screen-input       = 0.
-        screen-intensified = 0.
-        MODIFY SCREEN.
-      ENDIF.
-      CONTINUE.
+  "Auto-populate blank budget = 0 (so totals still update)
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
+    IF <wa0>-zapproved_budg IS INITIAL.
+      <wa0>-zapproved_budg = 0.
     ENDIF.
-
-    "--------------------------------------------------------------*
-    " Add row (Editable) - not applicable for B3 due to logic above
-    "--------------------------------------------------------------*
-    IF gs_wbs_display-stufe IS INITIAL
-    AND gs_wbs_display-posid IS INITIAL
-    AND gs_wbs_display-imprf IS INITIAL.
-      screen-input       = 1.
-      screen-intensified = 1.
-      MODIFY SCREEN.
-      CONTINUE.
-    ENDIF.
-
-    "--------------------------------------------------------------*
-    " Always gray out template/header-derived fields
-    "--------------------------------------------------------------*
-    IF screen-name = 'GS_WBS_DISPLAY-STUFE'
-    OR screen-name = 'GS_WBS_DISPLAY-POSID'
-    OR screen-name = 'GS_WBS_DISPLAY-POSNR'
-    OR screen-name = 'GS_WBS_DISPLAY-BUKRS'
-    OR screen-name = 'GS_WBS_DISPLAY-IMPRF'
-    OR screen-name = 'GS_WBS_DISPLAY-KOSTL'
-    OR screen-name = 'GS_WBS_DISPLAY-PRART'.
-
-      screen-input       = 0.
-      screen-intensified = 0.
-      MODIFY SCREEN.
-      CONTINUE.
-    ENDIF.
-
-    "--------------------------------------------------------------*
-    " B2 rule:
-    " Only ZAPPROVED_BUDG and ZBUDGET_CHECK editable for STUFE > 2
-    " All other fields uneditable
-    "--------------------------------------------------------------*
-    IF gv_req_type = 'B2'.
-
-      IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
-      OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
-
-        IF lv_read_only = abap_true OR gs_wbs_display-stufe <= 2.
-          screen-input       = 0.
-          screen-intensified = 0.
-        ELSE.
-          screen-input       = 1.
-          screen-intensified = 1.
-        ENDIF.
-
-        MODIFY SCREEN.
-        CONTINUE.
-
-      ELSEIF screen-name CP 'GS_WBS_DISPLAY-*'.
-
-        screen-input       = 0.
-        screen-intensified = 0.
-        MODIFY SCREEN.
-        CONTINUE.
-
-      ENDIF.
-
-    ENDIF.
-
-    "--------------------------------------------------------------*
-    " Default logic for non-B2 / non-B3
-    "--------------------------------------------------------------*
-
-    " Description
-    IF screen-name = 'GS_WBS_DISPLAY-POST1'.
-*      IF gs_wbs_display-stufe = 1 OR lv_read_only = abap_true.
-*        screen-input = 0.
-*        screen-intensified = 0.
-*      ELSE.
-*        screen-input = 1.
-*        screen-intensified = 1.
-*      ENDIF.
-      MODIFY SCREEN.
-      CONTINUE.
-    ENDIF.
-
-    " Budget fields: editable only if not read-only
-    IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
-    OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
-
-      IF lv_read_only = abap_true.
-        screen-input       = 0.
-        screen-intensified = 0.
-      ELSE.
-        screen-input       = 1.
-        screen-intensified = 1.
-      ENDIF.
-
-      MODIFY SCREEN.
-      CONTINUE.
-    ENDIF.
-
   ENDLOOP.
 
-ENDMODULE.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
+    IF <wa>-stufe = '5'.
+      APPEND <wa> TO lt_table5.
+
+    ELSEIF <wa>-stufe = '4'.
+      APPEND <wa> TO lt_table4.
+      DATA(lv_pspid_new4) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new4.
+      lv_pspid_len4 = strlen( lv_pspid_new4 ).
+
+    ELSEIF <wa>-stufe = '3'.
+      APPEND <wa> TO lt_table3.
+      DATA(lv_pspid_new3) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new3.
+      lv_pspid_len3 = strlen( lv_pspid_new3 ).
+
+    ELSEIF <wa>-stufe = '2'.
+      APPEND <wa> TO lt_table2.
+      DATA(lv_pspid_new2) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new2.
+      lv_pspid_len2 = strlen( lv_pspid_new2 ).
+
+    ELSEIF <wa>-stufe = '1'.
+      APPEND <wa> TO lt_table1.
+      DATA(lv_pspid_new1) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new1.
+      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+    ENDIF.
+  ENDLOOP.
+
+* Build the Total for Level4.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
+    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
+        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum4 IS NOT INITIAL.
+      <wa4>-zapproved_budg = lv_sum4.
+    ENDIF.
+    lv_index4 = lv_index4 + 1.
+    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
+    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
+    CLEAR: lv_sum4.
+  ENDLOOP.
+
+* Build the Total for Level3.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
+    LOOP AT lt_table4 ASSIGNING <wa4>.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
+        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum3 IS NOT INITIAL.
+      <wa3>-zapproved_budg = lv_sum3.
+    ENDIF.
+    lv_index3 = lv_index3 + 1.
+    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
+    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
+    CLEAR: lv_sum3.
+  ENDLOOP.
+
+* Build the Total for Level2.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
+    LOOP AT lt_table3 ASSIGNING <wa3>.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
+        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_sum2 IS NOT INITIAL.
+      <wa2>-zapproved_budg = lv_sum2.
+    ENDIF.
+    lv_index2 = lv_index2 + 1.
+    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
+    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
+    CLEAR: lv_sum2.
+  ENDLOOP.
+
+* Build the Total for Level1.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-zapproved_budg = lv_sum1.
+    ENDIF.
+    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
+    CLEAR: lv_sum1.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Separate logic for zbudget_check
+*---------------------------------------------------------------------*
+
+* Level 4 gets X if any Level 5 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa5> WHERE stufe = '5'.
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4)
+         AND <wa5>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa4>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 3 gets X if any Level 4 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3)
+         AND <wa4>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa3>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 2 gets X if any Level 3 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2)
+         AND <wa3>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa2>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 1 gets X if any Level 2 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1)
+         AND <wa2>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa1>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
