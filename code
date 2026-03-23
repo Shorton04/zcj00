@@ -5,13 +5,15 @@ METHOD append_car_template_structure_b1.
         ls_esr_root     TYPE ztb_a2r_wbsitem,
         ls_car_root     TYPE ztb_a2r_wbsitem,
         ls_new_item     TYPE ztb_a2r_wbsitem,
+        lv_esr_root     TYPE string,
+        lv_car_root     TYPE string,
+        lv_car_posid    TYPE string,
         lv_suffix       TYPE string,
-        lv_new_posid    TYPE string,
         lv_root_len     TYPE i.
 
   CLEAR ct_wbs_car.
 
-  "Get CAR template structure first
+  "Get CAR template structure
   CALL METHOD me->copy_template_structure
     EXPORTING
       iv_pspid     = iv_pspid_car
@@ -23,62 +25,61 @@ METHOD append_car_template_structure_b1.
     RETURN.
   ENDIF.
 
-  "Existing ESR root from already loaded gt_wbs_items
+  "Get ESR root from existing structure already loaded in ct_wbs_items
   READ TABLE ct_wbs_items INTO ls_esr_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_esr_root-posid IS INITIAL.
     RETURN.
   ENDIF.
 
-  "CAR template root
+  "Get CAR root from template
   READ TABLE lt_car_template INTO ls_car_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_car_root-posid IS INITIAL.
     RETURN.
   ENDIF.
 
-  lv_root_len = strlen( ls_car_root-posid ).
+  "Use EXTERNAL / display-like value only, remove dots
+  lv_esr_root = ls_esr_root-posid.
+  REPLACE ALL OCCURRENCES OF '.' IN lv_esr_root WITH ''.
+
+  lv_car_root = ls_car_root-posid.
+  REPLACE ALL OCCURRENCES OF '.' IN lv_car_root WITH ''.
+
+  lv_root_len = strlen( lv_car_root ).
 
   LOOP AT lt_car_template INTO ls_car_template.
 
-    "Skip CAR root
+    "Skip level 1 of CAR
     IF ls_car_template-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    CLEAR: ls_new_item, lv_suffix, lv_new_posid.
+    CLEAR: ls_new_item, lv_car_posid, lv_suffix.
 
     ls_new_item = ls_car_template.
 
-    "Replace CAR root with ESR root
-    IF ls_car_template-posid IS NOT INITIAL
-       AND strlen( ls_car_template-posid ) > lv_root_len
-       AND ls_car_template-posid(lv_root_len) = ls_car_root-posid.
+    "Take CAR external/raw posid and remove dots
+    lv_car_posid = ls_car_template-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_car_posid WITH ''.
 
-      lv_suffix = ls_car_template-posid+lv_root_len.
+    "Derive suffix after CAR root
+    IF lv_car_posid IS NOT INITIAL
+       AND strlen( lv_car_posid ) > lv_root_len
+       AND lv_car_posid(lv_root_len) = lv_car_root.
 
-      IF lv_suffix IS NOT INITIAL AND lv_suffix(1) = '.'.
-        SHIFT lv_suffix LEFT BY 1 PLACES.
-      ENDIF.
+      lv_suffix = lv_car_posid+lv_root_len.
 
-      IF lv_suffix IS INITIAL.
-        lv_new_posid = ls_esr_root-posid.
-      ELSE.
-        CONCATENATE ls_esr_root-posid lv_suffix
-          INTO lv_new_posid.
-      ENDIF.
+      CONCATENATE lv_esr_root lv_suffix INTO ls_new_item-posid.
+
     ELSE.
-      lv_new_posid = ls_car_template-posid.
+      ls_new_item-posid = lv_car_posid.
     ENDIF.
 
-    "Store raw value without dots for creation
-    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
-
-    ls_new_item-posid = lv_new_posid.
     ls_new_item-kostl = iv_kostl.
 
-    "All structure shown on screen
+    "Append to display/all items
     APPEND ls_new_item TO ct_wbs_items.
 
-    "Only CAR rows for creation
+    "Append only newly derived CAR rows for creation
     APPEND ls_new_item TO ct_wbs_car.
 
   ENDLOOP.
