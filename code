@@ -1,28 +1,16 @@
-METHODS append_car_template_structure_b1
-  IMPORTING
-    iv_pspid_car TYPE proj-pspid
-    iv_pspid_esr TYPE proj-pspid
-    iv_kostl     TYPE csks-kostl
-  CHANGING
-    ct_wbs_items TYPE STANDARD TABLE.
-
-
-
 METHOD append_car_template_structure_b1.
 
-  DATA: lt_car_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        ls_car_item  TYPE ztb_a2r_wbsitem,
-        ls_new_item  TYPE ztb_a2r_wbsitem,
-        ls_esr_root  TYPE ztb_a2r_wbsitem,
-        ls_car_root  TYPE ztb_a2r_wbsitem,
-        lv_suffix    TYPE string,
-        lv_root_len  TYPE i.
+  DATA: lt_car_items    TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_car_item     TYPE ztb_a2r_wbsitem,
+        ls_new_item     TYPE ztb_a2r_wbsitem,
+        ls_esr_root     TYPE ztb_a2r_wbsitem,
+        ls_car_root     TYPE ztb_a2r_wbsitem,
+        lv_suffix       TYPE string,
+        lv_new_posid    TYPE string,
+        lv_new_posid_db TYPE string,
+        lv_root_len     TYPE i.
 
-  FIELD-SYMBOLS: <fs_item> TYPE ztb_a2r_wbsitem.
-
-  "------------------------------------------------------------
-  " 1) Get CAR template structure into temp table
-  "------------------------------------------------------------
+  "Get CAR template structure first
   CALL METHOD me->copy_template_structure
     EXPORTING
       iv_pspid     = iv_pspid_car
@@ -34,17 +22,13 @@ METHOD append_car_template_structure_b1.
     RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  " 2) Determine ESR level 1 root from existing structure
-  "------------------------------------------------------------
+  "Existing ESR level 1 root
   READ TABLE ct_wbs_items INTO ls_esr_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_esr_root-posid IS INITIAL.
-    ls_esr_root-posid = iv_pspid_esr.
+    RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  " 3) Determine CAR template root (level 1)
-  "------------------------------------------------------------
+  "CAR template root
   READ TABLE lt_car_items INTO ls_car_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_car_root-posid IS INITIAL.
     RETURN.
@@ -52,28 +36,18 @@ METHOD append_car_template_structure_b1.
 
   lv_root_len = strlen( ls_car_root-posid ).
 
-  "------------------------------------------------------------
-  " 4) Append CAR rows except level 1
-  "    Replace CAR root with ESR root
-  "------------------------------------------------------------
   LOOP AT lt_car_items INTO ls_car_item.
 
-    "Skip level 1 of CAR template
+    "Skip CAR root level 1
     IF ls_car_item-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    CLEAR: ls_new_item, lv_suffix.
+    CLEAR: ls_new_item, lv_suffix, lv_new_posid, lv_new_posid_db.
 
     ls_new_item = ls_car_item.
 
-    "--------------------------------------------
-    "Build new POSID
-    "Example:
-    " CAR : PC.000001.04.1
-    " ESR : PC.000003
-    " NEW : PC.000003.04.1
-    "--------------------------------------------
+    "Replace CAR root with ESR root
     IF ls_car_item-posid IS NOT INITIAL
        AND strlen( ls_car_item-posid ) > lv_root_len
        AND ls_car_item-posid(lv_root_len) = ls_car_root-posid.
@@ -85,23 +59,23 @@ METHOD append_car_template_structure_b1.
       ENDIF.
 
       IF lv_suffix IS INITIAL.
-        ls_new_item-posid = ls_esr_root-posid.
+        lv_new_posid = ls_esr_root-posid.
       ELSE.
         CONCATENATE ls_esr_root-posid lv_suffix
-          INTO ls_new_item-posid
+          INTO lv_new_posid
           SEPARATED BY '.'.
       ENDIF.
 
     ELSE.
-      "Fallback
-      ls_new_item-posid = ls_car_item-posid.
+      lv_new_posid = ls_car_item-posid.
     ENDIF.
 
-    "New CAR rows inherit screen/header cost center
-    ls_new_item-kostl = iv_kostl.
+    "Store packed/raw format because screen will convert it
+    lv_new_posid_db = lv_new_posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid_db WITH ''.
 
-    "Keep template attributes
-    "stufe / post1 / imprf / vkokr / prart / bukrs already copied
+    ls_new_item-posid = lv_new_posid_db.
+    ls_new_item-kostl = iv_kostl.
 
     APPEND ls_new_item TO ct_wbs_items.
 
