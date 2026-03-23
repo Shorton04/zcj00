@@ -1,14 +1,15 @@
 METHOD append_car_template_structure_b1.
 
-  DATA: lt_car_items    TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        ls_car_item     TYPE ztb_a2r_wbsitem,
-        ls_new_item     TYPE ztb_a2r_wbsitem,
+  DATA: lt_car_template TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_car_template TYPE ztb_a2r_wbsitem,
         ls_esr_root     TYPE ztb_a2r_wbsitem,
         ls_car_root     TYPE ztb_a2r_wbsitem,
+        ls_new_item     TYPE ztb_a2r_wbsitem,
         lv_suffix       TYPE string,
         lv_new_posid    TYPE string,
-        lv_new_posid_db TYPE string,
         lv_root_len     TYPE i.
+
+  CLEAR ct_wbs_car.
 
   "Get CAR template structure first
   CALL METHOD me->copy_template_structure
@@ -16,43 +17,43 @@ METHOD append_car_template_structure_b1.
       iv_pspid     = iv_pspid_car
       iv_kostl     = iv_kostl
     CHANGING
-      ct_wbs_items = lt_car_items.
+      ct_wbs_items = lt_car_template.
 
-  IF lt_car_items IS INITIAL.
+  IF lt_car_template IS INITIAL.
     RETURN.
   ENDIF.
 
-  "Existing ESR level 1 root
+  "Existing ESR root from already loaded gt_wbs_items
   READ TABLE ct_wbs_items INTO ls_esr_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_esr_root-posid IS INITIAL.
     RETURN.
   ENDIF.
 
   "CAR template root
-  READ TABLE lt_car_items INTO ls_car_root WITH KEY stufe = 1.
+  READ TABLE lt_car_template INTO ls_car_root WITH KEY stufe = 1.
   IF sy-subrc <> 0 OR ls_car_root-posid IS INITIAL.
     RETURN.
   ENDIF.
 
   lv_root_len = strlen( ls_car_root-posid ).
 
-  LOOP AT lt_car_items INTO ls_car_item.
+  LOOP AT lt_car_template INTO ls_car_template.
 
-    "Skip CAR root level 1
-    IF ls_car_item-stufe = 1.
+    "Skip CAR root
+    IF ls_car_template-stufe = 1.
       CONTINUE.
     ENDIF.
 
-    CLEAR: ls_new_item, lv_suffix, lv_new_posid, lv_new_posid_db.
+    CLEAR: ls_new_item, lv_suffix, lv_new_posid.
 
-    ls_new_item = ls_car_item.
+    ls_new_item = ls_car_template.
 
     "Replace CAR root with ESR root
-    IF ls_car_item-posid IS NOT INITIAL
-       AND strlen( ls_car_item-posid ) > lv_root_len
-       AND ls_car_item-posid(lv_root_len) = ls_car_root-posid.
+    IF ls_car_template-posid IS NOT INITIAL
+       AND strlen( ls_car_template-posid ) > lv_root_len
+       AND ls_car_template-posid(lv_root_len) = ls_car_root-posid.
 
-      lv_suffix = ls_car_item-posid+lv_root_len.
+      lv_suffix = ls_car_template-posid+lv_root_len.
 
       IF lv_suffix IS NOT INITIAL AND lv_suffix(1) = '.'.
         SHIFT lv_suffix LEFT BY 1 PLACES.
@@ -62,22 +63,23 @@ METHOD append_car_template_structure_b1.
         lv_new_posid = ls_esr_root-posid.
       ELSE.
         CONCATENATE ls_esr_root-posid lv_suffix
-          INTO lv_new_posid
-          SEPARATED BY '.'.
+          INTO lv_new_posid.
       ENDIF.
-
     ELSE.
-      lv_new_posid = ls_car_item-posid.
+      lv_new_posid = ls_car_template-posid.
     ENDIF.
 
-    "Store packed/raw format because screen will convert it
-    lv_new_posid_db = lv_new_posid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid_db WITH ''.
+    "Store raw value without dots for creation
+    REPLACE ALL OCCURRENCES OF '.' IN lv_new_posid WITH ''.
 
-    ls_new_item-posid = lv_new_posid_db.
+    ls_new_item-posid = lv_new_posid.
     ls_new_item-kostl = iv_kostl.
 
+    "All structure shown on screen
     APPEND ls_new_item TO ct_wbs_items.
+
+    "Only CAR rows for creation
+    APPEND ls_new_item TO ct_wbs_car.
 
   ENDLOOP.
 
