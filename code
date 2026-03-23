@@ -1,242 +1,110 @@
-FORM prepare_screen2_b1 .
-  DATA lv_error          TYPE abap_bool.
+METHODS append_car_template_structure_b1
+  IMPORTING
+    iv_pspid_car TYPE proj-pspid
+    iv_pspid_esr TYPE proj-pspid
+    iv_kostl     TYPE csks-kostl
+  CHANGING
+    ct_wbs_items TYPE STANDARD TABLE.
 
-  "Always get IM data (safe, doesn't overwrite screen2 edits)
-  PERFORM get_additional_im_data USING p_posnr.
 
-  "Initialize screen2 ONCE only
-  IF gv_header_initialized = abap_true.
-    RETURN.
-  ENDIF.
+
+METHOD append_car_template_structure_b1.
+
+  DATA: lt_car_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        ls_car_item  TYPE ztb_a2r_wbsitem,
+        ls_new_item  TYPE ztb_a2r_wbsitem,
+        ls_esr_root  TYPE ztb_a2r_wbsitem,
+        ls_car_root  TYPE ztb_a2r_wbsitem,
+        lv_suffix    TYPE string,
+        lv_root_len  TYPE i.
+
+  FIELD-SYMBOLS: <fs_item> TYPE ztb_a2r_wbsitem.
 
   "------------------------------------------------------------
-  "FIRST ENTRY ONLY
+  " 1) Get CAR template structure into temp table
   "------------------------------------------------------------
-
-  "=============================
-  "EDIT SAVED REQUEST (F1)
-  "=============================
-  IF gv_edit_mode = abap_true.
-
-    "At this point, caller already loaded:
-    " - gs_header from ZTB_A2R_WBSHDR
-    " - gt_wbs_items from ZTB_A2R_WBSITEM
-    "So DO NOT rebuild anything from template.
-*    PERFORM refresh_gt_wbs_items_from_db USING gv_loaded_reqnum.
-
-    PERFORM convert_to_display.
-    PERFORM set_wbs_default_values.  "only fills INITIAL values (safe)
-
-    "IMPORTANT: Do NOT call populate_header_structure in edit mode
-    "because it may overwrite DB header values (erdat/ernam etc.)
-
-    gv_header_initialized = abap_true.
-    RETURN.
-
-  ENDIF.
-
-  "=============================
-  "CREATE MODE (A1)
-  "=============================
-
-  " Build WBS items in correct PRHIS order
-  CLEAR gt_wbs_items.
-  CALL METHOD go_builder->copy_template_structure
+  CALL METHOD me->copy_template_structure
     EXPORTING
-      iv_pspid     = p_pspid
-      iv_kostl     = p_kostl
+      iv_pspid     = iv_pspid_car
+      iv_kostl     = iv_kostl
     CHANGING
-      ct_wbs_items = gt_wbs_items.
+      ct_wbs_items = lt_car_items.
 
-  PERFORM convert_to_display.
-  PERFORM set_wbs_default_values.
-  PERFORM populate_header_structure.
-  PERFORM validate_approver_matrix
-    CHANGING lv_error.
+  IF lt_car_items IS INITIAL.
+    RETURN.
+  ENDIF.
 
+  "------------------------------------------------------------
+  " 2) Determine ESR level 1 root from existing structure
+  "------------------------------------------------------------
+  READ TABLE ct_wbs_items INTO ls_esr_root WITH KEY stufe = 1.
+  IF sy-subrc <> 0 OR ls_esr_root-posid IS INITIAL.
+    ls_esr_root-posid = iv_pspid_esr.
+  ENDIF.
 
-  gv_header_initialized = abap_true.
+  "------------------------------------------------------------
+  " 3) Determine CAR template root (level 1)
+  "------------------------------------------------------------
+  READ TABLE lt_car_items INTO ls_car_root WITH KEY stufe = 1.
+  IF sy-subrc <> 0 OR ls_car_root-posid IS INITIAL.
+    RETURN.
+  ENDIF.
 
-ENDFORM.
+  lv_root_len = strlen( ls_car_root-posid ).
 
+  "------------------------------------------------------------
+  " 4) Append CAR rows except level 1
+  "    Replace CAR root with ESR root
+  "------------------------------------------------------------
+  LOOP AT lt_car_items INTO ls_car_item.
 
-  METHOD copy_template_structure.
-
-    "------------------------------------------------------------
-    " Correct template sequencing using PRHIS hierarchy pointers
-    "   - Read template project PSPNR (internal) from PROJS/PROJ
-    "   - Read PRHIS edges (UP/DOWN/RIGHT) for that PSPHI
-    "   - Traverse PRE-ORDER (node -> down subtree -> right sibling)
-    "   - Fetch WBS attributes from PRPSS by PSPNR
-    "------------------------------------------------------------
-
-    TYPES: BEGIN OF ty_prhis,
-             pspnr TYPE ps_pspnr,   "node (WBS internal)
-             psphi TYPE ps_pspnr,   "project internal
-             up    TYPE ps_pspnr,
-             down  TYPE ps_pspnr,
-             left  TYPE ps_pspnr,
-             right TYPE ps_pspnr,
-           END OF ty_prhis.
-
-    TYPES: BEGIN OF ty_prpss,
-             pspnr TYPE prpss-pspnr,
-             stufe TYPE prpss-stufe,
-             posid TYPE prpss-posid,
-             post1 TYPE prpss-post1,
-             imprf TYPE prpss-imprf,
-             pkokr TYPE prpss-pkokr,
-             prart TYPE prpss-prart,
-             pbukr TYPE prpss-pbukr,
-           END OF ty_prpss.
-
-    DATA: lv_psphi   TYPE ps_pspnr,
-          lt_prhis   TYPE STANDARD TABLE OF ty_prhis,
-          ls_prhis   TYPE ty_prhis,
-          lt_prhis_h TYPE HASHED TABLE OF ty_prhis WITH UNIQUE KEY pspnr,
-          lt_prpss   TYPE STANDARD TABLE OF ty_prpss,
-          lt_prpss_h TYPE HASHED TABLE OF ty_prpss WITH UNIQUE KEY pspnr,
-          ls_prpss   TYPE ty_prpss,
-          lt_stack   TYPE STANDARD TABLE OF ps_pspnr,
-          lv_node    TYPE ps_pspnr,
-          lv_root    TYPE ps_pspnr,
-          ls_wbs     TYPE ztb_a2r_wbsitem.
-
-    FIELD-SYMBOLS: <fs_prhis> TYPE ty_prhis,
-                   <fs_prpss> TYPE ty_prpss.
-
-    "Optional: keep clean output
-    CLEAR ct_wbs_items.
-
-    "1) Get template project internal number (PSPHI/PSPNR)
-    SELECT SINGLE pspnr
-      INTO @lv_psphi
-      FROM projs
-      WHERE pspid = @iv_pspid.
-
-    IF sy-subrc <> 0.
-      SELECT SINGLE pspnr
-        INTO @lv_psphi
-        FROM proj
-        WHERE pspid = @iv_pspid.
+    "Skip level 1 of CAR template
+    IF ls_car_item-stufe = 1.
+      CONTINUE.
     ENDIF.
 
-    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
-      RETURN.
+    CLEAR: ls_new_item, lv_suffix.
+
+    ls_new_item = ls_car_item.
+
+    "--------------------------------------------
+    "Build new POSID
+    "Example:
+    " CAR : PC.000001.04.1
+    " ESR : PC.000003
+    " NEW : PC.000003.04.1
+    "--------------------------------------------
+    IF ls_car_item-posid IS NOT INITIAL
+       AND strlen( ls_car_item-posid ) > lv_root_len
+       AND ls_car_item-posid(lv_root_len) = ls_car_root-posid.
+
+      lv_suffix = ls_car_item-posid+lv_root_len.
+
+      IF lv_suffix IS NOT INITIAL AND lv_suffix(1) = '.'.
+        SHIFT lv_suffix LEFT BY 1 PLACES.
+      ENDIF.
+
+      IF lv_suffix IS INITIAL.
+        ls_new_item-posid = ls_esr_root-posid.
+      ELSE.
+        CONCATENATE ls_esr_root-posid lv_suffix
+          INTO ls_new_item-posid
+          SEPARATED BY '.'.
+      ENDIF.
+
+    ELSE.
+      "Fallback
+      ls_new_item-posid = ls_car_item-posid.
     ENDIF.
 
-    "2) Read PRHIS (hierarchy pointers) for this template project
-    SELECT posnr, psphi, up, down, left, right
-      FROM prhis
-      INTO TABLE @lt_prhis
-      WHERE psphi = @lv_psphi.
+    "New CAR rows inherit screen/header cost center
+    ls_new_item-kostl = iv_kostl.
 
-    IF sy-subrc <> 0 OR lt_prhis IS INITIAL.
-      "Fallback: if PRHIS not maintained, keep old behavior (not ideal)
-      SELECT pspnr, stufe, posid, post1, imprf, pkokr, prart, pbukr
-        FROM prpss
-        INTO TABLE @lt_prpss
-        WHERE psphi = @lv_psphi
-        ORDER BY stufe, posid.
-      LOOP AT lt_prpss INTO ls_prpss.
-        CLEAR ls_wbs.
-        ls_wbs-stufe = ls_prpss-stufe.
-        ls_wbs-posid = ls_prpss-posid.
-        ls_wbs-post1 = ls_prpss-post1.
-        ls_wbs-posnr = ls_prpss-pspnr.
-        ls_wbs-kostl = iv_kostl.
-        ls_wbs-imprf = ls_prpss-imprf.
-        ls_wbs-vkokr = ls_prpss-pkokr.
-        ls_wbs-prart = ls_prpss-prart.
-        ls_wbs-bukrs = ls_prpss-pbukr.
-        APPEND ls_wbs TO ct_wbs_items.
-      ENDLOOP.
-      RETURN.
-    ENDIF.
+    "Keep template attributes
+    "stufe / post1 / imprf / vkokr / prart / bukrs already copied
 
-    lt_prhis_h = lt_prhis.
+    APPEND ls_new_item TO ct_wbs_items.
 
-    "3) Read PRPSS attributes for all nodes in this template
-    SELECT pspnr, stufe, posid, post1, imprf, pkokr, prart, pbukr
-      FROM prpss
-      INTO TABLE @lt_prpss
-      WHERE psphi = @lv_psphi.
+  ENDLOOP.
 
-    IF sy-subrc <> 0 OR lt_prpss IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    lt_prpss_h = lt_prpss.
-
-    "4) Determine ROOT node (top WBS): UP is initial
-    CLEAR lv_root.
-    LOOP AT lt_prhis INTO ls_prhis.
-      IF ls_prhis-up IS INITIAL.
-        lv_root = ls_prhis-pspnr.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_root IS INITIAL.
-      "If nothing flagged as root, just stop (or pick first)
-      READ TABLE lt_prhis INTO ls_prhis INDEX 1.
-      IF sy-subrc = 0.
-        lv_root = ls_prhis-pspnr.
-      ENDIF.
-    ENDIF.
-
-    IF lv_root IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    "5) Pre-order traversal using stack:
-    "   pop node -> append -> push RIGHT -> push DOWN
-    CLEAR lt_stack.
-    APPEND lv_root TO lt_stack.
-
-    WHILE lt_stack IS NOT INITIAL.
-
-      "POP last
-      READ TABLE lt_stack INTO lv_node INDEX lines( lt_stack ).
-      DELETE lt_stack INDEX lines( lt_stack ).
-
-      "Get PRHIS edge row for this node
-      READ TABLE lt_prhis_h ASSIGNING <fs_prhis> WITH KEY pspnr = lv_node.
-      IF sy-subrc <> 0.
-        CONTINUE.
-      ENDIF.
-
-      "Get PRPSS data for this node
-      READ TABLE lt_prpss_h ASSIGNING <fs_prpss> WITH KEY pspnr = lv_node.
-      IF sy-subrc <> 0.
-        CONTINUE.
-      ENDIF.
-
-      CLEAR ls_wbs.
-      ls_wbs-stufe = <fs_prpss>-stufe.
-      ls_wbs-posid = <fs_prpss>-posid.
-      ls_wbs-post1 = <fs_prpss>-post1.
-      ls_wbs-posnr = <fs_prpss>-pspnr.      "internal WBS number
-      ls_wbs-kostl = iv_kostl.              "inherit from header
-      ls_wbs-imprf = <fs_prpss>-imprf.
-      ls_wbs-vkokr = <fs_prpss>-pkokr.
-      ls_wbs-prart = <fs_prpss>-prart.
-      ls_wbs-bukrs = <fs_prpss>-pbukr.
-
-      APPEND ls_wbs TO ct_wbs_items.
-
-      "Push sibling first, then child (so child processed first)
-      IF <fs_prhis>-right IS NOT INITIAL.
-        APPEND <fs_prhis>-right TO lt_stack.
-      ENDIF.
-      IF <fs_prhis>-down IS NOT INITIAL.
-        APPEND <fs_prhis>-down TO lt_stack.
-      ENDIF.
-
-    ENDWHILE.
-
-  ENDMETHOD.
-
-
-
-
+ENDMETHOD.
