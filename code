@@ -1,56 +1,165 @@
-      CLEAR: lv_left_new, lv_left_level.
-      lv_forward_index = lv_index + 1.
+METHOD build_phris_hierarchy.
 
-      WHILE lv_forward_index <= lines( lt_wbs_sorted ).
-        READ TABLE lt_wbs_sorted INDEX lv_forward_index INTO ls_wbs_temp.
-        IF sy-subrc = 0 AND ls_wbs_temp-stufe = ls_wbs-stufe.
+  TYPES: BEGIN OF ty_prhis_raw,
+           posnr TYPE ps_pspnr,
+           psphi TYPE ps_pspnr,
+           up    TYPE ps_pspnr,
+           down  TYPE ps_pspnr,
+           left  TYPE ps_pspnr,
+           right TYPE ps_pspnr,
+         END OF ty_prhis_raw.
 
-          " Found the next sibling - rebuild with new project id
-          lv_left_new = ls_wbs_temp-posid.
-          IF lv_template_project IS NOT INITIAL.
-            REPLACE lv_template_project IN lv_left_new WITH lv_pspid.
-          ENDIF.
-          REPLACE ALL OCCURRENCES OF '.' IN lv_left_new WITH ''.
-          lv_left_level = lv_left_new.
-          EXIT.
+  TYPES: BEGIN OF ty_prps_raw,
+           pspnr TYPE ps_pspnr,
+           posid TYPE ps_posid,
+           stufe TYPE prstufe,
+         END OF ty_prps_raw.
 
-        ENDIF.
-        lv_forward_index = lv_forward_index + 1.
-      ENDWHILE.
+  DATA: lv_psphi         TYPE ps_pspnr,
+        lv_template_root TYPE ps_posid,
+        lv_target_posid  TYPE ps_posid,
+        lv_target_up     TYPE ps_posid,
+        lv_target_left   TYPE ps_posid.
 
+  DATA: lt_prhis TYPE STANDARD TABLE OF ty_prhis_raw,
+        ls_prhis TYPE ty_prhis_raw,
+        lt_prps  TYPE STANDARD TABLE OF ty_prps_raw,
+        ls_prps  TYPE ty_prps_raw.
 
-      "------------------------------------------------------------
-      " WBS_UP: Search BACKWARD for parent (nearest upper level)
-      "   from the previous row (lv_index - 1) up to the top
-      "------------------------------------------------------------
+  DATA: lt_prps_h TYPE HASHED TABLE OF ty_prps_raw WITH UNIQUE KEY pspnr,
+        ls_phris  TYPE ty_phris_hier.
 
-      CLEAR: lv_parent_new, lv_upper_level.
-      lv_backward_index = lv_index - 1.
+  FIELD-SYMBOLS: <fs_prps> TYPE ty_prps_raw.
 
-      WHILE lv_backward_index >= 1.
-        READ TABLE lt_wbs_sorted INDEX lv_backward_index INTO ls_wbs_temp.
-        IF sy-subrc = 0 AND ls_wbs_temp-stufe < ls_wbs-stufe.
+  CLEAR et_phris_hier.
 
-          IF ls_wbs_temp-stufe = 1.
-            lv_parent_new = lv_pspid.
-          ELSE.
-            lv_parent_new = ls_wbs_temp-posid.
-            IF lv_template_project IS NOT INITIAL.
-              REPLACE lv_template_project IN lv_parent_new WITH lv_pspid.
-            ENDIF.
-          ENDIF.
+  IF iv_pspid_car IS INITIAL OR iv_esr_root IS INITIAL OR it_wbs_car IS INITIAL.
+    RETURN.
+  ENDIF.
 
-          REPLACE ALL OCCURRENCES OF '.' IN lv_parent_new WITH ''.
-          lv_upper_level = lv_parent_new.
-          EXIT.
+*--------------------------------------------------------------------*
+* Get CAR template internal project number
+*--------------------------------------------------------------------*
+  SELECT SINGLE pspnr
+    INTO @lv_psphi
+    FROM projs
+    WHERE pspid = @iv_pspid_car.
 
-        ENDIF.
-        lv_backward_index = lv_backward_index - 1.
-      ENDWHILE.
+  IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+      EXPORTING
+        input  = iv_pspid_car
+      IMPORTING
+        output = DATA(lv_pspid_car_int).
 
-      ls_wbs_celement-proj_type  = ls_wbs-prart.
-      " Set results to the current element
-      ls_wbs_celement-wbs_up   = lv_upper_level.
-      ls_wbs_celement-wbs_left = lv_left_level.
-      CLEAR: ls_wbs_celement-wbs_left, lv_left_level.
-      APPEND ls_wbs_celement TO lt_wbs_celement.
+    SELECT SINGLE pspnr
+      INTO @lv_psphi
+      FROM projs
+      WHERE pspid = @lv_pspid_car_int.
+  ENDIF.
+
+  IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*--------------------------------------------------------------------*
+* Read PRHIS + PRPS of template
+*--------------------------------------------------------------------*
+  SELECT posnr, psphi, up, down, left, right
+    FROM prhis
+    INTO TABLE @lt_prhis
+    WHERE psphi = @lv_psphi.
+
+  IF lt_prhis IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT pspnr, posid, stufe
+    FROM prps
+    INTO TABLE @lt_prps
+    WHERE psphi = @lv_psphi.
+
+  IF lt_prps IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  lt_prps_h = lt_prps.
+
+*--------------------------------------------------------------------*
+* Find template root POSID (node with UP initial)
+*--------------------------------------------------------------------*
+  CLEAR lv_template_root.
+
+  LOOP AT lt_prhis INTO ls_prhis.
+    IF ls_prhis-up IS INITIAL.
+      READ TABLE lt_prps_h ASSIGNING <fs_prps>
+        WITH KEY pspnr = ls_prhis-posnr.
+      IF sy-subrc = 0.
+        lv_template_root = <fs_prps>-posid.
+        EXIT.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  IF lv_template_root IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*--------------------------------------------------------------------*
+* Build hierarchy map in template order
+*--------------------------------------------------------------------*
+  LOOP AT lt_prhis INTO ls_prhis.
+
+    CLEAR: ls_phris,
+           lv_target_posid,
+           lv_target_up,
+           lv_target_left.
+
+* Current node
+    READ TABLE lt_prps_h ASSIGNING <fs_prps>
+      WITH KEY pspnr = ls_prhis-posnr.
+    IF sy-subrc <> 0.
+      CONTINUE.
+    ENDIF.
+
+    ls_phris-template_posid = <fs_prps>-posid.
+    ls_phris-stufe          = <fs_prps>-stufe.
+
+    lv_target_posid = ls_phris-template_posid.
+    REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_posid WITH iv_esr_root.
+    ls_phris-target_posid = lv_target_posid.
+
+* UP
+    IF ls_prhis-up IS INITIAL.
+      ls_phris-wbs_up = iv_esr_root.
+    ELSE.
+      READ TABLE lt_prps_h ASSIGNING <fs_prps>
+        WITH KEY pspnr = ls_prhis-up.
+      IF sy-subrc = 0.
+        lv_target_up = <fs_prps>-posid.
+        REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_up WITH iv_esr_root.
+        ls_phris-wbs_up = lv_target_up.
+      ENDIF.
+    ENDIF.
+
+* LEFT
+    IF ls_prhis-left IS NOT INITIAL.
+      READ TABLE lt_prps_h ASSIGNING <fs_prps>
+        WITH KEY pspnr = ls_prhis-left.
+      IF sy-subrc = 0.
+        lv_target_left = <fs_prps>-posid.
+        REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_left WITH iv_esr_root.
+        ls_phris-wbs_left = lv_target_left.
+      ENDIF.
+    ENDIF.
+
+* Only store rows that exist in target CAR list
+    READ TABLE it_wbs_car TRANSPORTING NO FIELDS
+      WITH KEY posid = ls_phris-target_posid.
+    IF sy-subrc = 0.
+      APPEND ls_phris TO et_phris_hier.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMETHOD.
