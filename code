@@ -1,168 +1,186 @@
-METHOD create_wbs_elements_b1.
+  METHOD create_car_wbs_b1.
 
-  DATA: ls_wbs          TYPE ztb_a2r_wbsitem,
-        ls_wbs_temp     TYPE ztb_a2r_wbsitem,
-        ls_wbs_created  TYPE ztb_a2r_wbsitem,
-        lt_wbs_created  TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_return       TYPE TABLE OF bapiret2,
-        ls_return       TYPE bapiret2,
-        lt_wbs_celement TYPE TABLE OF bapi_bus2054_new,
-        ls_wbs_celement TYPE bapi_bus2054_new,
-        lv_error        TYPE char1,
-        lv_index        TYPE i,
-        lv_backward_idx TYPE i,
-        lv_upper_level  TYPE ps_posid,
-        lv_esr_pspid    TYPE ps_pspid,
-        lv_esr_pspnr    TYPE ps_pspnr,
-        lv_parent_posid TYPE ps_posid.
+    DATA: ls_wbs          TYPE ztb_a2r_wbsitem,
+          ls_wbs_temp     TYPE ztb_a2r_wbsitem,
+          ls_wbs_created  TYPE ztb_a2r_wbsitem,
+          lt_wbs_created  TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+          lt_return       TYPE TABLE OF bapiret2,
+          ls_return       TYPE bapiret2,
+          lt_wbs_celement TYPE TABLE OF bapi_bus2054_new,
+          ls_wbs_celement TYPE bapi_bus2054_new,
+          lv_error        TYPE char1,
+          lv_index        TYPE i,
+          lv_backward_idx TYPE i,
+          lv_upper_level  TYPE ps_posid,
+          lv_esr_pspid    TYPE ps_pspid,
+          lv_esr_pspnr    TYPE ps_pspnr,
+          lv_parent_posid TYPE ps_posid.
 
-  rv_success = abap_false.
-  CLEAR: lv_error, lt_return, lt_wbs_celement.
+    rv_success = abap_false.
+    CLEAR: lv_error, lt_return, lt_wbs_celement.
 
-  IF it_wbs_car IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " STEP 1: Get existing ESR project/WBS level 1
-  "------------------------------------------------------------
-  READ TABLE it_wbs_items INTO DATA(ls_esr_root) WITH KEY stufe = 1.
-  IF sy-subrc <> 0.
-    MESSAGE e029(zcj00) WITH 'Existing ESR level 1 not found'.
-    RETURN.
-  ENDIF.
-
-  lv_esr_pspnr = ls_esr_root-posnr.
-
-  IF lv_esr_pspnr IS NOT INITIAL.
-    SELECT SINGLE posid
-      INTO @lv_esr_pspid
-      FROM prps
-      WHERE pspnr = @lv_esr_pspnr.
-  ENDIF.
-
-  IF lv_esr_pspid IS INITIAL.
-    lv_esr_pspid = ls_esr_root-posid.
-  ENDIF.
-
-  IF lv_esr_pspid IS INITIAL.
-    MESSAGE e029(zcj00) WITH 'Existing ESR POSID not found'.
-    RETURN.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " STEP 2: Initialize BAPI
-  "------------------------------------------------------------
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  "------------------------------------------------------------
-  " STEP 3: Sort full structure in hierarchy order
-  " it_wbs_items = ESR existing + CAR appended
-  "------------------------------------------------------------
-  lt_wbs_sorted = it_wbs_items.
-
-  CLEAR lt_wbs_celement.
-
-  LOOP AT it_wbs_car INTO ls_wbs.
-
-    IF ls_wbs-wert2 IS INITIAL.
-      CONTINUE.
+    IF it_wbs_car IS INITIAL.
+      RETURN.
     ENDIF.
 
-    CLEAR: ls_wbs_celement, lv_upper_level, lv_parent_posid.
-
-    "Find current row position in full structure
-    READ TABLE lt_wbs_sorted TRANSPORTING NO FIELDS
-      WITH KEY posid = ls_wbs-posid.
+    "------------------------------------------------------------
+    " STEP 1: Get existing ESR project/WBS level 1
+    "------------------------------------------------------------
+    READ TABLE it_wbs_items INTO DATA(ls_esr_root) WITH KEY stufe = 1.
     IF sy-subrc <> 0.
-      CONTINUE.
+      MESSAGE e029(zcj00) WITH 'Existing ESR level 1 not found'.
+      RETURN.
     ENDIF.
 
-    lv_index = sy-tabix.
+   REPLACE ALL OCCURRENCES OF '.' IN ls_esr_root-posid WITH ''.
 
-    "----------------------------------------------------------
-    " WBS ELEMENT
-    " already prepared in gt_wbs_car like PC000533022
-    "----------------------------------------------------------
-    ls_wbs_celement-wbs_element = ls_wbs-posid.
+    lv_esr_pspnr = ls_esr_root-posid.
 
-    "----------------------------------------------------------
-    " BASIC FIELDS
-    "----------------------------------------------------------
-    ls_wbs_celement-description      = ls_wbs-post1.
-    ls_wbs_celement-company_code     = is_header-bukrs.
-    ls_wbs_celement-profit_ctr       = is_header-prctr.
-    ls_wbs_celement-controlling_area = is_header-vkokr.
-    ls_wbs_celement-plant            = is_header-werks.
+    IF lv_esr_pspnr IS NOT INITIAL.
+      SELECT SINGLE posid
+        INTO @lv_esr_pspid
+        FROM prps
+        WHERE pspnr = @lv_esr_pspnr.
+    ENDIF.
 
-    ls_wbs_celement-wbs_planning_element = abap_true.
-    ls_wbs_celement-inv_reason           = is_header-izwek.
-    ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
-    ls_wbs_celement-responsible_no       = is_header-vernr.
+    IF lv_esr_pspid IS INITIAL.
+      lv_esr_pspid = ls_esr_root-posid.
+    ENDIF.
 
-    ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
-    ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
-    ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
-    ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+    IF lv_esr_pspid IS INITIAL.
+      MESSAGE e029(zcj00) WITH 'Existing ESR POSID not found'.
+      RETURN.
+    ENDIF.
 
-    ls_wbs_celement-wbs_account_assignment_element = abap_true.
+    "------------------------------------------------------------
+    " STEP 2: Initialize BAPI
+    "------------------------------------------------------------
+    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-    "----------------------------------------------------------
-    " HIERARCHY
-    " Rule:
-    " - CAR level 2 -> UP = existing ESR level 1
-    " - CAR level 3+ -> UP = nearest previous lower STUFE
-    " - no LEFT
-    "----------------------------------------------------------
-    CLEAR lv_upper_level.
-    lv_backward_idx = lv_index - 1.
+    "------------------------------------------------------------
+    " STEP 3: Sort full structure in hierarchy order
+    " it_wbs_items = ESR existing + CAR appended
+    "------------------------------------------------------------
+    lt_wbs_sorted = it_wbs_items.
 
-    WHILE lv_backward_idx >= 1.
-      READ TABLE lt_wbs_sorted INDEX lv_backward_idx INTO ls_wbs_temp.
-      IF sy-subrc = 0 AND ls_wbs_temp-stufe < ls_wbs-stufe.
+    CLEAR lt_wbs_celement.
 
-        "Existing ESR node
-        IF ls_wbs_temp-posnr IS NOT INITIAL.
-          SELECT SINGLE posid
-            INTO @lv_parent_posid
-            FROM prps
-            WHERE pspnr = @ls_wbs_temp-posnr.
+    LOOP AT it_wbs_car INTO ls_wbs.
+
+      REPLACE ALL OCCURRENCES OF '.' IN ls_wbs-posid WITH ''.
+
+      CLEAR: ls_wbs_celement, lv_upper_level, lv_parent_posid.
+
+      "Find current row position in full structure
+      READ TABLE lt_wbs_sorted TRANSPORTING NO FIELDS
+        WITH KEY posid = ls_wbs-posid.
+
+      lv_index = sy-tabix.
+
+      "----------------------------------------------------------
+      " WBS ELEMENT
+      " already prepared in gt_wbs_car like PC000533022
+      "----------------------------------------------------------
+      ls_wbs_celement-wbs_element = ls_wbs-posid.
+
+      "----------------------------------------------------------
+      " BASIC FIELDS
+      "----------------------------------------------------------
+      ls_wbs_celement-description      = ls_wbs-post1.
+      ls_wbs_celement-company_code     = is_header-bukrs.
+      ls_wbs_celement-profit_ctr       = is_header-prctr.
+      ls_wbs_celement-controlling_area = is_header-vkokr.
+      ls_wbs_celement-plant            = is_header-werks.
+
+      ls_wbs_celement-wbs_planning_element = abap_true.
+      ls_wbs_celement-inv_reason           = is_header-izwek.
+      ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
+      ls_wbs_celement-responsible_no       = is_header-vernr.
+
+      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+      ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
+      "----------------------------------------------------------
+      " HIERARCHY
+      " Rule:
+      " - CAR level 2 -> UP = existing ESR level 1
+      " - CAR level 3+ -> UP = nearest previous lower STUFE
+      " - no LEFT
+      "----------------------------------------------------------
+      CLEAR lv_upper_level.
+      lv_backward_idx = lv_index - 1.
+
+      WHILE lv_backward_idx >= 1.
+        READ TABLE lt_wbs_sorted INDEX lv_backward_idx INTO ls_wbs_temp.
+        IF sy-subrc = 0 AND ls_wbs_temp-stufe < ls_wbs-stufe.
+
+          "Existing ESR node
+          IF ls_wbs_temp-posnr IS NOT INITIAL.
+            SELECT SINGLE posid
+              INTO @lv_parent_posid
+              FROM prps
+              WHERE pspnr = @ls_wbs_temp-posnr.
+          ENDIF.
+
+          "New CAR node
+          IF lv_parent_posid IS INITIAL.
+            lv_parent_posid = ls_wbs_temp-posid.
+          ENDIF.
+
+          lv_upper_level = lv_parent_posid.
+          EXIT.
         ENDIF.
 
-        "New CAR node
-        IF lv_parent_posid IS INITIAL.
-          lv_parent_posid = ls_wbs_temp-posid.
-        ENDIF.
+        lv_backward_idx = lv_backward_idx - 1.
+      ENDWHILE.
 
-        lv_upper_level = lv_parent_posid.
+      ls_wbs_celement-wbs_up = lv_upper_level.
+      CLEAR ls_wbs_celement-wbs_left.
+
+      APPEND ls_wbs_celement TO lt_wbs_celement.
+
+    ENDLOOP.
+
+    "------------------------------------------------------------
+    " STEP 4: Create CAR WBS only
+    " Existing ESR project already exists
+    "------------------------------------------------------------
+    IF lt_wbs_celement IS NOT INITIAL.
+
+      CLEAR lt_return.
+
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = lv_esr_pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          et_return            = lt_return.
+
+      LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+        lv_error = 'X'.
         EXIT.
+      ENDLOOP.
+
+      IF lv_error = 'X'.
+        MESSAGE e029(zcj00) WITH 'B1 CAR WBS creation failed'.
+        RETURN.
       ENDIF.
 
-      lv_backward_idx = lv_backward_idx - 1.
-    ENDWHILE.
+    ENDIF.
 
-    ls_wbs_celement-wbs_up = lv_upper_level.
-    CLEAR ls_wbs_celement-wbs_left.
-
-    APPEND ls_wbs_celement TO lt_wbs_celement.
-
-  ENDLOOP.
-
-  "------------------------------------------------------------
-  " STEP 4: Create CAR WBS only
-  " Existing ESR project already exists
-  "------------------------------------------------------------
-  IF lt_wbs_celement IS NOT INITIAL.
-
+    "------------------------------------------------------------
+    " STEP 5: PRECOMMIT
+    "------------------------------------------------------------
     CLEAR lt_return.
 
-    CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
-      EXPORTING
-        i_project_definition = lv_esr_pspid
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
       TABLES
-        it_wbs_element       = lt_wbs_celement
-        et_return            = lt_return.
+        et_return = lt_return.
 
     LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
       lv_error = 'X'.
@@ -170,73 +188,52 @@ METHOD create_wbs_elements_b1.
     ENDLOOP.
 
     IF lv_error = 'X'.
-      MESSAGE e029(zcj00) WITH 'B1 CAR WBS creation failed'.
+      MESSAGE e029(zcj00) WITH 'B1 WBS precommit failed'.
       RETURN.
     ENDIF.
 
-  ENDIF.
+    "------------------------------------------------------------
+    " STEP 6: COMMIT
+    "------------------------------------------------------------
+    CLEAR ls_return.
 
-  "------------------------------------------------------------
-  " STEP 5: PRECOMMIT
-  "------------------------------------------------------------
-  CLEAR lt_return.
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait   = 'X'
+      IMPORTING
+        return = ls_return.
 
-  CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-    TABLES
-      et_return = lt_return.
+    IF ls_return-type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+        WITH ls_return-message_v1 ls_return-message_v2.
+      RETURN.
+    ENDIF.
 
-  LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
-    lv_error = 'X'.
-    EXIT.
-  ENDLOOP.
+    WAIT UP TO 1 SECONDS.
 
-  IF lv_error = 'X'.
-    MESSAGE e029(zcj00) WITH 'B1 WBS precommit failed'.
-    RETURN.
-  ENDIF.
+    "------------------------------------------------------------
+    " STEP 7: Update created CAR internal numbers
+    "------------------------------------------------------------
+    LOOP AT it_wbs_car INTO ls_wbs.
 
-  "------------------------------------------------------------
-  " STEP 6: COMMIT
-  "------------------------------------------------------------
-  CLEAR ls_return.
+      CLEAR ls_wbs_created.
+      ls_wbs_created = ls_wbs.
 
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait   = 'X'
-    IMPORTING
-      return = ls_return.
+      SELECT SINGLE pspnr
+        INTO @ls_wbs_created-posnr
+        FROM prps
+        WHERE posid = @ls_wbs-posid.
 
-  IF ls_return-type CA 'EA'.
-    MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
-      WITH ls_return-message_v1 ls_return-message_v2.
-    RETURN.
-  ENDIF.
+      UPDATE ztb_a2r_wbsitem
+        SET posnr = @ls_wbs_created-posnr,
+            posid = @ls_wbs_created-posid
+        WHERE zreq_num = @is_header-zreq_num
+          AND posid    = @ls_wbs-posid.
 
-  WAIT UP TO 1 SECONDS.
+      APPEND ls_wbs_created TO lt_wbs_created.
 
-  "------------------------------------------------------------
-  " STEP 7: Update created CAR internal numbers
-  "------------------------------------------------------------
-  LOOP AT it_wbs_car INTO ls_wbs.
+    ENDLOOP.
 
-    CLEAR ls_wbs_created.
-    ls_wbs_created = ls_wbs.
+    rv_success = abap_true.
 
-    SELECT SINGLE pspnr
-      INTO @ls_wbs_created-posnr
-      FROM prps
-      WHERE posid = @ls_wbs-posid.
-
-    UPDATE ztb_a2r_wbsitem
-      SET posnr = @ls_wbs_created-posnr,
-          posid = @ls_wbs_created-posid
-      WHERE zreq_num = @is_header-zreq_num
-        AND posid    = @ls_wbs-posid.
-
-    APPEND ls_wbs_created TO lt_wbs_created.
-
-  ENDLOOP.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
+  ENDMETHOD.
