@@ -1,75 +1,190 @@
-FORM validate_total_up_done
-  CHANGING cv_error TYPE abap_bool.
+PROCESS BEFORE OUTPUT.
 
-  DATA: ls_parent     TYPE ty_wbs_display,
-        ls_child      TYPE ty_wbs_display,
-        lv_tabix      TYPE sy-tabix,
-        lv_nextix     TYPE sy-tabix,
-        lv_lines      TYPE i,
-        lv_sum        TYPE ty_wbs_display-zapproved_budg,
-        lv_next_stufe TYPE ps_stufe.
+  MODULE status_0400.
+  MODULE start_gos.
+  MODULE screen_selection.
 
-  CLEAR cv_error.
+  CALL SUBSCREEN:items   INCLUDING 'SAPMZWBS' gv_screen,
+                 remarks INCLUDING 'SAPMZWBS' '0600'.
 
-  lv_lines = lines( gt_wbs_display ).
-  IF lv_lines IS INITIAL.
-    RETURN.
+PROCESS AFTER INPUT.
+
+  MODULE exit_command AT EXIT-COMMAND.
+  CHAIN.
+    FIELD zwbs_header-werks.
+    FIELD zwbs_header-vgsbr.
+    FIELD zwbs_header-prctr.
+    MODULE assign_ba.
+    MODULE validate_0400_data.
+  ENDCHAIN.
+
+  CALL SUBSCREEN:items,remarks.
+
+  MODULE user_command_0400.
+
+PROCESS ON VALUE-REQUEST.
+  FIELD:zwbs_header-vgsbr MODULE get_vgsbr.
+
+MODULE status_0400 OUTPUT.
+  IMPORT gv_capex = gv_capex FROM MEMORY ID 'ZWBS_CAPEX'.
+  IF ls_head-proj_type = 'TC'.
+    gv_capex = 'X'.
+  ENDIF.
+  PERFORM exlcude_fcode.
+  PERFORM screen_0400.
+  SET PF-STATUS '400' EXCLUDING lt_fcode.
+
+*Check for any errors on Header
+  IF NOT lv_herror IS INITIAL.
+    SET CURSOR FIELD lv_cursor.
+    IF lv_cursor = 'ZWBS_HEADER-VGSBR'.
+      MESSAGE s368(00) WITH 'Mismatch in Business Area &'
+      'Profit Center'
+                       DISPLAY LIKE 'W'.
+    ELSEIF NOT lv_text IS INITIAL.
+      MESSAGE s368(00) WITH lv_text 'is a required field'
+                       DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+*Clear User Commands
+  DATA(zucomm) = sy-ucomm.
+  CLEAR:ok_code,sy-ucomm.
+
+ENDMODULE.                 " STATUS_0400  OUTPUT
+
+FORM exlcude_fcode.
+
+  CLEAR lt_fcode.
+
+  CASE sy-tcode.
+    WHEN 'ZCJ01'.
+      APPEND:'DELETE'  TO lt_fcode,
+             'APPROVE' TO lt_fcode,
+             'REJECT'  TO lt_fcode.
+*      IF lv_proj3 IS INITIAL.
+      IF lv_proj_type NE 'TC'.
+        APPEND: 'ATTACH'   TO lt_fcode,
+                'DOWNLOAD' TO lt_fcode,
+                'UPLOAD'   TO lt_fcode,
+                'SAVE'     TO lt_fcode.
+      ENDIF.
+    WHEN 'ZCJ02N'.
+      APPEND:'DELETE'   TO lt_fcode,
+             'SUBMIT'   TO lt_fcode,
+             'ATTACH'   TO lt_fcode,
+             'DOWNLOAD' TO lt_fcode,
+             'UPLOAD'   TO lt_fcode.
+      IF NOT lv_sflag IS INITIAL.
+        APPEND:'APPROVE' TO lt_fcode,
+               'REJECT'  TO lt_fcode.
+      ELSEIF NOT lv_rflag IS INITIAL.
+        APPEND 'REJECT'  TO lt_fcode.
+      ENDIF.
+    WHEN 'ZCJ03'.
+      APPEND:'SUBMIT'   TO lt_fcode,
+             'DELETE'   TO lt_fcode,
+             'ATTACH'   TO lt_fcode,
+             'DOWNLOAD' TO lt_fcode,
+             'UPLOAD'   TO lt_fcode,
+             'APPROVE'  TO lt_fcode,
+             'REJECT'   TO lt_fcode,
+             'CANCEL'   TO lt_fcode,
+             'EXIT'     TO lt_fcode,
+             'SAVE'     TO lt_fcode.
+    WHEN OTHERS.
+  ENDCASE.
+
+  IF sy-dynnr = '0100' OR sy-dynnr = '0700'.
+    APPEND:'CANCEL' TO lt_fcode,
+           'EXIT'   TO lt_fcode.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Dynamic hierarchy validation
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_parent.
-
-    lv_tabix = sy-tabix.
-    CLEAR lv_sum.
-
-    lv_nextix = lv_tabix + 1.
-    lv_next_stufe = ls_parent-stufe + 1.
-
-    WHILE lv_nextix <= lv_lines.
-
-      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
-      IF sy-subrc <> 0.
-        EXIT.
-      ENDIF.
-
-      " Stop when next sibling or higher parent starts
-      IF ls_child-stufe <= ls_parent-stufe.
-        EXIT.
-      ENDIF.
-
-      " Only direct children
-      IF ls_child-stufe = lv_next_stufe.
-        lv_sum = lv_sum + ls_child-zapproved_budg.
-      ENDIF.
-
-      lv_nextix = lv_nextix + 1.
-
-    ENDWHILE.
-
-*---------------------------------------------------------------------*
-* Validation
-*---------------------------------------------------------------------*
-    " If child total is zero, consider valid
-    " Only validate when child total is greater than zero
-    IF lv_sum > 0.
-
-      IF ls_parent-zapproved_budg <> lv_sum.
-        IF gv_req_type = 'B2'.
-          MESSAGE e000(zmsg_a2r)
-            WITH 'Budget is greater than Level 1.'(m61).
-        ELSE.
-          MESSAGE e000(zmsg_a2r)
-            WITH 'Budget mismatch. Total Up required.'(m35).
-        ENDIF.
-
-        cv_error = abap_true.
-        RETURN.
-      ENDIF.
-
+*Show Change log ONLY for CHANGE Scenario
+  IF lv_type NE 2 OR sy-tcode = 'ZCJ01'.
+    APPEND 'LOG' TO lt_fcode.
+  ENDIF.
+  IF sy-tcode = 'ZCJ03'.
+    IF gv_capex IS INITIAL. "NE 'X'.
+      APPEND 'APPR_LOG' TO lt_fcode.
     ENDIF.
+  ELSE.
+    APPEND 'APPR_LOG' TO lt_fcode.
+  ENDIF.
 
-  ENDLOOP.
+*Cancel Request in case of Reopen Request
+  IF lv_rb5 IS INITIAL.
+    APPEND 'CANCEL_REQ' TO lt_fcode.
+  ENDIF.
 
-ENDFORM.
+ENDFORM.                    " EXLCUDE_FCODE
+
+
+
+
+
+MODULE start_gos OUTPUT.
+
+* -- start GOS
+  IF lo_gos IS NOT BOUND.
+    IF NOT lv_dflag IS INITIAL OR
+       NOT lv_sflag IS INITIAL OR
+       sy-tcode = 'ZCJ03'.
+      lv_rw_mode = 'D'.
+    ELSE.
+      lv_rw_mode = 'E'.
+    ENDIF.
+*    IF lv_proj3 IS NOT INITIAL.
+*
+*    ENDIF.
+    PERFORM start_gos USING    zwbs_header-request
+                               lv_rw_mode
+                      CHANGING lo_gos.
+  ENDIF.
+
+ENDMODULE.                 " START_GOS  OUTPUT
+
+
+
+FORM start_gos  USING    iv_objkey  TYPE any
+                         iv_rw_mode TYPE sgs_rwmod
+                CHANGING co_gos     TYPE REF TO cl_gos_manager.
+
+* Datadeclarations (local)
+  DATA ls_object TYPE borident.
+
+* Processing ----------------------------------------------------------
+* -- reuqest available?
+  CHECK NOT iv_objkey IS INITIAL.
+
+* -- clear an existing old instance
+  IF co_gos IS BOUND.
+    FREE co_gos.
+  ENDIF.
+
+* -- create a new object service...
+  ls_object-objkey  = iv_objkey.
+  ls_object-objtype = 'Z_WBS'.
+
+  CREATE OBJECT co_gos
+    EXPORTING
+      is_object        = ls_object
+      ip_start_direct  = ' '
+      ip_no_instance   = ' '
+      ip_no_commit     = ' '
+    EXCEPTIONS
+      object_invalid   = 1
+      callback_invalid = 2
+      OTHERS           = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CHECK co_gos IS BOUND.
+
+* -- set rw mode...
+  CALL METHOD co_gos->set_rw_mode
+    EXPORTING
+      ip_mode = iv_rw_mode.
+
+ENDFORM.                    " start_gos
