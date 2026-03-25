@@ -1,26 +1,65 @@
-fix this to 
-1.	Read table CEPC where PRCTR and KOKRS value are equal to table IMPRProfit center in Header 
-2.	Check the Validity Period (fields DATBI and DATAB).
-3.	If DATBI ≥ today’s date (or ≥ 31.12 of the current year), the cost center is valid.
-4.	WRITE: ‘Profit center is valid in current year', else WRITE: 'Profit center is not valid in current year'. 
+FORM validate_profit_center USING    iv_kokrs TYPE kokrs
+                                     iv_prctr TYPE prctr
+                                     iv_plsez TYPE ps_plsez_chg
+                                     iv_prnam TYPE impr-prnam
+                                     iv_posnr TYPE impr-posnr
+                            CHANGING cv_error TYPE abap_bool.
 
+  DATA: lv_prctr    TYPE impr-prctr,
+        lv_kokrs    TYPE impr-kokrs,
+        lv_datab    TYPE cepc-datab,
+        lv_datbi    TYPE cepc-datbi,
+        lv_year_end TYPE sy-datum.
 
+  CLEAR cv_error.
 
-FORM validate_profit_center USING iv_kokrs TYPE kokrs
-                                  iv_prctr TYPE prctr
-                                  iv_plsez TYPE ps_plsez_chg
-                         CHANGING cv_error TYPE abap_bool.
+*---------------------------------------------------------------------*
+* Step 1: Get PRCTR + KOKRS from IMPR (override input values)
+*---------------------------------------------------------------------*
+  SELECT SINGLE prctr
+                kokrs
+    INTO ( @lv_prctr, @lv_kokrs )
+    FROM impr
+   WHERE prnam = @iv_prnam
+     AND posnr = @iv_posnr.
 
-  " Check profit center validity against Finish Date
-  SELECT SINGLE @abap_true FROM cepc
-    INTO @DATA(lv_found)
-  WHERE prctr = @iv_prctr
-    AND kokrs = @iv_kokrs
-    AND datbi >= @iv_plsez.
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'IMPR data not found'.
+    cv_error = gc_x.
+    EXIT.
+  ENDIF.
 
-  IF sy-subrc = 0.
+*---------------------------------------------------------------------*
+* Step 2: Read CEPC validity period
+*---------------------------------------------------------------------*
+  SELECT SINGLE datab
+                datbi
+    INTO ( @lv_datab, @lv_datbi )
+    FROM cepc
+   WHERE prctr = @lv_prctr
+     AND kokrs = @lv_kokrs.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45).
+    cv_error = gc_x.
+    EXIT.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Step 3: Validate current year
+*---------------------------------------------------------------------*
+  lv_year_end = |{ sy-datum+0(4) }1231|.
+
+  IF lv_datab <= sy-datum
+     AND ( lv_datbi >= sy-datum
+        OR lv_datbi >= lv_year_end ).
+
+    MESSAGE s000(zmsg_a2r) WITH 'Profit center is valid in current year'.
     CLEAR cv_error.
+
   ELSE.
-    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45) iv_plsez.
+    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45).
     cv_error = gc_x.
   ENDIF.
+
+ENDFORM.
