@@ -1,449 +1,93 @@
-*****           Implementation of object type Z_KOSTK              *****
-INCLUDE <object>.
-begin_data object. " Do not change.. DATA is generated
-* only private members may be inserted into structure private
-DATA:
-  " begin of private,
-  "   to declare private attributes remove comments and
-  "   insert private attributes here ...
-  " end of private,
-  BEGIN OF key,
-    request LIKE zwbs_header-request,
-  END OF key,
-  lv_wi_prefix TYPE rgrwa-indxn_pref,
-  lv_location  TYPE usr03-ort01,
-  lv_request   TYPE vbak-vbeln,
-  lv_case      TYPE dbtablog-versno,
-  _zwbs_header LIKE zwbs_header.
-end_data object. " Do not change.. DATA is generated
-TABLES zwbs_header.
-*
-get_table_property zwbs_header.
-DATA subrc LIKE sy-subrc.
-* Fill TABLES ZWBS_HEADER to enable Object Manager Access to Table Properties
-PERFORM select_table_zwbs_header USING subrc.
-IF subrc NE 0.
-  exit_object_not_found.
-ENDIF.
-end_property.
-*
-* Use Form also for other(virtual) Properties to fill TABLES ZWBS_HEADER
-FORM select_table_zwbs_header USING subrc LIKE sy-subrc.
+INCLUDE <OBJECT>.
 
-* Select single * from ZWBS_HEADER, if OBJECT-ZWBS_HEADER is initial
-  IF object-_zwbs_header-mandt   IS INITIAL AND
-     object-_zwbs_header-request IS INITIAL.
-    SELECT SINGLE * FROM zwbs_header CLIENT SPECIFIED
-                    WHERE mandt   = sy-mandt AND
-                          request = object-key-request.
+BEGIN_DATA OBJECT. " Do not change.. DATA is generated
+
+DATA:
+  BEGIN OF KEY,
+    request LIKE ztb_a2r_wbshdr-zreq_num,
+  END OF KEY,
+
+  _ztb_a2r_wbshdr LIKE ztb_a2r_wbshdr.
+
+END_DATA OBJECT. " Do not change.. DATA is generated
+
+TABLES: ztb_a2r_wbshdr.
+
+*---------------------------------------------------------------------*
+* Table property
+*---------------------------------------------------------------------*
+GET_TABLE_PROPERTY ztb_a2r_wbshdr.
+
+  DATA subrc LIKE sy-subrc.
+
+  PERFORM select_table_ztb_a2r_wbshdr USING subrc.
+  IF subrc NE 0.
+    EXIT_OBJECT_NOT_FOUND.
+  ENDIF.
+
+END_PROPERTY.
+
+*---------------------------------------------------------------------*
+* Select header record by request number
+*---------------------------------------------------------------------*
+FORM select_table_ztb_a2r_wbshdr USING subrc LIKE sy-subrc.
+
+  IF object-_ztb_a2r_wbshdr-mandt    IS INITIAL AND
+     object-_ztb_a2r_wbshdr-zreq_num IS INITIAL.
+
+    SELECT SINGLE *
+      FROM ztb_a2r_wbshdr CLIENT SPECIFIED
+      INTO ztb_a2r_wbshdr
+      WHERE mandt    = sy-mandt
+        AND zreq_num = object-key-request.
+
     subrc = sy-subrc.
-    IF subrc NE 0. EXIT. ENDIF.
-    object-_zwbs_header = zwbs_header.
+    IF subrc NE 0.
+      EXIT.
+    ENDIF.
+
+    object-_ztb_a2r_wbshdr = ztb_a2r_wbshdr.
+
   ELSE.
     subrc = 0.
-    zwbs_header = object-_zwbs_header.
+    ztb_a2r_wbshdr = object-_ztb_a2r_wbshdr.
   ENDIF.
+
 ENDFORM.
 
-begin_method display changing container.
-SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
-CALL TRANSACTION 'ZCJ03' AND SKIP FIRST SCREEN.
-end_method.
+*---------------------------------------------------------------------*
+* Method DISPLAY
+*---------------------------------------------------------------------*
+BEGIN_METHOD display CHANGING container.
 
+  SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
+  CALL TRANSACTION 'ZCJ03' AND SKIP FIRST SCREEN.
 
+END_METHOD.
 
+*---------------------------------------------------------------------*
+* Method CHANGE
+*---------------------------------------------------------------------*
+BEGIN_METHOD change CHANGING container.
 
-begin_method change changing container.
+  SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
+  CALL TRANSACTION 'ZCJ02N' AND SKIP FIRST SCREEN.
 
-DATA: lv_status           TYPE char1,
-      lt_reason           TYPE STANDARD TABLE OF tdline,
-      lv_request          TYPE zwbs_header-request,
-      lv_finalstep        TYPE char1,
-      lv_wi_agent         TYPE char15,
-      lv_return           LIKE bapiret1,
-      lv_accept           TYPE char1,
-      lv_reject           TYPE char1,
-      lv_wf_flag          TYPE flag,
-      gv_mdm_app_response TYPE flag,
-      gv_capex            TYPE flag.
+END_METHOD.
 
-** write current agent to memory
-lv_wf_flag = abap_true.
-FREE MEMORY ID 'ZWBS_WF_FLAG'.
-EXPORT lv_wf_flag = lv_wf_flag TO MEMORY ID 'ZWBS_WF_FLAG'.
+*---------------------------------------------------------------------*
+* Property LV_REQUEST
+*---------------------------------------------------------------------*
+GET_PROPERTY lv_request CHANGING container.
 
-swc_get_element container 'IV_CAPEX' gv_capex .
+  DATA lv_request_out TYPE char20.
 
-IF gv_capex IS NOT INITIAL.
-  EXPORT gv_capex = gv_capex TO MEMORY ID 'ZWBS_CAPEX'.
-ENDIF.
-
-SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
-CALL TRANSACTION 'ZCJ02N' AND SKIP FIRST SCREEN.
-
-IMPORT:
-lv_status           = lv_status           FROM MEMORY ID 'ZWBS_WF_STATUS',
-gv_mdm_app_response = gv_mdm_app_response FROM MEMORY ID 'ZWBS_MDM_APPROVER_RESPONSE'.
-
-FREE MEMORY ID: 'ZWBS_WF_STATUS',
-                'ZWBS_MDM_APPROVER_RESPONSE'.
-
-swc_set_element container 'EvMdmAprResponse' gv_mdm_app_response.
-swc_set_element container 'Ev_Status' lv_status.
-end_method.
-
-get_property lv_wi_prefix changing container.
-DATA: lv_prefix      TYPE char6,
-      lv_case        TYPE char2,
-      ls_wbs_header  TYPE zwbs_header,
-      lv_user        TYPE syst_uname,
-      es_userdetails TYPE qisrsuser_data,
-      ls_usr03       TYPE usr03,
-      lv_location    TYPE xuort01,
-      lv_fullname    TYPE ad_namtext.
-
-CONCATENATE 'WBS_' object-_zwbs_header-proj_type INTO lv_prefix.
-swc_set_element container 'LV_WI_PREFIX' lv_prefix.
-end_property.
-
-get_property lv_location changing container.
-DATA ls_usr03 TYPE usr03.
-* // get city of user
-CLEAR ls_usr03.
-CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
-  EXPORTING
-    user_name              = object-_zwbs_header-created_by
-  IMPORTING
-    user_usr03             = ls_usr03
-  EXCEPTIONS
-    user_address_not_found = 0
-    OTHERS                 = 0.
-
-swc_set_element container 'LV_LOCATION' ls_usr03-ort01.
-end_property.
-
-get_property lv_case changing container.
-DATA lv_case TYPE char2.
-CASE object-_zwbs_header-type.
-  WHEN '1'.
-    lv_case = 'CR'.
-  WHEN '2'.
-    lv_case = 'MO'.
-  WHEN '3'.
-    lv_case = 'CL'.
-  WHEN '4'.
-    lv_case = 'UC'.
-ENDCASE.
-swc_set_element container 'LV_CASE' lv_case.
-end_property.
-
-get_property lv_request changing container.
-CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
-  EXPORTING
-    input  = object-key-request
-  IMPORTING
-    output = object-lv_request.
-
-swc_set_element container 'LV_REQUEST' object-lv_request.
-end_property.
-
-begin_method change_approvers changing container.
-
-DATA: lv_status                   TYPE char1,
-      lt_reason                   TYPE STANDARD TABLE OF tdline,
-      lv_request                  TYPE zwbs_header-request,
-      lv_finalstep                TYPE char1,
-      lv_wi_agent                 TYPE char15,
-      lv_return                   LIKE bapiret1,
-      lv_accept                   TYPE char1,
-      lv_reject                   TYPE char1,
-      lv_wf_flag                  TYPE flag,
-      gv_pm_app_response          TYPE flag,
-      gv_capex_app_response       TYPE flag,
-      gv_co_app_response          TYPE flag,
-      gv_r2r_acc_app_response     TYPE flag,
-      gv_r2r_sr_app_response      TYPE flag,
-      gv_at_pm_approver_step      TYPE swp_agent,
-      gv_at_capex_approver_step   TYPE swp_agent,
-      gv_at_co_approver_step      TYPE swp_agent,
-      gv_at_r2r_acc_approver_step TYPE swp_agent,
-      gv_at_r2r_sr_approver_step  TYPE swp_agent,
-      gt_pvpm_admin_approver_step TYPE TABLE OF swp_agent,
-      gv_pvpm_admin_app_resp      TYPE flag,
-      gv_capex                    TYPE flag.
-
-CLEAR:gv_at_pm_approver_step,gv_at_co_approver_step,
-      gv_at_r2r_acc_approver_step,gv_at_r2r_sr_approver_step.
-
-swc_get_element container 'IvPmApprover'     gv_at_pm_approver_step.
-swc_get_element container 'IvCAPEXApprover'     gv_at_capex_approver_step.
-swc_get_element container 'IvCoApprover'     gv_at_co_approver_step.
-swc_get_element container 'IvR2RAccApprover' gv_at_r2r_acc_approver_step.
-swc_get_element container 'IvR2RSRApprover'  gv_at_r2r_sr_approver_step.
-swc_get_element container 'ItPVPM_Admin_Appr' gt_pvpm_admin_approver_step.
-swc_get_element container 'IV_CAPEX'          gv_capex .
-
-IF  gv_at_capex_approver_step IS NOT INITIAL.
-  EXPORT gv_at_capex_approver_step = gv_at_capex_approver_step
-                                  TO MEMORY ID 'ZWBS_AT_CAPEX_APPROVER_STEP'.
-ELSEIF gv_at_pm_approver_step IS NOT INITIAL.
-  EXPORT gv_at_pm_approver_step = gv_at_pm_approver_step
-                                  TO MEMORY ID 'ZWBS_AT_PM_APPROVER_STEP'.
-ELSEIF gv_at_co_approver_step IS NOT INITIAL.
-  EXPORT gv_at_co_approver_step = gv_at_co_approver_step
-                                  TO MEMORY ID 'ZWBS_AT_CO_APPROVER_STEP'.
-ELSEIF gv_at_r2r_acc_approver_step IS NOT INITIAL.
-  EXPORT gv_at_r2r_acc_approver_step = gv_at_r2r_acc_approver_step
-                                       TO MEMORY ID 'ZWBS_AT_R2R_ACC_APPROVER_STEP'.
-ELSEIF gv_at_r2r_sr_approver_step IS NOT INITIAL.
-  EXPORT gv_at_r2r_sr_approver_step = gv_at_r2r_sr_approver_step
-                                      TO MEMORY ID 'ZWBS_AT_R2R_SR_APPROVER_STEP'.
-ELSEIF gt_pvpm_admin_approver_step[] IS NOT INITIAL.
-  EXPORT gt_pvpm_admin_approver_step = gt_pvpm_admin_approver_step
-                                      TO MEMORY ID 'ZWBS_PVPM_APPROVER_STEP'.
-ENDIF.
-IF gv_capex IS NOT INITIAL.
-  EXPORT gv_capex = gv_capex TO MEMORY ID 'ZWBS_CAPEX'.
-ENDIF.
-*Workflow Flag
-lv_wf_flag = abap_true.
-FREE MEMORY ID 'ZWBS_WF_FLAG'.
-EXPORT lv_wf_flag = lv_wf_flag TO MEMORY ID 'ZWBS_WF_FLAG'.
-
-SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
-CALL TRANSACTION 'ZCJ02N' AND SKIP FIRST SCREEN .
-
-IF gv_at_capex_approver_step IS NOT INITIAL.
-  IMPORT gv_capex_app_response = gv_capex_app_response
-                              FROM MEMORY ID 'ZWBS_CAPEX_APPROVER_RESPONSE'.
-ELSEIF gv_at_pm_approver_step IS NOT INITIAL.
-  IMPORT gv_pm_app_response = gv_pm_app_response
-                              FROM MEMORY ID 'ZWBS_PM_APPROVER_RESPONSE'.
-ELSEIF  gv_at_co_approver_step IS NOT INITIAL.
-  IMPORT gv_co_app_response = gv_co_app_response
-                              FROM MEMORY ID 'ZWBS_CO_APPROVER_RESPONSE'.
-ELSEIF  gv_at_r2r_acc_approver_step IS NOT INITIAL.
-  IMPORT gv_r2r_acc_app_response = gv_r2r_acc_app_response
-                                   FROM MEMORY ID 'ZWBS_R2R_ACC_APPROVER_RESPONSE'.
-ELSEIF  gv_at_r2r_sr_approver_step IS NOT INITIAL.
-  IMPORT gv_r2r_sr_app_response = gv_r2r_sr_app_response
-                                  FROM MEMORY ID 'ZWBS_R2R_SR_APPROVER_RESPONSE'.
-ELSEIF gt_pvpm_admin_approver_step[] IS NOT INITIAL.
-  IMPORT gv_pvpm_admin_app_resp = gv_pvpm_admin_app_resp
-                                  FROM MEMORY ID 'ZWBS_PVPM_APPROVER_STEP'.
-ENDIF.
-import gv_capex = gv_capex from MEMORY ID 'ZWBS_CAPEX'.
-FREE MEMORY ID:'ZWBS_PM_APPROVER_RESPONSE',      'ZWBS_AT_PM_APPROVER_STEP', 'ZWBS_AT_CAPEX_APPROVER_STEP',
-               'ZWBS_CO_APPROVER_RESPONSE',      'ZWBS_AT_CO_APPROVER_STEP',
-               'ZWBS_R2R_ACC_APPROVER_RESPONSE', 'ZWBS_AT_R2R_ACC_APPROVER_STEP',
-               'ZWBS_R2R_SR_APPROVER_RESPONSE',  'ZWBS_AT_R2R_SR_APPROVER_STEP',
-               'ZWBS_WF_FLAG', 'ZWBS_PVPM_APPROVER_STEP', 'ZWBS_CAPEX', 'ZWBS_CAPEX_APPROVER_RESPONSE'.
-
-swc_set_element container 'EvPmAprResponse'  gv_pm_app_response.
-swc_set_element container 'EvCAPEXaprResponse'  gv_capex_app_response.
-swc_set_element container 'EvCoAprResponse'  gv_co_app_response.
-swc_set_element container 'EvR2RAccResponse' gv_r2r_acc_app_response.
-swc_set_element container 'EvR2RSRResponse'  gv_r2r_sr_app_response.
-swc_set_element container 'EvPvPM_Admin_Resp' gv_pvpm_admin_app_resp.
-swc_set_element container 'IV_CAPEX'          gv_capex .
-end_method.
-
-begin_method auto_approval changing container.
-DATA:lt_bdc                      TYPE STANDARD TABLE OF bdcdata,
-     lt_log                      TYPE STANDARD TABLE OF bdcmsgcoll,
-     ls_header                   TYPE zwbs_header,
-     ls_params                   TYPE ctu_params,
-     ls_log                      TYPE bdcmsgcoll,
-     lv_wf_flag                  TYPE flag,
-     gv_auto_approver_step       TYPE flag,
-     gv_auto_approver_step_error TYPE flag,
-     ls_bdc                      TYPE bdcdata,
-     lv_error                    TYPE char1,
-     lv_start                    TYPE ps_pspid,
-     lv_finish                   TYPE ps_pspid.
-
-* Begin of changes by LCHENNA for CR
-DATA : lv_msg           TYPE string,
-       lt_err_tab       TYPE TABLE OF bapiret2,
-       ls_err           TYPE bapiret2,
-       gv_err_mail_flag TYPE flag.
-* End of changes by LCHENNA for CR
-*Header Data
-SELECT SINGLE * FROM zwbs_header INTO ls_header
-                WHERE request = object-key-request.
-
-*ZCJ02N Initial Screen
-ls_bdc-program  = 'SAPMZWBS'.
-ls_bdc-dynpro   = '0700'.
-ls_bdc-dynbegin = 'X'.
-APPEND ls_bdc TO lt_bdc.
-
-CLEAR ls_bdc.
-ls_bdc-fnam     = 'BDC_CURSOR'.
-ls_bdc-fval     = 'ZWBS_HEADER-REQUEST'.
-APPEND ls_bdc TO lt_bdc.
-
-CLEAR ls_bdc.
-ls_bdc-fnam     = 'BDC_OKCODE'.
-ls_bdc-fval     = '=ENTER'.
-APPEND ls_bdc TO lt_bdc.
-
-CLEAR ls_bdc.
-ls_bdc-fnam     = 'ZWBS_HEADER-REQUEST'.
-ls_bdc-fval     = object-key-request.
-APPEND ls_bdc TO lt_bdc.
-
-*Header and Detail Screen with Approve Action
-CLEAR ls_bdc.
-ls_bdc-program  = 'SAPMZWBS'.
-ls_bdc-dynpro   = '0400'.
-ls_bdc-dynbegin = 'X'.
-APPEND ls_bdc TO lt_bdc.
-
-CLEAR ls_bdc.
-ls_bdc-fnam     = 'BDC_OKCODE'.
-ls_bdc-fval     = '=APPROVE'.
-APPEND ls_bdc TO lt_bdc.
-
-*Create Project Scenario
-IF ls_header-type = 1.
-*Values for Number Proposal
-  lv_start  = ls_header-proj_type.
-  CONCATENATE ls_header-proj_type '99999' INTO lv_finish.
-
-*Pop-up for Project Number Assignment
-  CLEAR ls_bdc.
-  ls_bdc-program  = 'SAPLCN00'.
-  ls_bdc-dynpro   = '1000'.
-  ls_bdc-dynbegin = 'X'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'BDC_CURSOR'.
-  ls_bdc-fval     = '*PROJ-PSPID'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'BDC_OKCODE'.
-  ls_bdc-fval     = '=SUCH'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'PROJ-PSPID'.
-  ls_bdc-fval     = lv_start.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = '*PROJ-PSPID'.
-  ls_bdc-fval     = lv_finish.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'CN00-GAP'.
-  ls_bdc-fval     = 'X'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-program  = 'SAPLCN00'.
-  ls_bdc-dynpro   = '1000'.
-  ls_bdc-dynbegin = 'X'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'BDC_CURSOR'.
-  ls_bdc-fval     = 'PROJ-PSPID'.
-  APPEND ls_bdc TO lt_bdc.
-
-  CLEAR ls_bdc.
-  ls_bdc-fnam     = 'BDC_OKCODE'.
-  ls_bdc-fval     = '=UEBN'.
-  APPEND ls_bdc TO lt_bdc.
-ENDIF.
-
-ls_params-updmode  = 'A'.
-ls_params-dismode  = 'N'.
-ls_params-defsize  = 'X'.
-ls_params-racommit = 'X'.
-
-gv_auto_approver_step = abap_true.
-EXPORT gv_auto_approver_step = gv_auto_approver_step
-     TO MEMORY ID 'ZWBS_AUTO_APPROVER_STEP'.
-
-*Workflow Flag
-lv_wf_flag = abap_true.
-FREE MEMORY ID 'ZWBS_WF_FLAG'.
-EXPORT lv_wf_flag = lv_wf_flag TO MEMORY ID 'ZWBS_WF_FLAG'.
-
-CALL TRANSACTION 'ZCJ02N' USING lt_bdc
-                          MESSAGES INTO lt_log
-                          OPTIONS FROM ls_params.
-IF sy-subrc <> 0.
-  lv_error = 'E'.
-ELSEIF NOT lt_log IS INITIAL.
-  CLEAR ls_log.
-  READ TABLE lt_log INTO ls_log
-                    WITH KEY msgtyp = 'I'
-                             msgid  = '00'
-                             msgnr  = '368'.
-  IF ls_log-msgv1 CS 'Approved'.
-  ELSE.
-    lv_error = 'E'.
-  ENDIF.
-ENDIF.
-
-*Check for Errors from WBS Processing
-IMPORT gv_err_mail_flag = gv_err_mail_flag
-                    FROM MEMORY ID 'ZWBS_ERR_MAIL'.
-FREE MEMORY ID 'ZWBS_ERR_MAIL'.
-*Send Email in case of Screen Validation Errors - PV Cases
-IF NOT ls_header-zprj_code_pv IS INITIAL AND
-   NOT lt_log                 IS INITIAL AND
-   NOT lv_error               IS INITIAL AND
-   gv_err_mail_flag           IS INITIAL.
-  LOOP AT lt_log INTO ls_log.
-    CALL FUNCTION 'FORMAT_MESSAGE'
-      EXPORTING
-        id        = ls_log-msgid
-        lang      = ls_log-msgspra
-        no        = ls_log-msgnr
-        v1        = ls_log-msgv1
-        v2        = ls_log-msgv2
-        v3        = ls_log-msgv3
-        v4        = ls_log-msgv4
-      IMPORTING
-        msg       = lv_msg
-      EXCEPTIONS
-        not_found = 1
-        OTHERS    = 2.
-    IF sy-subrc = 0.
-      ls_err-message = lv_msg.
-      APPEND ls_err TO lt_err_tab.
-    ENDIF.
-  ENDLOOP.
-
-  CALL FUNCTION 'ZWBS_SEND_EMAIL'
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
     EXPORTING
-      iv_type    = 'E'
-      iv_req_no  = object-key-request
-      iv_express = 'X'
-      iv_user    = sy-uname
-    TABLES
-      lt_error   = lt_err_tab.
-ENDIF.
+      input  = object-key-request
+    IMPORTING
+      output = lv_request_out.
 
-IF lv_error IS INITIAL.
-  IMPORT gv_auto_approver_step_error = gv_auto_approver_step_error
-                    FROM MEMORY ID 'ZWBS_AUTO_APPROVER_STEP_ERROR'.
-  IF gv_auto_approver_step_error = abap_true.
-    lv_error = 'E'.
-  ENDIF.
-ENDIF.
+  swc_set_element container 'LV_REQUEST' lv_request_out.
 
-FREE MEMORY ID:'ZWBS_AUTO_APPROVER_STEP',
-               'ZWBS_AUTO_APPROVER_STEP_ERROR',
-               'ZWBS_WF_FLAG'.
-
-swc_set_element container 'EvError' lv_error.
-swc_set_table container 'Error_Tab' lt_log.
-
-end_method.
+END_PROPERTY.
