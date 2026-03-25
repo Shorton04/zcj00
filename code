@@ -1,65 +1,77 @@
-FORM validate_profit_center USING    iv_kokrs TYPE kokrs
-                                     iv_prctr TYPE prctr
-                                     iv_plsez TYPE ps_plsez_chg
-                                     iv_prnam TYPE impr-prnam
-                                     iv_posnr TYPE impr-posnr
-                            CHANGING cv_error TYPE abap_bool.
+FORM validate_total_up_done
+  CHANGING cv_error TYPE abap_bool.
 
-  DATA: lv_prctr    TYPE impr-prctr,
-        lv_kokrs    TYPE impr-kokrs,
-        lv_datab    TYPE cepc-datab,
-        lv_datbi    TYPE cepc-datbi,
-        lv_year_end TYPE sy-datum.
+  DATA: ls_parent     TYPE ty_wbs_display,
+        ls_child      TYPE ty_wbs_display,
+        lv_tabix      TYPE sy-tabix,
+        lv_nextix     TYPE sy-tabix,
+        lv_lines      TYPE i,
+        lv_sum        TYPE ty_wbs_display-zapproved_budg,
+        lv_has_child  TYPE abap_bool,
+        lv_next_stufe TYPE ps_stufe.
 
   CLEAR cv_error.
 
-*---------------------------------------------------------------------*
-* Step 1: Get PRCTR + KOKRS from IMPR (override input values)
-*---------------------------------------------------------------------*
-  SELECT SINGLE prctr
-                kokrs
-    INTO ( @lv_prctr, @lv_kokrs )
-    FROM impr
-   WHERE prnam = @iv_prnam
-     AND posnr = @iv_posnr.
-
-  IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH 'IMPR data not found'.
-    cv_error = gc_x.
-    EXIT.
+  lv_lines = lines( gt_wbs_display ).
+  IF lv_lines IS INITIAL.
+    RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Step 2: Read CEPC validity period
+* Dynamic hierarchy validation
 *---------------------------------------------------------------------*
-  SELECT SINGLE datab
-                datbi
-    INTO ( @lv_datab, @lv_datbi )
-    FROM cepc
-   WHERE prctr = @lv_prctr
-     AND kokrs = @lv_kokrs.
+  LOOP AT gt_wbs_display INTO ls_parent.
 
-  IF sy-subrc <> 0.
-    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45).
-    cv_error = gc_x.
-    EXIT.
-  ENDIF.
+    lv_tabix = sy-tabix.
+    CLEAR: lv_sum, lv_has_child.
+
+    lv_nextix = lv_tabix + 1.
+
+    WHILE lv_nextix <= lv_lines.
+
+      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
+      IF sy-subrc <> 0.
+        EXIT.
+      ENDIF.
+
+      " Stop when next sibling or upper/higher parent starts
+      IF ls_child-stufe <= ls_parent-stufe.
+        EXIT.
+      ENDIF.
+
+      " Only direct children
+      lv_next_stufe = ls_parent-stufe + 1.
+
+      IF ls_child-stufe = lv_next_stufe.
+        lv_sum = lv_sum + ls_child-zapproved_budg.
+        lv_has_child = abap_true.
+      ENDIF.
+
+      lv_nextix = lv_nextix + 1.
+
+    ENDWHILE.
 
 *---------------------------------------------------------------------*
-* Step 3: Validate current year
+* Validation
 *---------------------------------------------------------------------*
-  lv_year_end = |{ sy-datum+0(4) }1231|.
+    IF lv_has_child = abap_true.
 
-  IF lv_datab <= sy-datum
-     AND ( lv_datbi >= sy-datum
-        OR lv_datbi >= lv_year_end ).
+      " Parent must be exactly equal to total of its direct children
+      IF ls_parent-zapproved_budg <> lv_sum.
+        IF gv_req_type = 'B2'.
+          MESSAGE e000(zmsg_a2r)
+          WITH 'Budget is grater than Level 1.'(m61).
+        ELSE.
+          MESSAGE e000(zmsg_a2r)
+            WITH 'Budget mismatch. Total Up required.'(m35).
+        ENDIF.
+        cv_error = abap_true.
+        RETURN.
 
-    MESSAGE s000(zmsg_a2r) WITH 'Profit center is valid in current year'.
-    CLEAR cv_error.
+      ENDIF.
 
-  ELSE.
-    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45).
-    cv_error = gc_x.
-  ENDIF.
+    ENDIF.
+
+  ENDLOOP.
 
 ENDFORM.
