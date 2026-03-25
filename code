@@ -7,7 +7,6 @@ FORM validate_total_up_done
         lv_nextix     TYPE sy-tabix,
         lv_lines      TYPE i,
         lv_sum        TYPE ty_wbs_display-zapproved_budg,
-        lv_has_child  TYPE abap_bool,
         lv_next_stufe TYPE ps_stufe.
 
   CLEAR cv_error.
@@ -23,9 +22,10 @@ FORM validate_total_up_done
   LOOP AT gt_wbs_display INTO ls_parent.
 
     lv_tabix = sy-tabix.
-    CLEAR: lv_sum, lv_has_child.
+    CLEAR lv_sum.
 
     lv_nextix = lv_tabix + 1.
+    lv_next_stufe = ls_parent-stufe + 1.
 
     WHILE lv_nextix <= lv_lines.
 
@@ -34,17 +34,14 @@ FORM validate_total_up_done
         EXIT.
       ENDIF.
 
-      " Stop when next sibling or upper/higher parent starts
+      " Stop when next sibling or higher parent starts
       IF ls_child-stufe <= ls_parent-stufe.
         EXIT.
       ENDIF.
 
       " Only direct children
-      lv_next_stufe = ls_parent-stufe + 1.
-
       IF ls_child-stufe = lv_next_stufe.
         lv_sum = lv_sum + ls_child-zapproved_budg.
-        lv_has_child = abap_true.
       ENDIF.
 
       lv_nextix = lv_nextix + 1.
@@ -54,20 +51,21 @@ FORM validate_total_up_done
 *---------------------------------------------------------------------*
 * Validation
 *---------------------------------------------------------------------*
-    IF lv_has_child = abap_true.
+    " If child total is zero, consider valid
+    " Only validate when child total is greater than zero
+    IF lv_sum > 0.
 
-      " Parent must be exactly equal to total of its direct children
       IF ls_parent-zapproved_budg <> lv_sum.
         IF gv_req_type = 'B2'.
           MESSAGE e000(zmsg_a2r)
-          WITH 'Budget is grater than Level 1.'(m61).
+            WITH 'Budget is greater than Level 1.'(m61).
         ELSE.
           MESSAGE e000(zmsg_a2r)
             WITH 'Budget mismatch. Total Up required.'(m35).
         ENDIF.
+
         cv_error = abap_true.
         RETURN.
-
       ENDIF.
 
     ENDIF.
