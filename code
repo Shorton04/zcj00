@@ -1,56 +1,75 @@
 FORM populate_wbs_unclose.
 
-  DATA: ls_display TYPE ty_wbs_display,
-        ls_unclose TYPE ty_wbs_unclose,
-        lt_prps    TYPE STANDARD TABLE OF prps,
-        ls_prps    TYPE prps,
+*---------------------------------------------------------------------*
+* Type definition
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_prps_u,
+           posid TYPE prps-posid,
+           pspnr TYPE prps-pspnr,
+           objnr TYPE prps-objnr,
+         END OF ty_prps_u.
+
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: gt_prps    TYPE STANDARD TABLE OF ty_prps_u,
+        gs_prps    TYPE ty_prps_u,
         lt_jest    TYPE STANDARD TABLE OF jest,
-        ls_jest    TYPE jest.
+        ls_jest    TYPE jest,
+        ls_display TYPE ty_wbs_display,
+        ls_unclose TYPE ty_wbs_unclose.
 
   CLEAR gt_wbs_unclose.
 
 *---------------------------------------------------------------------*
-* Get OBJNR of all WBS in gt_wbs_display
+* Get PRPS mapping (POSID → PSPNR / OBJNR)
 *---------------------------------------------------------------------*
   IF gt_wbs_display IS NOT INITIAL.
 
-    SELECT pspnr,
+    SELECT posid,
+           pspnr,
            objnr
-      INTO TABLE @lt_prps
+      INTO TABLE @gt_prps
       FROM prps
       FOR ALL ENTRIES IN @gt_wbs_display
-      WHERE pspnr = @gt_wbs_display-posnr.
+      WHERE posid = @gt_wbs_display-posid.
 
-    IF lt_prps IS NOT INITIAL.
-      SORT lt_prps BY pspnr.
+    IF gt_prps IS NOT INITIAL.
 
+      SORT gt_prps BY posid.
+
+*-------------------------------------------------------------------*
+* Get active statuses
+*-------------------------------------------------------------------*
       SELECT objnr,
              stat
         INTO TABLE @lt_jest
         FROM jest
-        FOR ALL ENTRIES IN @lt_prps
-        WHERE objnr = @lt_prps-objnr
+        FOR ALL ENTRIES IN @gt_prps
+        WHERE objnr = @gt_prps-objnr
           AND inact = @space.
 
       SORT lt_jest BY objnr.
+
     ENDIF.
 
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Copy gt_wbs_display to gt_wbs_unclose
+* Build gt_wbs_unclose
 *---------------------------------------------------------------------*
   LOOP AT gt_wbs_display INTO ls_display.
 
-    CLEAR: ls_unclose, ls_prps, ls_jest.
+    CLEAR: ls_unclose, gs_prps, ls_jest.
 
-    " Copy same-entry fields
+*-------------------------------------------------------------------*
+* Copy fields
+*-------------------------------------------------------------------*
     ls_unclose-wbs_level          = ls_display-stufe.
     ls_unclose-pspid              = ls_display-pspid.
     ls_unclose-wbs_element_code   = ls_display-posid.
     ls_unclose-description        = ls_display-post1.
     ls_unclose-cost_center_level1 = ls_display-kostl.
-    ls_unclose-posnr              = ls_display-posnr.
     ls_unclose-approved_budget    = ls_display-zapproved_budg.
     ls_unclose-flag_budget_check  = ls_display-zbudget_check.
     ls_unclose-bukrs              = ls_display-bukrs.
@@ -58,17 +77,23 @@ FORM populate_wbs_unclose.
     ls_unclose-prart              = ls_display-prart.
     ls_unclose-mark               = ls_display-mark.
 
-    " User input later
     CLEAR ls_unclose-to_be.
 
-    " Populate current status from PRPS -> JEST
-    READ TABLE lt_prps INTO ls_prps
-      WITH KEY pspnr = ls_display-posnr
+*-------------------------------------------------------------------*
+* Get OBJNR via POSID
+*-------------------------------------------------------------------*
+    READ TABLE gt_prps INTO gs_prps
+      WITH KEY posid = ls_display-posid
       BINARY SEARCH.
     IF sy-subrc = 0.
 
+      ls_unclose-posnr = gs_prps-pspnr.
+
+*-----------------------------------------------------------------*
+* Get STATUS from JEST
+*-----------------------------------------------------------------*
       READ TABLE lt_jest INTO ls_jest
-        WITH KEY objnr = ls_prps-objnr
+        WITH KEY objnr = gs_prps-objnr
         BINARY SEARCH.
       IF sy-subrc = 0.
         ls_unclose-status = ls_jest-stat.
