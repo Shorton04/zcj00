@@ -1,15 +1,8 @@
-FORM populate_wbs_unclose_status.
+FORM validate_proj_wbs_teco_clsd CHANGING cv_error TYPE abap_bool.
 
 *---------------------------------------------------------------------*
 * Local Types
 *---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_prps_stat,
-           posid TYPE prps-posid,
-           objnr TYPE prps-objnr,
-           stat  TYPE jest-stat,
-           txt04 TYPE tj02t-txt04,
-         END OF ty_prps_stat.
-
   TYPES: BEGIN OF ty_posid_range,
            sign   TYPE c LENGTH 1,
            option TYPE c LENGTH 2,
@@ -17,34 +10,79 @@ FORM populate_wbs_unclose_status.
            high   TYPE prps-posid,
          END OF ty_posid_range.
 
+  TYPES: BEGIN OF ty_wbs_stat,
+           posid TYPE prps-posid,
+           stat  TYPE jest-stat,
+         END OF ty_wbs_stat.
+
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
-  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+  DATA: lv_pspnr       TYPE proj-pspnr,
+        lv_objnr_proj  TYPE proj-objnr,
+        lv_posid       TYPE prps-posid,
+        ls_display     TYPE ty_wbs_display,
+        lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
         ls_posid_range TYPE ty_posid_range,
-        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
-        ls_prps_stat   TYPE ty_prps_stat,
-        lv_status      TYPE string.
-
-  FIELD-SYMBOLS: <fs_unclose> TYPE ty_wbs_unclose.
+        lt_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat,
+        ls_wbs_stat    TYPE ty_wbs_stat.
 
 *---------------------------------------------------------------------*
-* Check data
+* Init
 *---------------------------------------------------------------------*
-  IF gt_wbs_unclose IS INITIAL.
+  CLEAR cv_error.
+
+*---------------------------------------------------------------------*
+* Validate Project status from PROJ
+*---------------------------------------------------------------------*
+  lv_pspnr = gs_header-pspnr.
+
+  IF lv_pspnr IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Project Definition is required'.
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE objnr
+    INTO @lv_objnr_proj
+    FROM proj
+   WHERE pspnr = @lv_pspnr.
+
+  IF sy-subrc <> 0 OR lv_objnr_proj IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Project not found in PROJ'.
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE stat
+    INTO @DATA(lv_proj_stat)
+    FROM jest
+   WHERE objnr = @lv_objnr_proj
+     AND inact = @space
+     AND stat  IN ( 'I0045', 'I0046' ).
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r)
+      WITH 'Project is not in TECO or CLSD status'.
+    cv_error = gc_x.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Build POSID range from gt_wbs_unclose
+* Build WBS POSID range from gt_wbs_display
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS NOT INITIAL.
+
+      lv_posid = ls_display-posid.
+      REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
       CLEAR ls_posid_range.
       ls_posid_range-sign   = 'I'.
       ls_posid_range-option = 'EQ'.
-      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
+      ls_posid_range-low    = lv_posid.
       APPEND ls_posid_range TO lt_posid_range.
+
     ENDIF.
   ENDLOOP.
 
@@ -53,47 +91,38 @@ FORM populate_wbs_unclose_status.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Get PRPS-OBJNR + JEST-STAT + TJ02T-TXT04
-* Active statuses only, text in logon language
+* Get WBS statuses that are TECO / CLSD only
 *---------------------------------------------------------------------*
   SELECT a~posid,
-         a~objnr,
-         b~stat,
-         c~txt04
-    INTO TABLE @lt_prps_stat
-    FROM prps  AS a
-    INNER JOIN jest  AS b
+         b~stat
+    INTO TABLE @lt_wbs_stat
+    FROM prps AS a
+    INNER JOIN jest AS b
       ON b~objnr = a~objnr
-    INNER JOIN tj02t AS c
-      ON c~istat = b~stat
-     AND c~spras = @sy-langu
    WHERE a~posid IN @lt_posid_range
-     AND b~inact = @space.
-
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
+     AND b~inact = @space
+     AND b~stat  IN ( 'I0045', 'I0046' ).
 
 *---------------------------------------------------------------------*
-* Update gt_wbs_unclose-status
+* Validate every WBS in gt_wbs_display
 *---------------------------------------------------------------------*
-  SORT lt_prps_stat BY posid txt04.
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
 
-  LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-    CLEAR lv_status.
+    lv_posid = ls_display-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
 
-    LOOP AT lt_prps_stat INTO ls_prps_stat
-      WHERE posid = <fs_unclose>-wbs_element_code.
+    READ TABLE lt_wbs_stat INTO ls_wbs_stat
+      WITH KEY posid = lv_posid.
 
-      IF lv_status IS INITIAL.
-        lv_status = ls_prps_stat-txt04.
-      ELSE.
-        CONCATENATE lv_status ls_prps_stat-txt04
-          INTO lv_status SEPARATED BY ', '.
-      ENDIF.
-    ENDLOOP.
-
-    <fs_unclose>-status = lv_status.
+    IF sy-subrc <> 0.
+      MESSAGE e000(zmsg_a2r)
+        WITH 'WBS element is not in TECO or CLSD status:' ls_display-posid.
+      cv_error = gc_x.
+      RETURN.
+    ENDIF.
   ENDLOOP.
 
 ENDFORM.
