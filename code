@@ -1,93 +1,83 @@
-INCLUDE <OBJECT>.
+FORM populate_wbs_unclose.
 
-BEGIN_DATA OBJECT. " Do not change.. DATA is generated
+  DATA: ls_display TYPE ty_wbs_display,
+        ls_unclose TYPE ty_wbs_unclose,
+        lt_prps    TYPE STANDARD TABLE OF prps,
+        ls_prps    TYPE prps,
+        lt_jest    TYPE STANDARD TABLE OF jest,
+        ls_jest    TYPE jest.
 
-DATA:
-  BEGIN OF KEY,
-    request LIKE ztb_a2r_wbshdr-zreq_num,
-  END OF KEY,
-
-  _ztb_a2r_wbshdr LIKE ztb_a2r_wbshdr.
-
-END_DATA OBJECT. " Do not change.. DATA is generated
-
-TABLES: ztb_a2r_wbshdr.
+  CLEAR gt_wbs_unclose.
 
 *---------------------------------------------------------------------*
-* Table property
+* Get OBJNR of all WBS in gt_wbs_display
 *---------------------------------------------------------------------*
-GET_TABLE_PROPERTY ztb_a2r_wbshdr.
+  IF gt_wbs_display IS NOT INITIAL.
 
-  DATA subrc LIKE sy-subrc.
+    SELECT pspnr,
+           objnr
+      INTO TABLE @lt_prps
+      FROM prps
+      FOR ALL ENTRIES IN @gt_wbs_display
+      WHERE pspnr = @gt_wbs_display-posnr.
 
-  PERFORM select_table_ztb_a2r_wbshdr USING subrc.
-  IF subrc NE 0.
-    EXIT_OBJECT_NOT_FOUND.
-  ENDIF.
+    IF lt_prps IS NOT INITIAL.
+      SORT lt_prps BY pspnr.
 
-END_PROPERTY.
+      SELECT objnr,
+             stat
+        INTO TABLE @lt_jest
+        FROM jest
+        FOR ALL ENTRIES IN @lt_prps
+        WHERE objnr = @lt_prps-objnr
+          AND inact = @space.
 
-*---------------------------------------------------------------------*
-* Select header record by request number
-*---------------------------------------------------------------------*
-FORM select_table_ztb_a2r_wbshdr USING subrc LIKE sy-subrc.
-
-  IF object-_ztb_a2r_wbshdr-mandt    IS INITIAL AND
-     object-_ztb_a2r_wbshdr-zreq_num IS INITIAL.
-
-    SELECT SINGLE *
-      FROM ztb_a2r_wbshdr CLIENT SPECIFIED
-      INTO ztb_a2r_wbshdr
-      WHERE mandt    = sy-mandt
-        AND zreq_num = object-key-request.
-
-    subrc = sy-subrc.
-    IF subrc NE 0.
-      EXIT.
+      SORT lt_jest BY objnr.
     ENDIF.
 
-    object-_ztb_a2r_wbshdr = ztb_a2r_wbshdr.
-
-  ELSE.
-    subrc = 0.
-    ztb_a2r_wbshdr = object-_ztb_a2r_wbshdr.
   ENDIF.
 
+*---------------------------------------------------------------------*
+* Copy gt_wbs_display to gt_wbs_unclose
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_display.
+
+    CLEAR: ls_unclose, ls_prps, ls_jest.
+
+    " Copy same-entry fields
+    ls_unclose-wbs_level          = ls_display-stufe.
+    ls_unclose-pspid              = ls_display-pspid.
+    ls_unclose-wbs_element_code   = ls_display-posid.
+    ls_unclose-description        = ls_display-post1.
+    ls_unclose-cost_center_level1 = ls_display-kostl.
+    ls_unclose-posnr              = ls_display-posnr.
+    ls_unclose-approved_budget    = ls_display-zapproved_budg.
+    ls_unclose-flag_budget_check  = ls_display-zbudget_check.
+    ls_unclose-bukrs              = ls_display-bukrs.
+    ls_unclose-investment_profile = ls_display-imprf.
+    ls_unclose-prart              = ls_display-prart.
+    ls_unclose-mark               = ls_display-mark.
+
+    " User input later
+    CLEAR ls_unclose-to_be.
+
+    " Populate current status from PRPS -> JEST
+    READ TABLE lt_prps INTO ls_prps
+      WITH KEY pspnr = ls_display-posnr
+      BINARY SEARCH.
+    IF sy-subrc = 0.
+
+      READ TABLE lt_jest INTO ls_jest
+        WITH KEY objnr = ls_prps-objnr
+        BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_unclose-status = ls_jest-stat.
+      ENDIF.
+
+    ENDIF.
+
+    APPEND ls_unclose TO gt_wbs_unclose.
+
+  ENDLOOP.
+
 ENDFORM.
-
-*---------------------------------------------------------------------*
-* Method DISPLAY
-*---------------------------------------------------------------------*
-BEGIN_METHOD display CHANGING container.
-
-  SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
-  CALL TRANSACTION 'ZCJ03' AND SKIP FIRST SCREEN.
-
-END_METHOD.
-
-*---------------------------------------------------------------------*
-* Method CHANGE
-*---------------------------------------------------------------------*
-BEGIN_METHOD change CHANGING container.
-
-  SET PARAMETER ID 'ZWBSREQUEST' FIELD object-key-request.
-  CALL TRANSACTION 'ZCJ02N' AND SKIP FIRST SCREEN.
-
-END_METHOD.
-
-*---------------------------------------------------------------------*
-* Property LV_REQUEST
-*---------------------------------------------------------------------*
-GET_PROPERTY lv_request CHANGING container.
-
-  DATA lv_request_out TYPE char20.
-
-  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
-    EXPORTING
-      input  = object-key-request
-    IMPORTING
-      output = lv_request_out.
-
-  swc_set_element container 'LV_REQUEST' lv_request_out.
-
-END_PROPERTY.
