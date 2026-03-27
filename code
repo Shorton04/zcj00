@@ -1,134 +1,99 @@
-FORM populate_wbs_unclose.
+FORM populate_wbs_unclose_status.
 
 *---------------------------------------------------------------------*
-* Types
+* Local Types
 *---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_status,
-           objnr TYPE jest-objnr,
+  TYPES: BEGIN OF ty_prps_stat,
+           posid TYPE prps-posid,
+           objnr TYPE prps-objnr,
+           stat  TYPE jest-stat,
            txt04 TYPE tj02t-txt04,
-         END OF ty_status.
+         END OF ty_prps_stat.
+
+  TYPES: BEGIN OF ty_posid_range,
+           sign   TYPE c LENGTH 1,
+           option TYPE c LENGTH 2,
+           low    TYPE prps-posid,
+           high   TYPE prps-posid,
+         END OF ty_posid_range.
 
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
-  DATA: lt_prps_db  TYPE STANDARD TABLE OF prps,
-        ls_prps_db  TYPE prps,
-        lt_status   TYPE STANDARD TABLE OF ty_status,
-        ls_status   TYPE ty_status,
-        ls_display  TYPE ty_wbs_display,
-        ls_unclose  TYPE ty_wbs_unclose.
+  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        ls_posid_range TYPE ty_posid_range,
+        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
+        ls_prps_stat   TYPE ty_prps_stat,
+        lv_status      TYPE string.
 
-  CLEAR: gt_wbs_unclose, gt_prps.
+  FIELD-SYMBOLS: <fs_unclose> TYPE ty_wbs_unclose.
 
 *---------------------------------------------------------------------*
-* Build gt_wbs_unclose and collect POSID into gt_prps
+* Check data
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_display.
-
-    CLEAR: ls_unclose, gs_prps.
-
-*-------------------------------------------------------------------*
-* Copy fields
-*-------------------------------------------------------------------*
-    ls_unclose-wbs_level          = ls_display-stufe.
-    ls_unclose-pspid              = ls_display-pspid.
-    ls_unclose-wbs_element_code   = ls_display-posid.
-    ls_unclose-description        = ls_display-post1.
-    ls_unclose-cost_center_level1 = ls_display-kostl.
-    ls_unclose-approved_budget    = ls_display-zapproved_budg.
-    ls_unclose-flag_budget_check  = ls_display-zbudget_check.
-    ls_unclose-bukrs              = ls_display-bukrs.
-    ls_unclose-investment_profile = ls_display-imprf.
-    ls_unclose-prart              = ls_display-prart.
-    ls_unclose-mark               = ls_display-mark.
-    CLEAR: ls_unclose-to_be,
-           ls_unclose-status,
-           ls_unclose-posnr.
-
-*-------------------------------------------------------------------*
-* Collect POSID
-*-------------------------------------------------------------------*
-    gs_prps-posid = ls_display-posid.
-
-    APPEND ls_unclose TO gt_wbs_unclose.
-    APPEND gs_prps   TO gt_prps.
-
-  ENDLOOP.
-
-  IF gt_prps IS INITIAL.
+  IF gt_wbs_unclose IS INITIAL.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Remove duplicate POSID in gt_prps
+* Build POSID range from gt_wbs_unclose
 *---------------------------------------------------------------------*
-  SORT gt_prps BY posid.
-  DELETE ADJACENT DUPLICATES FROM gt_prps COMPARING posid.
-
-*---------------------------------------------------------------------*
-* Get PSPNR and OBJNR from PRPS using POSID in gt_prps
-*---------------------------------------------------------------------*
-  SELECT p~posid,
-         p~pspnr,
-         p~objnr
-    INTO CORRESPONDING FIELDS OF TABLE @lt_prps_db
-    FROM @gt_prps AS g
-    INNER JOIN prps AS p
-      ON p~posid = g~posid.
-
-  SORT lt_prps_db BY posid.
-
-  LOOP AT gt_prps INTO gs_prps.
-    READ TABLE lt_prps_db INTO ls_prps_db
-      WITH KEY posid = gs_prps-posid
-      BINARY SEARCH.
-    IF sy-subrc = 0.
-      gs_prps-pspnr = ls_prps_db-pspnr.
-      gs_prps-objnr = ls_prps_db-objnr.
-      MODIFY gt_prps FROM gs_prps.
+  LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
+      CLEAR ls_posid_range.
+      ls_posid_range-sign   = 'I'.
+      ls_posid_range-option = 'EQ'.
+      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
+      APPEND ls_posid_range TO lt_posid_range.
     ENDIF.
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Get active status text using PRPS-OBJNR = JEST-OBJNR
-*---------------------------------------------------------------------*
-  SELECT j~objnr,
-         t~txt04
-    INTO TABLE @lt_status
-    FROM @gt_prps AS g
-    INNER JOIN jest AS j
-      ON j~objnr = g~objnr
-    INNER JOIN tj02t AS t
-      ON t~istat = j~stat
-     AND t~spras = @sy-langu
-   WHERE j~inact = @space.
-
-  SORT lt_status BY objnr.
+  IF lt_posid_range IS INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
-* Update gt_wbs_unclose with POSNR and STATUS
+* Get PRPS-OBJNR + JEST-STAT + TJ02T-TXT04
+* Active statuses only, text in logon language
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_unclose INTO ls_unclose.
+  SELECT a~posid,
+         a~objnr,
+         b~stat,
+         c~txt04
+    INTO TABLE @lt_prps_stat
+    FROM prps  AS a
+    INNER JOIN jest  AS b
+      ON b~objnr = a~objnr
+    INNER JOIN tj02t AS c
+      ON c~istat = b~stat
+     AND c~spras = @sy-langu
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space.
 
-    CLEAR: gs_prps, ls_status.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
 
-    READ TABLE gt_prps INTO gs_prps
-      WITH KEY posid = ls_unclose-wbs_element_code
-      BINARY SEARCH.
-    IF sy-subrc = 0.
+*---------------------------------------------------------------------*
+* Update gt_wbs_unclose-status
+*---------------------------------------------------------------------*
+  SORT lt_prps_stat BY posid txt04.
 
-      ls_unclose-posnr = gs_prps-pspnr.
+  LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+    CLEAR lv_status.
 
-      READ TABLE lt_status INTO ls_status
-        WITH KEY objnr = gs_prps-objnr
-        BINARY SEARCH.
-      IF sy-subrc = 0.
-        ls_unclose-status = ls_status-txt04.
+    LOOP AT lt_prps_stat INTO ls_prps_stat
+      WHERE posid = <fs_unclose>-wbs_element_code.
+
+      IF lv_status IS INITIAL.
+        lv_status = ls_prps_stat-txt04.
+      ELSE.
+        CONCATENATE lv_status ls_prps_stat-txt04
+          INTO lv_status SEPARATED BY ', '.
       ENDIF.
+    ENDLOOP.
 
-      MODIFY gt_wbs_unclose FROM ls_unclose.
-    ENDIF.
-
+    <fs_unclose>-status = lv_status.
   ENDLOOP.
 
 ENDFORM.
