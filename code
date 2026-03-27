@@ -18,19 +18,27 @@ FORM populate_wbs_unclose.
            txt04 TYPE tj02t-txt04,
          END OF ty_status_u.
 
+  TYPES: ty_t_posid_key TYPE SORTED TABLE OF ty_posid_key
+                          WITH UNIQUE KEY posid,
+         ty_t_prps      TYPE SORTED TABLE OF ty_prps_u
+                          WITH UNIQUE KEY posid,
+         ty_t_status    TYPE SORTED TABLE OF ty_status_u
+                          WITH NON-UNIQUE KEY objnr.
+
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
-  DATA: gt_prps      TYPE STANDARD TABLE OF ty_prps_u,
+  DATA: gt_prps      TYPE ty_t_prps,
         gs_prps      TYPE ty_prps_u,
-        gt_posid_key TYPE STANDARD TABLE OF ty_posid_key,
+        gt_posid_key TYPE ty_t_posid_key,
         gs_posid_key TYPE ty_posid_key,
-        gt_status    TYPE STANDARD TABLE OF ty_status_u,
+        gt_status    TYPE ty_t_status,
         gs_status    TYPE ty_status_u,
         ls_display   TYPE ty_wbs_display,
         ls_unclose   TYPE ty_wbs_unclose.
 
   CLEAR gt_wbs_unclose.
+  CLEAR: gt_prps, gt_posid_key, gt_status.
 
 *---------------------------------------------------------------------*
 * Collect POSID from display table
@@ -39,7 +47,7 @@ FORM populate_wbs_unclose.
     IF ls_display-posid IS NOT INITIAL.
       CLEAR gs_posid_key.
       gs_posid_key-posid = ls_display-posid.
-      APPEND gs_posid_key TO gt_posid_key.
+      INSERT gs_posid_key INTO TABLE gt_posid_key.
     ENDIF.
   ENDLOOP.
 
@@ -47,11 +55,8 @@ FORM populate_wbs_unclose.
     RETURN.
   ENDIF.
 
-  SORT gt_posid_key BY posid.
-  DELETE ADJACENT DUPLICATES FROM gt_posid_key COMPARING posid.
-
 *---------------------------------------------------------------------*
-* Get PRPS mapping
+* Get PRPS mapping (POSID -> PSPNR / OBJNR)
 *---------------------------------------------------------------------*
   SELECT p~posid,
          p~pspnr,
@@ -61,26 +66,24 @@ FORM populate_wbs_unclose.
     INNER JOIN prps AS p
       ON p~posid = k~posid.
 
-  SORT gt_prps BY posid.
-
-*---------------------------------------------------------------------*
-* Get active status text
-*---------------------------------------------------------------------*
-  IF gt_prps IS NOT INITIAL.
-    SELECT DISTINCT
-           j~objnr,
-           t~txt04
-      INTO TABLE @gt_status
-      FROM @gt_prps AS p
-      INNER JOIN jest AS j
-        ON j~objnr = p~objnr
-      INNER JOIN tj02t AS t
-        ON t~istat = j~stat
-       AND t~spras = @sy-langu
-     WHERE j~inact = @space.
-
-    SORT gt_status BY objnr.
+  IF gt_prps IS INITIAL.
+    RETURN.
   ENDIF.
+
+*---------------------------------------------------------------------*
+* Get active status text from JEST + TJ02T
+*---------------------------------------------------------------------*
+  SELECT DISTINCT
+         j~objnr,
+         t~txt04
+    INTO TABLE @gt_status
+    FROM @gt_prps AS p
+    INNER JOIN jest AS j
+      ON j~objnr = p~objnr
+    INNER JOIN tj02t AS t
+      ON t~istat = j~stat
+     AND t~spras = @sy-langu
+   WHERE j~inact = @space.
 
 *---------------------------------------------------------------------*
 * Build gt_wbs_unclose
@@ -100,18 +103,24 @@ FORM populate_wbs_unclose.
     ls_unclose-investment_profile = ls_display-imprf.
     ls_unclose-prart              = ls_display-prart.
     ls_unclose-mark               = ls_display-mark.
-    CLEAR ls_unclose-to_be.
+    CLEAR: ls_unclose-to_be,
+           ls_unclose-status,
+           ls_unclose-posnr.
 
+*-------------------------------------------------------------------*
+* Get PSPNR / OBJNR via POSID
+*-------------------------------------------------------------------*
     READ TABLE gt_prps INTO gs_prps
-      WITH KEY posid = ls_display-posid
-      BINARY SEARCH.
+      WITH KEY posid = ls_display-posid.
     IF sy-subrc = 0.
 
       ls_unclose-posnr = gs_prps-pspnr.
 
+*-----------------------------------------------------------------*
+* Get status text
+*-----------------------------------------------------------------*
       READ TABLE gt_status INTO gs_status
-        WITH KEY objnr = gs_prps-objnr
-        BINARY SEARCH.
+        WITH KEY objnr = gs_prps-objnr.
       IF sy-subrc = 0.
         ls_unclose-status = gs_status-txt04.
       ENDIF.
