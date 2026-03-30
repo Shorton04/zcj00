@@ -1,62 +1,143 @@
-FORM populate_gt_wbs_car_wert2.
+CLASS zcl_a2r_wbs_builder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
 
-  TYPES: BEGIN OF ty_item_map,
-           posid TYPE ps_posid,
-           wert2 TYPE ztb_a2r_wbsitem-wert2,
-           zbudget_check TYPE ztb_a2r_wbsitem-zbudget_check,
-           post1 TYPE ztb_a2r_wbsitem-post1,
-           kostl TYPE ztb_a2r_wbsitem-kostl,
-           imprf TYPE ztb_a2r_wbsitem-imprf,
-           prart TYPE ztb_a2r_wbsitem-prart,
-           bukrs TYPE ztb_a2r_wbsitem-bukrs,
-           werks TYPE ztb_a2r_wbsitem-werks,
-           vkokr TYPE ztb_a2r_wbsitem-vkokr,
-         END OF ty_item_map.
+  PUBLIC SECTION.
 
-  DATA: lt_item_map TYPE HASHED TABLE OF ty_item_map WITH UNIQUE KEY posid,
-        ls_item_map TYPE ty_item_map,
-        ls_item     TYPE ztb_a2r_wbsitem,
-        lv_posid    TYPE ps_posid.
+    TYPES: BEGIN OF ty_wbs_unclose,
+             status              TYPE j_status,
+             to_be               TYPE j_status,
+             wbs_level           TYPE ps_stufe,
+             pspid               TYPE ps_pspid,
+             wbs_element_code    TYPE ps_posid,
+             description         TYPE ps_post1,
+             cost_center_level1  TYPE kostl,
+             posnr               TYPE ps_pspnr,
+             approved_budget     TYPE bpge-wlges,
+             flag_budget_check   TYPE char1,
+             bukrs               TYPE bukrs,
+             investment_profile  TYPE im_profil,
+             prart               TYPE ps_prart,
+             mark                TYPE char1,
+           END OF ty_wbs_unclose,
 
-  FIELD-SYMBOLS: <fs_car> TYPE ztb_a2r_wbsitem,
-                 <fs_map> TYPE ty_item_map.
+           tt_wbs_unclose TYPE STANDARD TABLE OF ty_wbs_unclose
+                          WITH DEFAULT KEY.
 
-  CLEAR lt_item_map.
+    METHODS unclose_wbs_status
+      IMPORTING
+        it_wbs_unclose TYPE tt_wbs_unclose
+      EXPORTING
+        et_return      TYPE bapiret2_t.
 
-  LOOP AT gt_wbs_items INTO ls_item.
-    CLEAR: ls_item_map, lv_posid.
+ENDCLASS.
 
-    lv_posid = ls_item-posid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
 
-    ls_item_map-posid         = lv_posid.
-    ls_item_map-wert2         = ls_item-wert2.
-    ls_item_map-zbudget_check = ls_item-zbudget_check.
-    ls_item_map-post1         = ls_item-post1.
-    ls_item_map-kostl         = ls_item-kostl.
-    ls_item_map-imprf         = ls_item-imprf.
-    ls_item_map-prart         = ls_item-prart.
-    ls_item_map-bukrs         = ls_item-bukrs.
-    ls_item_map-werks         = ls_item-werks.
-    ls_item_map-vkokr         = ls_item-vkokr.
 
-    INSERT ls_item_map INTO TABLE lt_item_map.
-  ENDLOOP.
 
-  LOOP AT gt_wbs_car ASSIGNING <fs_car>.
-    READ TABLE lt_item_map ASSIGNING <fs_map>
-      WITH TABLE KEY posid = <fs_car>-posid.
-    IF sy-subrc = 0.
-      <fs_car>-wert2         = <fs_map>-wert2.
-      <fs_car>-zbudget_check = <fs_map>-zbudget_check.
-      <fs_car>-post1         = <fs_map>-post1.
-      <fs_car>-kostl         = <fs_map>-kostl.
-      <fs_car>-imprf         = <fs_map>-imprf.
-      <fs_car>-prart         = <fs_map>-prart.
-      <fs_car>-bukrs         = <fs_map>-bukrs.
-      <fs_car>-werks         = <fs_map>-werks.
-      <fs_car>-vkokr         = <fs_map>-vkokr.
+CLASS zcl_a2r_wbs_builder IMPLEMENTATION.
+
+  METHOD unclose_wbs_status.
+
+    DATA: lt_return     TYPE bapiret2_t,
+          ls_return     TYPE bapiret2,
+          lt_sys_status TYPE TABLE OF bapi_bus2054_status,
+          ls_sys_status TYPE bapi_bus2054_status,
+          ls_unclose    TYPE ty_wbs_unclose,
+          lv_has_error  TYPE abap_bool.
+
+    CLEAR: et_return, lt_sys_status.
+
+*---------------------------------------------------------------------*
+* Build BAPI input based on current status and target status
+*---------------------------------------------------------------------*
+    LOOP AT it_wbs_unclose INTO ls_unclose
+         WHERE to_be IS NOT INITIAL.
+
+      CLEAR ls_sys_status.
+
+*-------------------------------------------------------------------*
+* CLSD -> TECO
+*-------------------------------------------------------------------*
+      IF ls_unclose-status = 'CLSD'
+         AND ls_unclose-to_be = 'TECO'.
+
+        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+        ls_sys_status-undo_system_status = 'I0046'. " CLSD
+        APPEND ls_sys_status TO lt_sys_status.
+
+*-------------------------------------------------------------------*
+* TECO -> REL
+*-------------------------------------------------------------------*
+      ELSEIF ls_unclose-status = 'TECO'
+         AND ls_unclose-to_be = 'REL'.
+
+        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+        ls_sys_status-undo_system_status = 'I0045'. " TECO
+        APPEND ls_sys_status TO lt_sys_status.
+
+*-------------------------------------------------------------------*
+* CLSD -> REL
+* Standard sequence: undo CLSD then undo TECO
+*-------------------------------------------------------------------*
+      ELSEIF ls_unclose-status = 'CLSD'
+         AND ls_unclose-to_be = 'REL'.
+
+        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+        ls_sys_status-undo_system_status = 'I0046'. " Step 1
+        APPEND ls_sys_status TO lt_sys_status.
+
+        CLEAR ls_sys_status.
+        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+        ls_sys_status-undo_system_status = 'I0045'. " Step 2
+        APPEND ls_sys_status TO lt_sys_status.
+
+      ENDIF.
+
+    ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Nothing to process
+*---------------------------------------------------------------------*
+    IF lt_sys_status IS INITIAL.
+      RETURN.
     ENDIF.
-  ENDLOOP.
 
-ENDFORM.
+*---------------------------------------------------------------------*
+* Call BAPI
+*---------------------------------------------------------------------*
+    CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+      TABLES
+        i_wbs_system_status = lt_sys_status
+        e_result            = lt_return.
+
+    et_return = lt_return.
+
+*---------------------------------------------------------------------*
+* Check errors
+*---------------------------------------------------------------------*
+    CLEAR lv_has_error.
+    LOOP AT lt_return INTO ls_return
+      WHERE type = 'E'
+         OR type = 'A'
+         OR type = 'X'.
+      lv_has_error = abap_true.
+      EXIT.
+    ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Rollback / Commit
+*---------------------------------------------------------------------*
+    IF lv_has_error = abap_true.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = abap_true.
+
+  ENDMETHOD.
+
+ENDCLASS.
