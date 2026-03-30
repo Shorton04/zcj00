@@ -1,101 +1,40 @@
-METHOD unclose_wbs_status.
+CLASS zcl_a2r_wbs_builder DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
 
-  DATA: lt_return     TYPE TABLE OF bapiret2,
-        ls_return     TYPE bapiret2,
-        lt_sys_status TYPE TABLE OF bapi_bus2054_status,
-        ls_sys_status TYPE bapi_bus2054_status,
-        ls_unclose    TYPE ty_wbs_unclose,
-        lv_has_error  TYPE abap_bool.
+  PUBLIC SECTION.
 
-  rv_success = abap_false.
-  CLEAR: lt_sys_status, lt_return, lv_has_error.
+    TYPES: BEGIN OF ty_wbs_unclose,
+             status              TYPE j_status,
+             to_be               TYPE j_status,
+             wbs_level           TYPE ps_stufe,
+             pspid               TYPE ps_pspid,
+             wbs_element_code    TYPE ps_posid,
+             description         TYPE ps_post1,
+             cost_center_level1  TYPE kostl,
+             posnr               TYPE ps_pspnr,
+             approved_budget     TYPE bpge-wlges,
+             flag_budget_check   TYPE char1,
+             bukrs               TYPE bukrs,
+             investment_profile  TYPE im_profil,
+             prart               TYPE ps_prart,
+             mark                TYPE char1,
+           END OF ty_wbs_unclose,
+           tt_wbs_unclose TYPE STANDARD TABLE OF ty_wbs_unclose
+                          WITH DEFAULT KEY.
 
-*---------------------------------------------------------------------*
-* Build BAPI input based on current status and target status
-*---------------------------------------------------------------------*
-  LOOP AT it_wbs_unclose INTO ls_unclose
-       WHERE to_be IS NOT INITIAL.
+    METHODS unclose_wbs_status
+      IMPORTING
+        it_wbs_unclose TYPE tt_wbs_unclose
+      RETURNING
+        VALUE(rv_success) TYPE abap_bool.
 
-    CLEAR ls_sys_status.
+ENDCLASS.
 
-*-------------------------------------------------------------------*
-* CLSD -> TECO
-*-------------------------------------------------------------------*
-    IF ls_unclose-status = 'CLSD'
-       AND ls_unclose-to_be = 'TECO'.
 
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'CLSD'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-*-------------------------------------------------------------------*
-* TECO -> REL
-*-------------------------------------------------------------------*
-    ELSEIF ls_unclose-status = 'TECO'
-       AND ls_unclose-to_be = 'REL'.
-
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'TECO'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-*-------------------------------------------------------------------*
-* CLSD -> REL
-* Standard sequence: CLSD -> TECO -> REL
-*-------------------------------------------------------------------*
-    ELSEIF ls_unclose-status = 'CLSD'
-       AND ls_unclose-to_be = 'REL'.
-
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'CLSD'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-      CLEAR ls_sys_status.
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'TECO'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-    ENDIF.
-
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* Nothing to process
-*---------------------------------------------------------------------*
-  IF lt_sys_status IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Call BAPI
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-    TABLES
-      i_wbs_system_status = lt_sys_status
-      e_result            = lt_return.
-
-*---------------------------------------------------------------------*
-* Check errors
-*---------------------------------------------------------------------*
-  LOOP AT lt_return INTO ls_return
-    WHERE type = 'E'
-       OR type = 'A'
-       OR type = 'X'.
-    lv_has_error = abap_true.
-    EXIT.
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* Rollback / Commit
-*---------------------------------------------------------------------*
-  IF lv_has_error = abap_true.
-    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = abap_true.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
+METHODS unclose_wbs_status
+  IMPORTING
+    it_wbs_unclose TYPE tt_wbs_unclose
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
