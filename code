@@ -25,119 +25,118 @@ CLASS zcl_a2r_wbs_builder DEFINITION
            tt_wbs_unclose TYPE STANDARD TABLE OF ty_wbs_unclose
                           WITH DEFAULT KEY.
 
-    METHODS unclose_wbs_status
-      IMPORTING
-        it_wbs_unclose TYPE tt_wbs_unclose
-      EXPORTING
-        et_return      TYPE bapiret2_t.
+    
 
-ENDCLASS.
-
-
+METHODS unclose_wbs_status
+  IMPORTING
+    it_wbs_unclose TYPE tt_wbs_unclose
+  RETURNING
+    VALUE(rv_success) TYPE abap_bool.
 
 
-CLASS zcl_a2r_wbs_builder IMPLEMENTATION.
 
-  METHOD unclose_wbs_status.
 
-    DATA: lt_return     TYPE bapiret2_t,
-          ls_return     TYPE bapiret2,
-          lt_sys_status TYPE TABLE OF bapi_bus2054_status,
-          ls_sys_status TYPE bapi_bus2054_status,
-          ls_unclose    TYPE ty_wbs_unclose,
-          lv_has_error  TYPE abap_bool.
+METHOD unclose_wbs_status.
 
-    CLEAR: et_return, lt_sys_status.
+  DATA: lt_return     TYPE TABLE OF bapiret2,
+        ls_return     TYPE bapiret2,
+        lt_sys_status TYPE TABLE OF bapi_bus2054_status,
+        ls_sys_status TYPE bapi_bus2054_status,
+        ls_unclose    TYPE ty_wbs_unclose,
+        lv_has_error  TYPE abap_bool.
+
+  rv_success = abap_false.
+
+  CLEAR lt_sys_status.
 
 *---------------------------------------------------------------------*
 * Build BAPI input based on current status and target status
 *---------------------------------------------------------------------*
-    LOOP AT it_wbs_unclose INTO ls_unclose
-         WHERE to_be IS NOT INITIAL.
+  LOOP AT it_wbs_unclose INTO ls_unclose
+       WHERE to_be IS NOT INITIAL.
 
-      CLEAR ls_sys_status.
+    CLEAR ls_sys_status.
 
 *-------------------------------------------------------------------*
 * CLSD -> TECO
 *-------------------------------------------------------------------*
-      IF ls_unclose-status = 'CLSD'
-         AND ls_unclose-to_be = 'TECO'.
+    IF ls_unclose-status = 'CLSD'
+       AND ls_unclose-to_be = 'TECO'.
 
-        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-        ls_sys_status-undo_system_status = 'I0046'. " CLSD
-        APPEND ls_sys_status TO lt_sys_status.
+      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+      ls_sys_status-undo_system_status = 'I0046'. " CLSD
+      APPEND ls_sys_status TO lt_sys_status.
 
 *-------------------------------------------------------------------*
 * TECO -> REL
 *-------------------------------------------------------------------*
-      ELSEIF ls_unclose-status = 'TECO'
-         AND ls_unclose-to_be = 'REL'.
+    ELSEIF ls_unclose-status = 'TECO'
+       AND ls_unclose-to_be = 'REL'.
 
-        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-        ls_sys_status-undo_system_status = 'I0045'. " TECO
-        APPEND ls_sys_status TO lt_sys_status.
+      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+      ls_sys_status-undo_system_status = 'I0045'. " TECO
+      APPEND ls_sys_status TO lt_sys_status.
 
 *-------------------------------------------------------------------*
 * CLSD -> REL
-* Standard sequence: undo CLSD then undo TECO
+* Standard sequence: CLSD -> TECO -> REL
 *-------------------------------------------------------------------*
-      ELSEIF ls_unclose-status = 'CLSD'
-         AND ls_unclose-to_be = 'REL'.
+    ELSEIF ls_unclose-status = 'CLSD'
+       AND ls_unclose-to_be = 'REL'.
 
-        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-        ls_sys_status-undo_system_status = 'I0046'. " Step 1
-        APPEND ls_sys_status TO lt_sys_status.
+      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+      ls_sys_status-undo_system_status = 'I0046'. " Step 1
+      APPEND ls_sys_status TO lt_sys_status.
 
-        CLEAR ls_sys_status.
-        ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-        ls_sys_status-undo_system_status = 'I0045'. " Step 2
-        APPEND ls_sys_status TO lt_sys_status.
+      CLEAR ls_sys_status.
+      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
+      ls_sys_status-undo_system_status = 'I0045'. " Step 2
+      APPEND ls_sys_status TO lt_sys_status.
 
-      ENDIF.
+    ENDIF.
 
-    ENDLOOP.
+  ENDLOOP.
 
 *---------------------------------------------------------------------*
 * Nothing to process
 *---------------------------------------------------------------------*
-    IF lt_sys_status IS INITIAL.
-      RETURN.
-    ENDIF.
+  IF lt_sys_status IS INITIAL.
+    RETURN.
+  ENDIF.
 
 *---------------------------------------------------------------------*
 * Call BAPI
 *---------------------------------------------------------------------*
-    CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-      TABLES
-        i_wbs_system_status = lt_sys_status
-        e_result            = lt_return.
-
-    et_return = lt_return.
+  CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
+    TABLES
+      i_wbs_system_status = lt_sys_status
+      e_result            = lt_return.
 
 *---------------------------------------------------------------------*
 * Check errors
 *---------------------------------------------------------------------*
-    CLEAR lv_has_error.
-    LOOP AT lt_return INTO ls_return
-      WHERE type = 'E'
-         OR type = 'A'
-         OR type = 'X'.
-      lv_has_error = abap_true.
-      EXIT.
-    ENDLOOP.
+  CLEAR lv_has_error.
+
+  LOOP AT lt_return INTO ls_return
+    WHERE type = 'E'
+       OR type = 'A'
+       OR type = 'X'.
+    lv_has_error = abap_true.
+    EXIT.
+  ENDLOOP.
 
 *---------------------------------------------------------------------*
 * Rollback / Commit
 *---------------------------------------------------------------------*
-    IF lv_has_error = abap_true.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      RETURN.
-    ENDIF.
+  IF lv_has_error = abap_true.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
 
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = abap_true.
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = abap_true.
 
-  ENDMETHOD.
+  rv_success = abap_true.
 
-ENDCLASS.
+ENDMETHOD.
