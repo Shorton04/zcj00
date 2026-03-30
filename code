@@ -1,41 +1,3 @@
-CLASS zcl_a2r_wbs_builder DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    TYPES: BEGIN OF ty_wbs_unclose,
-             status              TYPE j_status,
-             to_be               TYPE j_status,
-             wbs_level           TYPE ps_stufe,
-             pspid               TYPE ps_pspid,
-             wbs_element_code    TYPE ps_posid,
-             description         TYPE ps_post1,
-             cost_center_level1  TYPE kostl,
-             posnr               TYPE ps_pspnr,
-             approved_budget     TYPE bpge-wlges,
-             flag_budget_check   TYPE char1,
-             bukrs               TYPE bukrs,
-             investment_profile  TYPE im_profil,
-             prart               TYPE ps_prart,
-             mark                TYPE char1,
-           END OF ty_wbs_unclose,
-
-           tt_wbs_unclose TYPE STANDARD TABLE OF ty_wbs_unclose
-                          WITH DEFAULT KEY.
-
-    
-
-METHODS unclose_wbs_status
-  IMPORTING
-    it_wbs_unclose TYPE tt_wbs_unclose
-  RETURNING
-    VALUE(rv_success) TYPE abap_bool.
-
-
-
-
 METHOD unclose_wbs_status.
 
   DATA: lt_return     TYPE TABLE OF bapiret2,
@@ -46,8 +8,7 @@ METHOD unclose_wbs_status.
         lv_has_error  TYPE abap_bool.
 
   rv_success = abap_false.
-
-  CLEAR lt_sys_status.
+  CLEAR: lt_sys_status, lt_return, lv_has_error.
 
 *---------------------------------------------------------------------*
 * Build BAPI input based on current status and target status
@@ -64,7 +25,7 @@ METHOD unclose_wbs_status.
        AND ls_unclose-to_be = 'TECO'.
 
       ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'I0046'. " CLSD
+      ls_sys_status-undo_system_status = 'CLSD'.
       APPEND ls_sys_status TO lt_sys_status.
 
 *-------------------------------------------------------------------*
@@ -74,7 +35,7 @@ METHOD unclose_wbs_status.
        AND ls_unclose-to_be = 'REL'.
 
       ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'I0045'. " TECO
+      ls_sys_status-undo_system_status = 'TECO'.
       APPEND ls_sys_status TO lt_sys_status.
 
 *-------------------------------------------------------------------*
@@ -85,12 +46,12 @@ METHOD unclose_wbs_status.
        AND ls_unclose-to_be = 'REL'.
 
       ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'I0046'. " Step 1
+      ls_sys_status-undo_system_status = 'CLSD'.
       APPEND ls_sys_status TO lt_sys_status.
 
       CLEAR ls_sys_status.
       ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'I0045'. " Step 2
+      ls_sys_status-undo_system_status = 'TECO'.
       APPEND ls_sys_status TO lt_sys_status.
 
     ENDIF.
@@ -115,8 +76,6 @@ METHOD unclose_wbs_status.
 *---------------------------------------------------------------------*
 * Check errors
 *---------------------------------------------------------------------*
-  CLEAR lv_has_error.
-
   LOOP AT lt_return INTO ls_return
     WHERE type = 'E'
        OR type = 'A'
