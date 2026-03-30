@@ -1,147 +1,28 @@
-METHOD unclose_wbs_status.
+FORM map_unclose_status_to_items.
 
-  DATA: lt_return_step1 TYPE TABLE OF bapiret2,
-        lt_return_step2 TYPE TABLE OF bapiret2,
-        lt_precommit    TYPE TABLE OF bapiret2,
-        ls_return       TYPE bapiret2,
-        lt_sys_status   TYPE TABLE OF bapi_wbs_mnt_system_status,
-        ls_sys_status   TYPE bapi_wbs_mnt_system_status,
-        ls_unclose      TYPE ty_wbs_unclose,
-        lv_has_error    TYPE abap_bool.
+  DATA: ls_unclose TYPE ty_wbs_unclose,
+        lv_posid   TYPE ps_posid.
 
-  rv_success = abap_false.
+  FIELD-SYMBOLS: <fs_item> TYPE ztb_a2r_wbsitem.
 
-*---------------------------------------------------------------------*
-* Pass 1:
-* - CLSD -> TECO
-* - TECO -> REL
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
+  IF gt_wbs_unclose IS INITIAL
+     OR gt_wbs_items   IS INITIAL.
+    RETURN.
+  ENDIF.
 
-  CLEAR: lt_sys_status, lt_return_step1, lt_precommit, lv_has_error.
-
-  LOOP AT it_wbs_unclose INTO ls_unclose
+  LOOP AT gt_wbs_unclose INTO ls_unclose
        WHERE to_be IS NOT INITIAL.
 
-    CLEAR ls_sys_status.
+    lv_posid = ls_unclose-wbs_element_code.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
 
-*-------------------------------------------------------------------*
-* CLSD -> TECO
-*-------------------------------------------------------------------*
-    IF ls_unclose-status = 'CLSD'
-       AND ls_unclose-to_be = 'TECO'.
+    READ TABLE gt_wbs_items ASSIGNING <fs_item>
+      WITH KEY posid = lv_posid.
 
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'CLSD'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-*-------------------------------------------------------------------*
-* TECO -> REL
-*-------------------------------------------------------------------*
-    ELSEIF ls_unclose-status = 'TECO'
-       AND ls_unclose-to_be = 'REL'.
-
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'TECO'.
-      APPEND ls_sys_status TO lt_sys_status.
-
-*-------------------------------------------------------------------*
-* CLSD -> REL
-* Step 1 only: CLSD -> TECO
-*-------------------------------------------------------------------*
-    ELSEIF ls_unclose-status = 'CLSD'
-       AND ls_unclose-to_be = 'REL'.
-
-      ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-      ls_sys_status-undo_system_status = 'CLSD'.
-      APPEND ls_sys_status TO lt_sys_status.
-
+    IF sy-subrc = 0.
+      <fs_item>-zstat_tobe = ls_unclose-to_be.
     ENDIF.
 
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Execute Pass 1 if needed
-*---------------------------------------------------------------------*
-  IF lt_sys_status IS NOT INITIAL.
-
-    CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-      TABLES
-        i_wbs_system_status = lt_sys_status
-        e_result            = lt_return_step1.
-
-    LOOP AT lt_return_step1 INTO ls_return WHERE type CA 'AEX'.
-      rv_success = abap_false.
-      RETURN.
-    ENDLOOP.
-
-    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-      TABLES
-        et_return = lt_precommit.
-
-    LOOP AT lt_precommit INTO ls_return WHERE type CA 'AEX'.
-      rv_success = abap_false.
-      RETURN.
-    ENDLOOP.
-
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
-
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Pass 2:
-* only for original CLSD -> REL
-* after commit of pass 1, undo TECO
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
-
-  CLEAR: lt_sys_status, lt_return_step2, lt_precommit, lv_has_error.
-
-  LOOP AT it_wbs_unclose INTO ls_unclose
-       WHERE to_be = 'REL'
-         AND status = 'CLSD'.
-
-    CLEAR ls_sys_status.
-    ls_sys_status-wbs_element        = ls_unclose-wbs_element_code.
-    ls_sys_status-undo_system_status = 'TECO'.
-    APPEND ls_sys_status TO lt_sys_status.
-
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* Execute Pass 2 if needed
-*---------------------------------------------------------------------*
-  IF lt_sys_status IS NOT INITIAL.
-
-    CALL FUNCTION 'BAPI_BUS2054_SET_STATUS'
-      TABLES
-        i_wbs_system_status = lt_sys_status
-        e_result            = lt_return_step2.
-
-    LOOP AT lt_return_step2 INTO ls_return WHERE type CA 'AEX'.
-      rv_success = abap_false.
-      RETURN.
-    ENDLOOP.
-
-    CLEAR lt_precommit.
-
-    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
-      TABLES
-        et_return = lt_precommit.
-
-    LOOP AT lt_precommit INTO ls_return WHERE type CA 'AEX'.
-      rv_success = abap_false.
-      RETURN.
-    ENDLOOP.
-
-    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-      EXPORTING
-        wait = 'X'.
-
-  ENDIF.
-
-  rv_success = abap_true.
-
-ENDMETHOD.
+ENDFORM.
