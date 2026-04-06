@@ -18,22 +18,25 @@ FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
-  DATA: lv_pspnr       TYPE proj-pspnr,
-        lv_objnr_proj  TYPE proj-objnr,
-        lv_posid       TYPE prps-posid,
-        ls_display     TYPE ty_wbs_display,
-        lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
-        ls_posid_range TYPE ty_posid_range,
-        lt_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat,
-        ls_wbs_stat    TYPE ty_wbs_stat.
+  DATA: lv_pspnr        TYPE proj-pspnr,
+        lv_posid        TYPE prps-posid,
+        ls_display      TYPE ty_wbs_display,
+        ls_posid_range  TYPE ty_posid_range,
+        ls_wbs_stat     TYPE ty_wbs_stat,
+        lt_posid_range  TYPE STANDARD TABLE OF ty_posid_range,
+        lt_wbs_stat     TYPE STANDARD TABLE OF ty_wbs_stat,
+        lv_total_wbs    TYPE i,
+        lv_closed_wbs   TYPE i.
 
 *---------------------------------------------------------------------*
 * Init
 *---------------------------------------------------------------------*
-  CLEAR cv_error.
+  CLEAR: cv_error,
+         lv_total_wbs,
+         lv_closed_wbs.
 
 *---------------------------------------------------------------------*
-* Validate Project status from PROJ
+* Validate Project Definition
 *---------------------------------------------------------------------*
   lv_pspnr = gs_header-pspnr.
 
@@ -43,47 +46,24 @@ FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
     RETURN.
   ENDIF.
 
-*  SELECT SINGLE objnr
-*    INTO @lv_objnr_proj
-*    FROM proj
-*   WHERE pspnr = @lv_pspnr.
-*
-*  IF sy-subrc <> 0 OR lv_objnr_proj IS INITIAL.
-*    MESSAGE e000(zmsg_a2r) WITH 'Project not found in PROJ'(v22).
-*    cv_error = gc_x.
-*    RETURN.
-*  ENDIF.
-*
-*  SELECT SINGLE stat
-*    INTO @DATA(lv_proj_stat)
-*    FROM jest
-*   WHERE objnr = @lv_objnr_proj
-*     AND inact = @space
-*     AND stat  IN ( 'I0045', 'I0046' ).
-*
-*  IF sy-subrc <> 0.
-*    MESSAGE e000(zmsg_a2r)
-*      WITH 'Project and WBS are in Released status. Re-open not needed.'(v20).
-*    cv_error = gc_x.
-*    RETURN.
-*  ENDIF.
-
 *---------------------------------------------------------------------*
 * Build WBS POSID range from gt_wbs_display
 *---------------------------------------------------------------------*
   LOOP AT gt_wbs_display INTO ls_display.
-    IF ls_display-posid IS NOT INITIAL.
-
-      lv_posid = ls_display-posid.
-      REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
-
-      CLEAR ls_posid_range.
-      ls_posid_range-sign   = 'I'.
-      ls_posid_range-option = 'EQ'.
-      ls_posid_range-low    = lv_posid.
-      APPEND ls_posid_range TO lt_posid_range.
-
+    IF ls_display-posid IS INITIAL.
+      CONTINUE.
     ENDIF.
+
+    lv_posid = ls_display-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
+    CLEAR ls_posid_range.
+    ls_posid_range-sign   = 'I'.
+    ls_posid_range-option = 'EQ'.
+    ls_posid_range-low    = lv_posid.
+    APPEND ls_posid_range TO lt_posid_range.
+
+    ADD 1 TO lv_total_wbs.
   ENDLOOP.
 
   IF lt_posid_range IS INITIAL.
@@ -91,7 +71,13 @@ FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Get WBS statuses that are TECO / CLSD only
+* Remove duplicate POSID entries
+*---------------------------------------------------------------------*
+  SORT lt_posid_range BY low.
+  DELETE ADJACENT DUPLICATES FROM lt_posid_range COMPARING low.
+
+*---------------------------------------------------------------------*
+* Get active WBS statuses TECO / CLSD only
 *---------------------------------------------------------------------*
   SELECT a~posid,
          b~stat
@@ -103,8 +89,11 @@ FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
      AND b~inact = @space
      AND b~stat  IN ( 'I0045', 'I0046' ).
 
+  SORT lt_wbs_stat BY posid stat.
+  DELETE ADJACENT DUPLICATES FROM lt_wbs_stat COMPARING posid stat.
+
 *---------------------------------------------------------------------*
-* Validate every WBS in gt_wbs_display
+* Count how many selected WBS are already TECO / CLSD
 *---------------------------------------------------------------------*
   LOOP AT gt_wbs_display INTO ls_display.
     IF ls_display-posid IS INITIAL.
@@ -116,13 +105,23 @@ FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
 
     READ TABLE lt_wbs_stat INTO ls_wbs_stat
       WITH KEY posid = lv_posid.
-
-    IF sy-subrc <> 0.
-      MESSAGE e000(zmsg_a2r)
-        WITH 'WBS are in Released status. Re-open not needed.'(v20).
-      cv_error = gc_x.
-      RETURN.
+    IF sy-subrc = 0.
+      ADD 1 TO lv_closed_wbs.
     ENDIF.
   ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Validation Result
+* Pass if partially TECO/CLSD exists
+* Error only if all selected WBS are still Released/open
+*---------------------------------------------------------------------*
+  IF lv_closed_wbs = 0.
+    MESSAGE e000(zmsg_a2r)
+      WITH 'All selected WBS are still in Released status. Unclose not needed.'(v20).
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  CLEAR cv_error.
 
 ENDFORM.
