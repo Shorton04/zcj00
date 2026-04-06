@@ -1,151 +1,127 @@
-FORM reflect_up_status_tc.
+FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
 
-  TYPES: BEGIN OF ty_prps_map,
+*---------------------------------------------------------------------*
+* Local Types
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_posid_range,
+           sign   TYPE c LENGTH 1,
+           option TYPE c LENGTH 2,
+           low    TYPE prps-posid,
+           high   TYPE prps-posid,
+         END OF ty_posid_range.
+
+  TYPES: BEGIN OF ty_wbs_stat,
            posid TYPE prps-posid,
-           pspnr TYPE prps-pspnr,
-         END OF ty_prps_map.
-
-  TYPES: BEGIN OF ty_prhi_map,
-           posnr TYPE prhi-posnr,
-           up    TYPE prhi-up,
-           down  TYPE prhi-down,
-           left  TYPE prhi-left,
-           right TYPE prhi-right,
-         END OF ty_prhi_map.
-
-  TYPES: BEGIN OF ty_node,
-           tabix        TYPE sy-tabix,
-           posid        TYPE ty_wbs_unclose-wbs_element_code,
-           pspnr        TYPE prps-pspnr,
-           parent_pspnr TYPE prhi-up,
-           stufe        TYPE ty_wbs_unclose-wbs_level,
-           to_be        TYPE ty_wbs_unclose-to_be,
-         END OF ty_node.
-
-  DATA: lt_prps_map TYPE HASHED TABLE OF ty_prps_map
-                    WITH UNIQUE KEY posid,
-        lt_prhi_map TYPE HASHED TABLE OF ty_prhi_map
-                    WITH UNIQUE KEY posnr,
-        lt_nodes    TYPE STANDARD TABLE OF ty_node,
-        ls_node     TYPE ty_node,
-        ls_prps     TYPE ty_prps_map,
-        ls_prhi     TYPE ty_prhi_map.
-
-  DATA: lv_has_child TYPE abap_bool,
-        lv_has_rel   TYPE abap_bool,
-        lv_has_teco  TYPE abap_bool.
-
-  FIELD-SYMBOLS:
-    <wa>     TYPE ty_wbs_unclose,
-    <node>   TYPE ty_node,
-    <child>  TYPE ty_node,
-    <wa_upd> TYPE ty_wbs_unclose.
+           stat  TYPE jest-stat,
+         END OF ty_wbs_stat.
 
 *---------------------------------------------------------------------*
-* 1. Check data
+* Data
 *---------------------------------------------------------------------*
-  IF gt_wbs_unclose IS INITIAL.
+  DATA: lv_pspnr       TYPE proj-pspnr,
+        lv_objnr_proj  TYPE proj-objnr,
+        lv_posid       TYPE prps-posid,
+        ls_display     TYPE ty_wbs_display,
+        lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        ls_posid_range TYPE ty_posid_range,
+        lt_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat,
+        ls_wbs_stat    TYPE ty_wbs_stat.
+
+*---------------------------------------------------------------------*
+* Init
+*---------------------------------------------------------------------*
+  CLEAR cv_error.
+
+*---------------------------------------------------------------------*
+* Validate Project status from PROJ
+*---------------------------------------------------------------------*
+  lv_pspnr = gs_header-pspnr.
+
+  IF lv_pspnr IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Project Definition is required'(v21).
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+*  SELECT SINGLE objnr
+*    INTO @lv_objnr_proj
+*    FROM proj
+*   WHERE pspnr = @lv_pspnr.
+*
+*  IF sy-subrc <> 0 OR lv_objnr_proj IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Project not found in PROJ'(v22).
+*    cv_error = gc_x.
+*    RETURN.
+*  ENDIF.
+*
+*  SELECT SINGLE stat
+*    INTO @DATA(lv_proj_stat)
+*    FROM jest
+*   WHERE objnr = @lv_objnr_proj
+*     AND inact = @space
+*     AND stat  IN ( 'I0045', 'I0046' ).
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE e000(zmsg_a2r)
+*      WITH 'Project and WBS are in Released status. Re-open not needed.'(v20).
+*    cv_error = gc_x.
+*    RETURN.
+*  ENDIF.
+
+*---------------------------------------------------------------------*
+* Build WBS POSID range from gt_wbs_display
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS NOT INITIAL.
+
+      lv_posid = ls_display-posid.
+      REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
+      CLEAR ls_posid_range.
+      ls_posid_range-sign   = 'I'.
+      ls_posid_range-option = 'EQ'.
+      ls_posid_range-low    = lv_posid.
+      APPEND ls_posid_range TO lt_posid_range.
+
+    ENDIF.
+  ENDLOOP.
+
+  IF lt_posid_range IS INITIAL.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2. Build POSID -> PSPNR mapping from PRPS
+* Get WBS statuses that are TECO / CLSD only
 *---------------------------------------------------------------------*
-  SELECT posid, pspnr
-    FROM prps
-    INTO TABLE @DATA(lt_prps_raw)
-    FOR ALL ENTRIES IN @gt_wbs_unclose
-    WHERE posid = @gt_wbs_unclose-wbs_element_code.
-
-  IF sy-subrc = 0.
-    lt_prps_map = CORRESPONDING #( lt_prps_raw ).
-  ENDIF.
+  SELECT a~posid,
+         b~stat
+    INTO TABLE @lt_wbs_stat
+    FROM prps AS a
+    INNER JOIN jest AS b
+      ON b~objnr = a~objnr
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space
+     AND b~stat  IN ( 'I0045', 'I0046' ).
 
 *---------------------------------------------------------------------*
-* 3. Build node table from current screen data
+* Validate every WBS in gt_wbs_display
 *---------------------------------------------------------------------*
-  LOOP AT gt_wbs_unclose ASSIGNING <wa>.
-    CLEAR ls_node.
-
-    ls_node-tabix = sy-tabix.
-    ls_node-posid = <wa>-wbs_element_code.
-    ls_node-stufe = <wa>-wbs_level.
-    ls_node-to_be = <wa>-to_be.
-
-    READ TABLE lt_prps_map INTO ls_prps
-      WITH TABLE KEY posid = <wa>-wbs_element_code.
-    IF sy-subrc = 0.
-      ls_node-pspnr = ls_prps-pspnr.
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS INITIAL.
+      CONTINUE.
     ENDIF.
 
-    APPEND ls_node TO lt_nodes.
-  ENDLOOP.
+    lv_posid = ls_display-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
 
-*---------------------------------------------------------------------*
-* 4. Read PRHI parent relation
-*---------------------------------------------------------------------*
-  IF lt_nodes IS NOT INITIAL.
-    SELECT posnr, up, down, left, right
-      FROM prhi
-      INTO TABLE @DATA(lt_prhi_raw)
-      FOR ALL ENTRIES IN @lt_nodes
-      WHERE posnr = @lt_nodes-pspnr.
-  ENDIF.
+    READ TABLE lt_wbs_stat INTO ls_wbs_stat
+      WITH KEY posid = lv_posid.
 
-  IF sy-subrc = 0.
-    lt_prhi_map = CORRESPONDING #( lt_prhi_raw ).
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 5. Fill parent PSPNR from PRHI-UP
-*---------------------------------------------------------------------*
-  LOOP AT lt_nodes ASSIGNING <node>.
-    CLEAR ls_prhi.
-    READ TABLE lt_prhi_map INTO ls_prhi
-      WITH TABLE KEY posnr = <node>-pspnr.
-    IF sy-subrc = 0.
-      <node>-parent_pspnr = ls_prhi-up.
-    ENDIF.
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* 6. Bottom-up reflect using direct children only
-*---------------------------------------------------------------------*
-  SORT lt_nodes BY stufe DESCENDING.
-
-  LOOP AT lt_nodes ASSIGNING <node>.
-    CLEAR: lv_has_child, lv_has_rel, lv_has_teco.
-
-    LOOP AT lt_nodes ASSIGNING <child>
-         WHERE parent_pspnr = <node>-pspnr.
-
-      lv_has_child = abap_true.
-
-      IF <child>-to_be = 'REL'.
-        lv_has_rel = abap_true.
-      ELSEIF <child>-to_be = 'TECO'.
-        lv_has_teco = abap_true.
-      ENDIF.
-
-    ENDLOOP.
-
-    IF lv_has_child = abap_true.
-      IF lv_has_rel = abap_true.
-        <node>-to_be = 'REL'.
-      ELSEIF lv_has_teco = abap_true.
-        <node>-to_be = 'TECO'.
-      ENDIF.
-    ENDIF.
-
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* 7. Write back result to screen table
-*---------------------------------------------------------------------*
-  LOOP AT lt_nodes ASSIGNING <node>.
-    READ TABLE gt_wbs_unclose ASSIGNING <wa_upd> INDEX <node>-tabix.
-    IF sy-subrc = 0.
-      <wa_upd>-to_be = <node>-to_be.
+    IF sy-subrc <> 0.
+      MESSAGE e000(zmsg_a2r)
+        WITH 'WBS are in Released status. Re-open not needed.'(v20).
+      cv_error = gc_x.
+      RETURN.
     ENDIF.
   ENDLOOP.
 
