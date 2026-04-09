@@ -1,212 +1,189 @@
-FORM total_up_wbs_tc.
-  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
-        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
-        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
-        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
-        lv_index4 TYPE sy-index,
-        lv_index3 TYPE sy-index,
-        lv_index2 TYPE sy-index.
+  METHOD build_phris_hierarchy.
 
-  DATA: lv_pspid_len4 TYPE numc2.
-  DATA: lv_pspid_len3 TYPE numc2.
-  DATA: lv_pspid_len2 TYPE numc2.
-  DATA: lv_pspid_len1 TYPE numc2.
+    TYPES: BEGIN OF ty_prhis_raw,
+             posnr TYPE ps_pspnr,
+             psphi TYPE ps_pspnr,
+             up    TYPE ps_pspnr,
+             down  TYPE ps_pspnr,
+             left  TYPE ps_pspnr,
+             right TYPE ps_pspnr,
+           END OF ty_prhis_raw.
 
-  DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
+    TYPES: BEGIN OF ty_prpss_raw,
+             pspnr TYPE ps_pspnr,
+             posid TYPE ps_posid,
+             stufe TYPE ps_stufe,
+           END OF ty_prpss_raw.
 
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<fs_wbs_display>).
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
-      EXPORTING
-        input  = <fs_wbs_display>-posid
-      IMPORTING
-        output = <fs_wbs_display>-posid.
-  ENDLOOP.
+    DATA: lv_psphi         TYPE ps_pspnr,
+          lv_template_root TYPE ps_posid,
+          lv_target_posid  TYPE ps_posid,
+          lv_target_up     TYPE ps_posid,
+          lv_target_left   TYPE ps_posid,
+          lv_pspid_car_int TYPE ztb_a2r_wbshdr-pspid.
 
-  "Auto-populate blank budget = 0 (so totals still update)
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
-    IF <wa0>-zapproved_budg IS INITIAL.
-      <wa0>-zapproved_budg = 0.
+    DATA: lt_prhis TYPE STANDARD TABLE OF ty_prhis_raw,
+          ls_prhis TYPE ty_prhis_raw,
+          lt_prpss TYPE STANDARD TABLE OF ty_prpss_raw,
+          ls_prpss TYPE ty_prpss_raw.
+
+    DATA: lt_prpss_h TYPE HASHED TABLE OF ty_prpss_raw WITH UNIQUE KEY pspnr,
+          ls_phris   TYPE zsa2r_wbshier.
+
+    FIELD-SYMBOLS: <fs_prpss> TYPE ty_prpss_raw.
+
+    CLEAR et_phris_hier.
+
+    IF iv_pspid_car IS INITIAL OR iv_esr_root IS INITIAL OR it_wbs_car IS INITIAL.
+      RETURN.
     ENDIF.
-  ENDLOOP.
 
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
-    IF <wa>-stufe = '5'.
-      APPEND <wa> TO lt_table5.
+*--------------------------------------------------------------------*
+* 1. Get template project internal number
+*--------------------------------------------------------------------*
+    SELECT SINGLE pspnr
+      INTO @lv_psphi
+      FROM projs
+      WHERE pspid = @iv_pspid_car.
 
-    ELSEIF <wa>-stufe = '4'.
-      APPEND <wa> TO lt_table4.
-      DATA(lv_pspid_new4) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new4.
-      lv_pspid_len4 = strlen( lv_pspid_new4 ).
+    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING
+          input  = iv_pspid_car
+        IMPORTING
+          output = lv_pspid_car_int.
 
-    ELSEIF <wa>-stufe = '3'.
-      APPEND <wa> TO lt_table3.
-      DATA(lv_pspid_new3) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new3.
-      lv_pspid_len3 = strlen( lv_pspid_new3 ).
-
-    ELSEIF <wa>-stufe = '2'.
-      APPEND <wa> TO lt_table2.
-      DATA(lv_pspid_new2) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new2.
-      lv_pspid_len2 = strlen( lv_pspid_new2 ).
-
-    ELSEIF <wa>-stufe = '1'.
-      APPEND <wa> TO lt_table1.
-      DATA(lv_pspid_new1) = <wa>-posid.
-      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
-        CHANGING
-          c_value = lv_pspid_new1.
-      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+      SELECT SINGLE pspnr
+        INTO @lv_psphi
+        FROM projs
+        WHERE pspid = @lv_pspid_car_int.
     ENDIF.
-  ENDLOOP.
 
-* Build the Total for Level4.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
-    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
-        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum4 IS NOT INITIAL.
-      <wa4>-zapproved_budg = lv_sum4.
+    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
+      RETURN.
     ENDIF.
-    lv_index4 = lv_index4 + 1.
-    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
-    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
-    CLEAR: lv_sum4.
-  ENDLOOP.
 
-* Build the Total for Level3.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
-    LOOP AT lt_table4 ASSIGNING <wa4>.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
-        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum3 IS NOT INITIAL.
-      <wa3>-zapproved_budg = lv_sum3.
+*--------------------------------------------------------------------*
+* 2. Read PRHIS edges for this standard template
+*--------------------------------------------------------------------*
+    SELECT posnr,
+           psphi,
+           up,
+           down,
+           left,
+           right
+      FROM prhis
+      INTO TABLE @lt_prhis
+      WHERE psphi = @lv_psphi.
+
+    IF lt_prhis IS INITIAL.
+      RETURN.
     ENDIF.
-    lv_index3 = lv_index3 + 1.
-    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
-    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
-    CLEAR: lv_sum3.
-  ENDLOOP.
 
-* Build the Total for Level2.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
-    LOOP AT lt_table3 ASSIGNING <wa3>.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
-        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
+*--------------------------------------------------------------------*
+* 3. Read PRPSS nodes using PRHIS-POSNR / UP / LEFT references
+*--------------------------------------------------------------------*
+    SELECT pspnr,
+           posid,
+           stufe
+      FROM prpss
+      INTO TABLE @lt_prpss
+      FOR ALL ENTRIES IN @lt_prhis
+      WHERE pspnr = @lt_prhis-posnr
+         OR pspnr = @lt_prhis-up
+         OR pspnr = @lt_prhis-left
+         OR pspnr = @lt_prhis-down
+         OR pspnr = @lt_prhis-right.
 
-    IF lv_sum2 IS NOT INITIAL.
-      <wa2>-zapproved_budg = lv_sum2.
+    IF lt_prpss IS INITIAL.
+      RETURN.
     ENDIF.
-    lv_index2 = lv_index2 + 1.
-    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
-    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
-    CLEAR: lv_sum2.
-  ENDLOOP.
 
-* Build the Total for Level1.
-  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
-    LOOP AT lt_table2 ASSIGNING <wa2>.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
-        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
-      ENDIF.
-    ENDLOOP.
-    IF lv_sum1 IS NOT INITIAL.
-      <wa1>-zapproved_budg = lv_sum1.
-    ENDIF.
-    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
-    CLEAR: lv_sum1.
-  ENDLOOP.
+    lt_prpss_h = lt_prpss.
 
-*---------------------------------------------------------------------*
-* Separate logic for zbudget_check
-*---------------------------------------------------------------------*
+*--------------------------------------------------------------------*
+* 4. Find template root POSID (node with UP initial)
+*--------------------------------------------------------------------*
+    CLEAR lv_template_root.
 
-* Level 4 gets X if any Level 5 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa5> WHERE stufe = '5'.
-      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4)
-         AND <wa5>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
+    LOOP AT lt_prhis INTO ls_prhis.
+      IF ls_prhis-up IS INITIAL.
+        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
+          WITH KEY pspnr = ls_prhis-posnr.
+        IF sy-subrc = 0.
+          lv_template_root = <fs_prpss>-posid.
+          EXIT.
+        ENDIF.
       ENDIF.
     ENDLOOP.
 
-    IF lv_budget_check IS NOT INITIAL.
-      <wa4>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zbudget_check.
+    IF lv_template_root IS INITIAL.
+      RETURN.
     ENDIF.
-  ENDLOOP.
 
-* Level 3 gets X if any Level 4 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
-    CLEAR lv_budget_check.
+*--------------------------------------------------------------------*
+* 5. Build converted hierarchy
+*--------------------------------------------------------------------*
+    LOOP AT lt_prhis INTO ls_prhis.
 
-    LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
-      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3)
-         AND <wa4>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
+      CLEAR: ls_phris,
+             lv_target_posid,
+             lv_target_up,
+             lv_target_left.
+
+*------------------------------------------------------------------*
+* Current node from PRPSS via PRHIS-POSNR
+*------------------------------------------------------------------*
+      READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
+        WITH KEY pspnr = ls_prhis-posnr.
+      IF sy-subrc <> 0.
+        CONTINUE.
       ENDIF.
+
+      ls_phris-template_posid = <fs_prpss>-posid.
+      ls_phris-stufe          = <fs_prpss>-stufe.
+
+      lv_target_posid = ls_phris-template_posid.
+      REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_posid WITH iv_esr_root.
+      ls_phris-target_posid = lv_target_posid.
+
+*------------------------------------------------------------------*
+* UP from PRPSS via PRHIS-UP
+*------------------------------------------------------------------*
+      IF ls_prhis-up IS INITIAL.
+        ls_phris-wbs_up = iv_esr_root.
+      ELSE.
+        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
+          WITH KEY pspnr = ls_prhis-up.
+        IF sy-subrc = 0.
+          lv_target_up = <fs_prpss>-posid.
+          REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_up WITH iv_esr_root.
+          ls_phris-wbs_up = lv_target_up.
+        ENDIF.
+      ENDIF.
+
+*------------------------------------------------------------------*
+* LEFT from PRPSS via PRHIS-LEFT
+*------------------------------------------------------------------*
+      IF ls_prhis-left IS NOT INITIAL.
+        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
+          WITH KEY pspnr = ls_prhis-left.
+        IF sy-subrc = 0.
+          lv_target_left = <fs_prpss>-posid.
+          REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_left WITH iv_esr_root.
+          ls_phris-wbs_left = lv_target_left.
+        ENDIF.
+      ENDIF.
+
+*------------------------------------------------------------------*
+* Keep only rows that really exist in gt_wbs_car
+*------------------------------------------------------------------*
+      READ TABLE it_wbs_car TRANSPORTING NO FIELDS
+        WITH KEY posid = ls_phris-target_posid.
+      IF sy-subrc = 0.
+        APPEND ls_phris TO et_phris_hier.
+      ENDIF.
+
     ENDLOOP.
 
-    IF lv_budget_check IS NOT INITIAL.
-      <wa3>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
-
-* Level 2 gets X if any Level 3 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
-      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2)
-         AND <wa3>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa2>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
-
-* Level 1 gets X if any Level 2 child has X
-  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
-    CLEAR lv_budget_check.
-
-    LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
-      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1)
-         AND <wa2>-zbudget_check IS NOT INITIAL.
-        lv_budget_check = 'X'.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_budget_check IS NOT INITIAL.
-      <wa1>-zbudget_check = 'X'.
-      MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zbudget_check.
-    ENDIF.
-  ENDLOOP.
+  ENDMETHOD.
