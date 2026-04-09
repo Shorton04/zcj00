@@ -1,127 +1,212 @@
-FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
+FORM total_up_wbs_tc.
+  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
+        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
+        lv_index4 TYPE sy-index,
+        lv_index3 TYPE sy-index,
+        lv_index2 TYPE sy-index.
 
-*---------------------------------------------------------------------*
-* Local Types
-*---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_posid_range,
-           sign   TYPE c LENGTH 1,
-           option TYPE c LENGTH 2,
-           low    TYPE prps-posid,
-           high   TYPE prps-posid,
-         END OF ty_posid_range.
+  DATA: lv_pspid_len4 TYPE numc2.
+  DATA: lv_pspid_len3 TYPE numc2.
+  DATA: lv_pspid_len2 TYPE numc2.
+  DATA: lv_pspid_len1 TYPE numc2.
 
-  TYPES: BEGIN OF ty_wbs_stat,
-           posid TYPE prps-posid,
-           stat  TYPE jest-stat,
-         END OF ty_wbs_stat.
+  DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
 
-*---------------------------------------------------------------------*
-* Data
-*---------------------------------------------------------------------*
-  DATA: lv_pspnr        TYPE proj-pspnr,
-        lv_posid        TYPE prps-posid,
-        ls_display      TYPE ty_wbs_display,
-        ls_posid_range  TYPE ty_posid_range,
-        ls_wbs_stat     TYPE ty_wbs_stat,
-        lt_posid_range  TYPE STANDARD TABLE OF ty_posid_range,
-        lt_wbs_stat     TYPE STANDARD TABLE OF ty_wbs_stat,
-        lv_total_wbs    TYPE i,
-        lv_closed_wbs   TYPE i.
-
-*---------------------------------------------------------------------*
-* Init
-*---------------------------------------------------------------------*
-  CLEAR: cv_error,
-         lv_total_wbs,
-         lv_closed_wbs.
-
-*---------------------------------------------------------------------*
-* Validate Project Definition
-*---------------------------------------------------------------------*
-  lv_pspnr = gs_header-pspnr.
-
-  IF lv_pspnr IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'Project Definition is required'(v21).
-    cv_error = gc_x.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Build WBS POSID range from gt_wbs_display
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_display.
-    IF ls_display-posid IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    lv_posid = ls_display-posid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
-
-    CLEAR ls_posid_range.
-    ls_posid_range-sign   = 'I'.
-    ls_posid_range-option = 'EQ'.
-    ls_posid_range-low    = lv_posid.
-    APPEND ls_posid_range TO lt_posid_range.
-
-    ADD 1 TO lv_total_wbs.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<fs_wbs_display>).
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = <fs_wbs_display>-posid
+      IMPORTING
+        output = <fs_wbs_display>-posid.
   ENDLOOP.
 
-  IF lt_posid_range IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Remove duplicate POSID entries
-*---------------------------------------------------------------------*
-  SORT lt_posid_range BY low.
-  DELETE ADJACENT DUPLICATES FROM lt_posid_range COMPARING low.
-
-*---------------------------------------------------------------------*
-* Get active WBS statuses TECO / CLSD only
-*---------------------------------------------------------------------*
-  SELECT a~posid,
-         b~stat
-    INTO TABLE @lt_wbs_stat
-    FROM prps AS a
-    INNER JOIN jest AS b
-      ON b~objnr = a~objnr
-   WHERE a~posid IN @lt_posid_range
-     AND b~inact = @space
-     AND b~stat  IN ( 'I0045', 'I0046' ).
-
-  SORT lt_wbs_stat BY posid stat.
-  DELETE ADJACENT DUPLICATES FROM lt_wbs_stat COMPARING posid stat.
-
-*---------------------------------------------------------------------*
-* Count how many selected WBS are already TECO / CLSD
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_display INTO ls_display.
-    IF ls_display-posid IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-    lv_posid = ls_display-posid.
-    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
-
-    READ TABLE lt_wbs_stat INTO ls_wbs_stat
-      WITH KEY posid = lv_posid.
-    IF sy-subrc = 0.
-      ADD 1 TO lv_closed_wbs.
+  "Auto-populate blank budget = 0 (so totals still update)
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
+    IF <wa0>-zapproved_budg IS INITIAL.
+      <wa0>-zapproved_budg = 0.
     ENDIF.
   ENDLOOP.
 
-*---------------------------------------------------------------------*
-* Validation Result
-* Pass if partially TECO/CLSD exists
-* Error only if all selected WBS are still Released/open
-*---------------------------------------------------------------------*
-  IF lv_closed_wbs = 0.
-    MESSAGE e000(zmsg_a2r)
-      WITH 'All selected WBS are still in Released status. Unclose not needed.'(v20).
-    cv_error = gc_x.
-    RETURN.
-  ENDIF.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
+    IF <wa>-stufe = '5'.
+      APPEND <wa> TO lt_table5.
 
-  CLEAR cv_error.
+    ELSEIF <wa>-stufe = '4'.
+      APPEND <wa> TO lt_table4.
+      DATA(lv_pspid_new4) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new4.
+      lv_pspid_len4 = strlen( lv_pspid_new4 ).
 
-ENDFORM.
+    ELSEIF <wa>-stufe = '3'.
+      APPEND <wa> TO lt_table3.
+      DATA(lv_pspid_new3) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new3.
+      lv_pspid_len3 = strlen( lv_pspid_new3 ).
+
+    ELSEIF <wa>-stufe = '2'.
+      APPEND <wa> TO lt_table2.
+      DATA(lv_pspid_new2) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new2.
+      lv_pspid_len2 = strlen( lv_pspid_new2 ).
+
+    ELSEIF <wa>-stufe = '1'.
+      APPEND <wa> TO lt_table1.
+      DATA(lv_pspid_new1) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new1.
+      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+    ENDIF.
+  ENDLOOP.
+
+* Build the Total for Level4.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
+    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
+        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum4 IS NOT INITIAL.
+      <wa4>-zapproved_budg = lv_sum4.
+    ENDIF.
+    lv_index4 = lv_index4 + 1.
+    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
+    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
+    CLEAR: lv_sum4.
+  ENDLOOP.
+
+* Build the Total for Level3.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
+    LOOP AT lt_table4 ASSIGNING <wa4>.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
+        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum3 IS NOT INITIAL.
+      <wa3>-zapproved_budg = lv_sum3.
+    ENDIF.
+    lv_index3 = lv_index3 + 1.
+    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
+    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
+    CLEAR: lv_sum3.
+  ENDLOOP.
+
+* Build the Total for Level2.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
+    LOOP AT lt_table3 ASSIGNING <wa3>.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
+        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_sum2 IS NOT INITIAL.
+      <wa2>-zapproved_budg = lv_sum2.
+    ENDIF.
+    lv_index2 = lv_index2 + 1.
+    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
+    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
+    CLEAR: lv_sum2.
+  ENDLOOP.
+
+* Build the Total for Level1.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-zapproved_budg = lv_sum1.
+    ENDIF.
+    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
+    CLEAR: lv_sum1.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Separate logic for zbudget_check
+*---------------------------------------------------------------------*
+
+* Level 4 gets X if any Level 5 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa5> WHERE stufe = '5'.
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4)
+         AND <wa5>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa4>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 3 gets X if any Level 4 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3)
+         AND <wa4>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa3>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 2 gets X if any Level 3 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2)
+         AND <wa3>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa2>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 1 gets X if any Level 2 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1)
+         AND <wa2>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa1>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
