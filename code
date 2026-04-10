@@ -1,280 +1,36 @@
-*---------------------------------------------------------------------*
-* Workflow Log
-*---------------------------------------------------------------------*
-TYPES: BEGIN OF ty_wflog,
-         wi_id         TYPE sww_wiid,
-         top_wi_id     TYPE sww_wiid,
-         wi_text       TYPE char120,
-         agent         TYPE char40,
-         status        TYPE char20,
-         created_on    TYPE sydatum,
-         created_at    TYPE syuzeit,
-         completed_on  TYPE sydatum,
-         completed_at  TYPE syuzeit,
-       END OF ty_wflog.
+FORM trigger_wf  USING is_header TYPE ztb_a2r_wbshdr.
 
-DATA: gt_wflog TYPE STANDARD TABLE OF ty_wflog,
-      gs_wflog TYPE ty_wflog.
-
-DATA: gv_top_wi_id TYPE sww_wiid.
-
-
-
-
-FORM show_workflow_log.
-
-  DATA: lv_top_wi_id TYPE sww_wiid.
-
-  CLEAR: gt_wflog, gv_top_wi_id.
-
-*---------------------------------------------------------------------*
-* Read saved top workflow ID from request header
-*---------------------------------------------------------------------*
-  SELECT SINGLE ztop_wi_id
-    INTO @lv_top_wi_id
-    FROM ztb_a2r_wbshdr
-    WHERE zreq_num = @gs_header-zreq_num.
-
-  IF sy-subrc <> 0 OR lv_top_wi_id IS INITIAL.
-    MESSAGE 'No workflow log found for this request' TYPE 'I'.
-    RETURN.
-  ENDIF.
-
-  gv_top_wi_id = lv_top_wi_id.
-
-*---------------------------------------------------------------------*
-* Build workflow log
-*---------------------------------------------------------------------*
-  PERFORM get_workflow_log USING    gv_top_wi_id
-                           CHANGING gt_wflog.
-
-  IF gt_wflog IS INITIAL.
-    MESSAGE 'Workflow log is empty' TYPE 'I'.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Display popup ALV
-*---------------------------------------------------------------------*
-  PERFORM display_workflow_log_popup.
-
-ENDFORM.
-
-
-
-
-FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
-                      CHANGING ct_wflog     TYPE STANDARD TABLE.
-
-  DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
-        ls_worklist      TYPE swr_wihdr,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc,
-        ls_wflog         TYPE ty_wflog.
-
-  CLEAR ct_wflog.
-
-*---------------------------------------------------------------------*
-* Read top workitem itself
-*---------------------------------------------------------------------*
-  CLEAR ls_wflog.
-  PERFORM read_single_wi_log USING    iv_top_wi_id
-                             CHANGING ls_wflog.
-
-  IF ls_wflog-wi_id IS NOT INITIAL.
-    APPEND ls_wflog TO ct_wflog.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Read child workitems
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
+  go_builder->check_approver_matrix(
     EXPORTING
-      workitem_id = iv_top_wi_id
-      user        = sy-uname
-      text        = abap_true
-      language    = sy-langu
+      iv_bukrs        = is_header-bukrs
+      iv_profl        = is_header-profl
+      iv_reqtype      = is_header-z_reqtype
     IMPORTING
-      return_code = lv_return_code
-    TABLES
-      worklist       = lt_worklist
-      message_lines  = lt_message_lines
-      message_struct = lt_message_struc.
+      ev_auto         = DATA(lv_auto)
+      ev_found        = DATA(lv_found)
+      et_l1_approvers = DATA(lt_l1_approvers)
+      et_l2_approvers = DATA(lt_l2_approvers)
+  ).
 
-  IF lv_return_code <> 0.
-    RETURN.
-  ENDIF.
+  IF lv_found EQ abap_true.
 
-*---------------------------------------------------------------------*
-* Read each child workitem log
-*---------------------------------------------------------------------*
-  LOOP AT lt_worklist INTO ls_worklist.
+    go_builder->trigger_workflow(
+      is_header     = is_header
+      iv_auto       = lv_auto
+      it_l1_apprv   = lt_l1_approvers
+      it_l2_apprv   = lt_l2_approvers
+      it_wbscar     = gt_wbs_car
+      it_wbshier    = gt_phris_hier
+      it_wbsunclose = gt_wbs_unclose
+    ).
 
-    CLEAR ls_wflog.
-
-    PERFORM read_single_wi_log USING    ls_worklist-wi_id
-                               CHANGING ls_wflog.
-
-    IF ls_wflog-wi_id IS NOT INITIAL.
-      APPEND ls_wflog TO ct_wflog.
-    ENDIF.
-
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* Remove duplicates
-*---------------------------------------------------------------------*
-  SORT ct_wflog BY wi_id.
-  DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
-
-  SORT ct_wflog BY created_on created_at wi_id.
-
-ENDFORM.
-
-
-
-
-FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
-                        CHANGING cs_wflog TYPE ty_wflog.
-
-  DATA: ls_header        TYPE swr_wihdr,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc.
-
-  CLEAR cs_wflog.
-
-*---------------------------------------------------------------------*
-* Get workitem header
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-    EXPORTING
-      workitem_id         = iv_wi_id
-      user                = sy-uname
-      language            = sy-langu
-      translate_texts     = abap_true
-    IMPORTING
-      workitem_attributes = ls_header
-      return_code         = lv_return_code
-    TABLES
-      message_lines       = lt_message_lines
-      message_struct      = lt_message_struc.
-
-  IF lv_return_code <> 0.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Fill popup structure
-*---------------------------------------------------------------------*
-  cs_wflog-wi_id         = ls_header-wi_id.
-  cs_wflog-top_wi_id     = gv_top_wi_id.
-  cs_wflog-wi_text       = ls_header-wi_text.
-  cs_wflog-created_on    = ls_header-wi_cd.
-  cs_wflog-created_at    = ls_header-wi_ct.
-  cs_wflog-completed_on  = ls_header-wi_led.
-  cs_wflog-completed_at  = ls_header-wi_let.
-
-*---------------------------------------------------------------------*
-* Agent
-*---------------------------------------------------------------------*
-  IF ls_header-wi_aa_name IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_aa_name.
-  ELSEIF ls_header-wi_agent IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_agent.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Status
-*---------------------------------------------------------------------*
-  IF ls_header-statusxt IS NOT INITIAL.
-    cs_wflog-status = ls_header-statusxt.
+    MESSAGE s000(zmsg_a2r) WITH 'Request'(m14) is_header-zreq_num
+           'submitted for approval'(m06).
+    LEAVE TO SCREEN 0.
   ELSE.
-    PERFORM get_wi_status_text USING    ls_header-wi_stat
-                               CHANGING cs_wflog-status.
+    MESSAGE s000(zmsg_a2r) WITH 'No approver configuration found for'(m08)
+                                 is_header-zreq_num.
+    LEAVE TO SCREEN 0.
   ENDIF.
-
-ENDFORM.
-
-
-
-FORM get_wi_status_text USING    iv_stat TYPE any
-                        CHANGING cv_text TYPE char20.
-
-  CASE iv_stat.
-    WHEN 'READY'.
-      cv_text = 'Ready'.
-    WHEN 'STARTED'.
-      cv_text = 'In Process'.
-    WHEN 'COMPLETED'.
-      cv_text = 'Completed'.
-    WHEN 'CANCELLED'.
-      cv_text = 'Cancelled'.
-    WHEN 'ERROR'.
-      cv_text = 'Error'.
-    WHEN OTHERS.
-      cv_text = iv_stat.
-  ENDCASE.
-
-ENDFORM.
-
-
-
-FORM display_workflow_log_popup.
-
-  DATA: lt_fcat   TYPE slis_t_fieldcat_alv,
-        ls_layout TYPE slis_layout_alv.
-
-  PERFORM build_wflog_fieldcat CHANGING lt_fcat.
-
-  ls_layout-zebra             = abap_true.
-  ls_layout-colwidth_optimize = abap_true.
-
-  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
-    EXPORTING
-      i_callback_program    = sy-repid
-      is_layout             = ls_layout
-      it_fieldcat           = lt_fcat
-      i_screen_start_column = 10
-      i_screen_start_line   = 5
-      i_screen_end_column   = 180
-      i_screen_end_line     = 25
-    TABLES
-      t_outtab              = gt_wflog
-    EXCEPTIONS
-      program_error         = 1
-      OTHERS                = 2.
-
-ENDFORM.
-
-
-
-
-FORM build_wflog_fieldcat CHANGING ct_fcat TYPE slis_t_fieldcat_alv.
-
-  DATA: ls_fcat TYPE slis_fieldcat_alv.
-
-  CLEAR ct_fcat.
-
-  DEFINE add_fcat.
-    CLEAR ls_fcat.
-    ls_fcat-fieldname = &1.
-    ls_fcat-seltext_l = &2.
-    ls_fcat-seltext_m = &3.
-    ls_fcat-seltext_s = &4.
-    ls_fcat-outputlen = &5.
-    APPEND ls_fcat TO ct_fcat.
-  END-OF-DEFINITION.
-
-  add_fcat 'WI_ID'         'Workitem ID'  'Workitem'  'WI ID'    12.
-  add_fcat 'TOP_WI_ID'     'Top Workitem' 'Top WI'    'Top WI'   12.
-  add_fcat 'WI_TEXT'       'Step Text'    'Step Text' 'Step'     50.
-  add_fcat 'AGENT'         'Agent'        'Agent'     'Agent'    20.
-  add_fcat 'STATUS'        'Status'       'Status'    'Status'   20.
-  add_fcat 'CREATED_ON'    'Created On'   'Created'   'Cr.On'    10.
-  add_fcat 'CREATED_AT'    'Created At'   'Cr.Time'   'Cr.At'    8.
-  add_fcat 'COMPLETED_ON'  'Completed On' 'Compl.On'  'Cmp.On'   10.
-  add_fcat 'COMPLETED_AT'  'Completed At' 'Compl.At'  'Cmp.At'   8.
 
 ENDFORM.
