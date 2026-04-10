@@ -10,15 +10,21 @@ FORM get_wi_comment USING    iv_wi_id     TYPE sww_wiid
   DATA: lt_objcont       TYPE STANDARD TABLE OF soli,
         ls_objcont       TYPE soli,
         lt_objhead       TYPE STANDARD TABLE OF soli,
-        lv_text          TYPE string.
+        lv_text          TYPE string,
+        lv_doc_id        TYPE sofolenti1-doc_id.
+
+  DATA: lt_parts         TYPE STANDARD TABLE OF string,
+        lv_part          TYPE string.
 
   CLEAR: cv_comment,
          lv_text,
+         lv_doc_id,
          lt_attachments,
          lt_message_lines,
          lt_message_struc,
          lt_objcont,
-         lt_objhead.
+         lt_objhead,
+         lt_parts.
 
 *---------------------------------------------------------------------*
 * Get only comment-semantic attachments
@@ -54,20 +60,35 @@ FORM get_wi_comment USING    iv_wi_id     TYPE sww_wiid
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Read SAPoffice document text using full OBJECT_ID
+* OBJECT_ID format is like:
+* SOFM      FOL50000000000004RAW51000000055075
+* Need the 2nd token only
+*---------------------------------------------------------------------*
+  SPLIT ls_attachment-object_id AT space INTO TABLE lt_parts.
+  DELETE lt_parts WHERE table_line IS INITIAL.
+
+  READ TABLE lt_parts INTO lv_part INDEX 2.
+  IF sy-subrc <> 0 OR lv_part IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  lv_doc_id = lv_part.
+
+*---------------------------------------------------------------------*
+* Read SAPoffice document text
 *---------------------------------------------------------------------*
   CALL FUNCTION 'SO_DOCUMENT_READ_API1'
     EXPORTING
-      document_id           = ls_attachment-object_id
-      filter                = 'X'
+      document_id               = lv_doc_id
+      filter                    = 'X'
     TABLES
-      object_header         = lt_objhead
-      object_content        = lt_objcont
+      object_header             = lt_objhead
+      object_content            = lt_objcont
     EXCEPTIONS
-      document_id_not_exist = 1
+      document_id_not_exist     = 1
       operation_no_authorization = 2
-      x_error               = 3
-      OTHERS                = 4.
+      x_error                   = 3
+      OTHERS                    = 4.
 
   IF sy-subrc <> 0 OR lt_objcont IS INITIAL.
     RETURN.
@@ -93,62 +114,3 @@ FORM get_wi_comment USING    iv_wi_id     TYPE sww_wiid
   cv_comment = lv_text.
 
 ENDFORM.
-
-
-
-
-FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
-                        CHANGING cs_wflog TYPE ty_wflog.
-
-  DATA: ls_header        TYPE swr_wihdr,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc.
-
-  CLEAR cs_wflog.
-
-  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-    EXPORTING
-      workitem_id         = iv_wi_id
-      user                = sy-uname
-      language            = sy-langu
-      translate_texts     = abap_true
-    IMPORTING
-      workitem_attributes = ls_header
-      return_code         = lv_return_code
-    TABLES
-      message_lines       = lt_message_lines
-      message_struct      = lt_message_struc.
-
-  IF lv_return_code <> 0.
-    RETURN.
-  ENDIF.
-
-  cs_wflog-wi_id         = ls_header-wi_id.
-  cs_wflog-top_wi_id     = gv_top_wi_id.
-  cs_wflog-wi_text       = ls_header-wi_text.
-  cs_wflog-created_on    = ls_header-wi_cd.
-  cs_wflog-created_at    = ls_header-wi_ct.
-  cs_wflog-completed_on  = ls_header-wi_led.
-  cs_wflog-completed_at  = ls_header-wi_let.
-
-  IF ls_header-wi_aa_name IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_aa_name.
-  ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_aagent.
-  ENDIF.
-
-  IF ls_header-statustext IS NOT INITIAL.
-    cs_wflog-status = ls_header-statustext.
-  ELSE.
-    cs_wflog-status = ls_header-wi_stat.
-  ENDIF.
-
-  PERFORM get_wi_comment USING    iv_wi_id
-                         CHANGING cs_wflog-comment.
-
-ENDFORM.
-
-
-
-a
