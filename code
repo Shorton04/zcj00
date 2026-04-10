@@ -1,189 +1,185 @@
-  METHOD build_phris_hierarchy.
+FUNCTION sap_wapi_get_child_workitems ##RFC_PERFORMANCE_OK.
+*"----------------------------------------------------------------------
+*"*"Lokale Schnittstelle:
+*"  IMPORTING
+*"     VALUE(WORKITEM_ID) TYPE  SWR_STRUCT-WORKITEMID OPTIONAL
+*"     VALUE(USER) TYPE  SYUNAME DEFAULT SY-UNAME
+*"     VALUE(TEXT) TYPE  XFELD DEFAULT 'X'
+*"     VALUE(LANGUAGE) TYPE  SYLANGU DEFAULT SY-LANGU
+*"     VALUE(STATUS) TYPE  SWFARTWISTA OPTIONAL
+*"  EXPORTING
+*"     VALUE(RETURN_CODE) LIKE  SY-SUBRC
+*"  TABLES
+*"      WORKLIST STRUCTURE  SWR_WIHDR
+*"      MESSAGE_LINES STRUCTURE  SWR_MESSAG OPTIONAL
+*"      MESSAGE_STRUCT STRUCTURE  SWR_MSTRUC OPTIONAL
+*"----------------------------------------------------------------------
+  DATA: hlp_lines LIKE sy-tabix,
+        msg TYPE REF TO cl_swf_utl_wapi_message,
+        lh_wi_handle TYPE REF TO if_swf_run_wim_internal,
+        funcname TYPE funcname VALUE 'SAP_WAPI_GET_CHILD_WORKITEMS',
+        ls_t100msg TYPE swf_t100ms,
+        lv_handle TYPE sytabix,
+        lv_wapi TYPE REF TO if_swf_utl_wapi_framework.
+  DATA: lh_trc_data TYPE REF TO if_swf_cnt_container.
+  DATA: lt_message_lines TYPE sapi_msg_lines.
+  DATA: lt_message_struct TYPE sapi_msg_struc.
+  DATA: l_count TYPE sytabix.
+  DATA: lt_worklist TYPE swrtwihdr.
+  DATA: lh_instance_mgr TYPE REF TO cl_swf_utl_gen_instance_mgr.
+  DATA: lt_workitems TYPE sww_wi_header_arc.
+  DATA: lh_excp TYPE REF TO cx_swf_run_wim.
+  DATA: lh_wapi_services TYPE REF TO cl_swf_utl_wapi_services.
+  DATA: ls_workitem TYPE swr_wihdr.
+  FIELD-SYMBOLS: <header> TYPE LINE OF sww_wi_header_arc.
 
-    TYPES: BEGIN OF ty_prhis_raw,
-             posnr TYPE ps_pspnr,
-             psphi TYPE ps_pspnr,
-             up    TYPE ps_pspnr,
-             down  TYPE ps_pspnr,
-             left  TYPE ps_pspnr,
-             right TYPE ps_pspnr,
-           END OF ty_prhis_raw.
+*- register to framework and get message object
+  lv_wapi = cl_swf_utl_wapi_framework=>create( im_language = language ).
+  lv_handle = lv_wapi->register_function( funcname ).
+  msg = lv_wapi->get_message_object( ).
 
-    TYPES: BEGIN OF ty_prpss_raw,
-             pspnr TYPE ps_pspnr,
-             posid TYPE ps_posid,
-             stufe TYPE ps_stufe,
-           END OF ty_prpss_raw.
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'WORKITEM_ID'
+            value = workitem_id.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'STATUS'
+            value = status.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'LANGUAGE'
+            value = language.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'TEXT'
+            value = text.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_init
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
 
-    DATA: lv_psphi         TYPE ps_pspnr,
-          lv_template_root TYPE ps_posid,
-          lv_target_posid  TYPE ps_posid,
-          lv_target_up     TYPE ps_posid,
-          lv_target_left   TYPE ps_posid,
-          lv_pspid_car_int TYPE ztb_a2r_wbshdr-pspid.
+*- initialize export
+  CLEAR worklist.  REFRESH worklist.
+  CLEAR message_lines. REFRESH message_lines.
+  CLEAR message_struct. REFRESH message_struct.
 
-    DATA: lt_prhis TYPE STANDARD TABLE OF ty_prhis_raw,
-          ls_prhis TYPE ty_prhis_raw,
-          lt_prpss TYPE STANDARD TABLE OF ty_prpss_raw,
-          ls_prpss TYPE ty_prpss_raw.
-
-    DATA: lt_prpss_h TYPE HASHED TABLE OF ty_prpss_raw WITH UNIQUE KEY pspnr,
-          ls_phris   TYPE zsa2r_wbshier.
-
-    FIELD-SYMBOLS: <fs_prpss> TYPE ty_prpss_raw.
-
-    CLEAR et_phris_hier.
-
-    IF iv_pspid_car IS INITIAL OR iv_esr_root IS INITIAL OR it_wbs_car IS INITIAL.
-      RETURN.
-    ENDIF.
-
-*--------------------------------------------------------------------*
-* 1. Get template project internal number
-*--------------------------------------------------------------------*
-    SELECT SINGLE pspnr
-      INTO @lv_psphi
-      FROM projs
-      WHERE pspid = @iv_pspid_car.
-
-    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
-      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+  TRY.
+      CREATE OBJECT lh_instance_mgr.
+      CALL METHOD cl_swf_run_wim_factory=>find_by_wiid
         EXPORTING
-          input  = iv_pspid_car
-        IMPORTING
-          output = lv_pspid_car_int.
+          im_wiid         = workitem_id
+          im_instance_mgr = lh_instance_mgr
+        RECEIVING
+          re_instance     = lh_wi_handle.
 
-      SELECT SINGLE pspnr
-        INTO @lv_psphi
-        FROM projs
-        WHERE pspid = @lv_pspid_car_int.
-    ENDIF.
+*- check workitem
+      IF lh_wi_handle->m_sww_wihead-wi_chckwi IS NOT INITIAL.
+        ls_t100msg-msgid = 'WZ'.
+        ls_t100msg-msgno = '589'.
+        ls_t100msg-msgty = 'E'.
+        ls_t100msg-msgv1 = workitem_id.
+        CREATE OBJECT lh_excp
+          EXPORTING
+            t100_msg = ls_t100msg.
 
-    IF sy-subrc <> 0 OR lv_psphi IS INITIAL.
-      RETURN.
-    ENDIF.
-
-*--------------------------------------------------------------------*
-* 2. Read PRHIS edges for this standard template
-*--------------------------------------------------------------------*
-    SELECT posnr,
-           psphi,
-           up,
-           down,
-           left,
-           right
-      FROM prhis
-      INTO TABLE @lt_prhis
-      WHERE psphi = @lv_psphi.
-
-    IF lt_prhis IS INITIAL.
-      RETURN.
-    ENDIF.
-
-*--------------------------------------------------------------------*
-* 3. Read PRPSS nodes using PRHIS-POSNR / UP / LEFT references
-*--------------------------------------------------------------------*
-    SELECT pspnr,
-           posid,
-           stufe
-      FROM prpss
-      INTO TABLE @lt_prpss
-      FOR ALL ENTRIES IN @lt_prhis
-      WHERE pspnr = @lt_prhis-posnr
-         OR pspnr = @lt_prhis-up
-         OR pspnr = @lt_prhis-left
-         OR pspnr = @lt_prhis-down
-         OR pspnr = @lt_prhis-right.
-
-    IF lt_prpss IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    lt_prpss_h = lt_prpss.
-
-*--------------------------------------------------------------------*
-* 4. Find template root POSID (node with UP initial)
-*--------------------------------------------------------------------*
-    CLEAR lv_template_root.
-
-    LOOP AT lt_prhis INTO ls_prhis.
-      IF ls_prhis-up IS INITIAL.
-        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
-          WITH KEY pspnr = ls_prhis-posnr.
-        IF sy-subrc = 0.
-          lv_template_root = <fs_prpss>-posid.
-          EXIT.
-        ENDIF.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_template_root IS INITIAL.
-      RETURN.
-    ENDIF.
-
-*--------------------------------------------------------------------*
-* 5. Build converted hierarchy
-*--------------------------------------------------------------------*
-    LOOP AT lt_prhis INTO ls_prhis.
-
-      CLEAR: ls_phris,
-             lv_target_posid,
-             lv_target_up,
-             lv_target_left.
-
-*------------------------------------------------------------------*
-* Current node from PRPSS via PRHIS-POSNR
-*------------------------------------------------------------------*
-      READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
-        WITH KEY pspnr = ls_prhis-posnr.
-      IF sy-subrc <> 0.
-        CONTINUE.
+        CALL METHOD cl_swf_utl_exception_services=>raise_cx_swf_run_wim
+          EXPORTING
+            im_exception = lh_excp.
       ENDIF.
 
-      ls_phris-template_posid = <fs_prpss>-posid.
-      ls_phris-stufe          = <fs_prpss>-stufe.
+*- get all child items
+      lt_workitems = lh_wi_handle->get_dependant_wis( im_direct_dependants_only = space im_status = status ).
 
-      lv_target_posid = ls_phris-template_posid.
-      REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_posid WITH iv_esr_root.
-      ls_phris-target_posid = lv_target_posid.
+*- translate to SWR_WIHDR
+      CREATE OBJECT lh_wapi_services
+        EXPORTING
+          im_language = language
+          im_user     = user.
+      LOOP AT lt_workitems ASSIGNING <header>.
+        ls_workitem = lh_wapi_services->get_swr_wihdr_via_swwwihead( im_swwwihead = <header>
+                                                                     im_user = user
+                                                                     im_language = language ).
+        APPEND ls_workitem TO worklist.
+        hlp_lines = hlp_lines + 1.
+      ENDLOOP.
 
-*------------------------------------------------------------------*
-* UP from PRPSS via PRHIS-UP
-*------------------------------------------------------------------*
-      IF ls_prhis-up IS INITIAL.
-        ls_phris-wbs_up = iv_esr_root.
+*- set export parameter
+      return_code = 0.
+      ls_t100msg-msgid = 'WZ'.
+      ls_t100msg-msgno = '523'.
+      ls_t100msg-msgty = 'S'.
+      ls_t100msg-msgv1 = hlp_lines.
+      CALL METHOD msg->set_t100msg( ls_t100msg ).
+
+    CATCH cx_swf_run_wim INTO lh_excp.
+      IF lh_excp->t100_msg-msgno EQ '589'.
+        return_code = 1.
       ELSE.
-        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
-          WITH KEY pspnr = ls_prhis-up.
-        IF sy-subrc = 0.
-          lv_target_up = <fs_prpss>-posid.
-          REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_up WITH iv_esr_root.
-          ls_phris-wbs_up = lv_target_up.
+        return_code = 2.
+      ENDIF.
+      CALL METHOD msg->set_exception_object
+        EXPORTING
+          im_excp = lh_excp.
+  ENDTRY.
+
+*- set export
+  message_lines[] = msg->get_message_lines( ).
+  message_struct[] = msg->get_message_struct( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'RETURN_CODE'
+            value = return_code.
+        DESCRIBE TABLE worklist LINES l_count.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'COUNT_WORKLIST'
+            value = l_count.
+        lt_message_lines = message_lines[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_LINES'
+            value = lt_message_lines.
+        lt_message_struct = message_struct[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_STRUCT'
+            value = lt_message_struct.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_result
+            im_data = lh_trc_data.
+        IF lv_wapi->m_trace_handle->get_trace_level( ) EQ swftr_trace_level_high.
+          lh_trc_data = lv_wapi->get_initial_trace_data( ).
+          lt_worklist = worklist[].
+          CALL METHOD lh_trc_data->element_set
+            EXPORTING
+              name  = 'WORKLIST'
+              value = lt_worklist.
+          CALL METHOD lv_wapi->write_trace
+            EXPORTING
+              im_evt  = swwtr_api_result_extended
+              im_data = lh_trc_data.
         ENDIF.
-      ENDIF.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
 
-*------------------------------------------------------------------*
-* LEFT from PRPSS via PRHIS-LEFT
-*------------------------------------------------------------------*
-      IF ls_prhis-left IS NOT INITIAL.
-        READ TABLE lt_prpss_h ASSIGNING <fs_prpss>
-          WITH KEY pspnr = ls_prhis-left.
-        IF sy-subrc = 0.
-          lv_target_left = <fs_prpss>-posid.
-          REPLACE FIRST OCCURRENCE OF lv_template_root IN lv_target_left WITH iv_esr_root.
-          ls_phris-wbs_left = lv_target_left.
-        ENDIF.
-      ENDIF.
+*- unregister to framework
+  CALL METHOD lv_wapi->unregister( lv_handle ).
 
-*------------------------------------------------------------------*
-* Keep only rows that really exist in gt_wbs_car
-*------------------------------------------------------------------*
-      READ TABLE it_wbs_car TRANSPORTING NO FIELDS
-        WITH KEY posid = ls_phris-target_posid.
-      IF sy-subrc = 0.
-        APPEND ls_phris TO et_phris_hier.
-      ENDIF.
-
-    ENDLOOP.
-
-  ENDMETHOD.
+ENDFUNCTION.
