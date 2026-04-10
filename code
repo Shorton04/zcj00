@@ -1,285 +1,169 @@
-  METHOD trigger_workflow.
+FUNCTION sap_wapi_get_attachments .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(WORKITEM_ID) LIKE  SWR_STRUCT-WORKITEMID
+*"     VALUE(USER) TYPE  SYUNAME DEFAULT SY-UNAME
+*"     VALUE(LANGUAGE) TYPE  SYLANGU DEFAULT SY-LANGU
+*"     VALUE(COMMENT_SEMANTIC_ONLY) TYPE  XFLAG DEFAULT SPACE
+*"  EXPORTING
+*"     VALUE(RETURN_CODE) LIKE  SY-SUBRC
+*"  TABLES
+*"      ATTACHMENTS STRUCTURE  SWR_OBJECT OPTIONAL
+*"      MESSAGE_LINES STRUCTURE  SWR_MESSAG OPTIONAL
+*"      MESSAGE_STRUCT STRUCTURE  SWR_MSTRUC OPTIONAL
+*"----------------------------------------------------------------------
+  DATA: ls_attachobj LIKE swotobjid,
+        msg          TYPE REF TO cl_swf_utl_wapi_message,
+        funcname     TYPE funcname VALUE 'SAP_WAPI_GET_ATTACHMENTS',
+        ls_t100msg   TYPE swf_t100ms,
+        lt_objects   TYPE sibflporbt,
+        lv_excp      TYPE REF TO cx_swf_ifs_exception,
+        hlp_lines    TYPE sytabix,
+        ls_swrobj    TYPE swr_object,
+        lv_wi_handle TYPE REF TO if_swf_run_wim_internal,
+        lv_handle    TYPE sytabix,
+        lv_wapi      TYPE REF TO if_swf_utl_wapi_framework.
+  DATA: lh_trc_data TYPE REF TO if_swf_cnt_container.
+  DATA: lt_message_lines TYPE sapi_msg_lines.
+  DATA: lt_message_struct TYPE sapi_msg_struc.
+  DATA: lt_attachments TYPE swrtobject.
+  DATA: lh_container TYPE REF TO if_swf_cnt_container.
+  DATA: ls_lpor TYPE sibflpor.
+  DATA: ls_swwwihead TYPE swwwihead.
+  DATA: lt_comment_objects TYPE sibflporbt.
+  DATA: ls_object LIKE LINE OF lt_objects.
 
-    DATA: lo_instance TYPE REF TO zcl_a2r_wbs_request_flexwf.
+*- register to framework and get message object
+  lv_wapi = cl_swf_utl_wapi_framework=>create( im_language = language ).
+  lv_handle = lv_wapi->register_function( funcname ).
+  msg = lv_wapi->get_message_object( ).
 
-    rv_success = abap_false.
-
-    IF is_header-zreq_num IS INITIAL.
-      RETURN.
-    ENDIF.
-
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
     TRY.
-        " trigger wf to create project
-        lo_instance = NEW zcl_a2r_wbs_request_flexwf(
-          is_header     = is_header
-          it_wbscar     = it_wbscar
-          it_wbshier    = it_wbshier
-          it_wbsunclose = it_wbsunclose
-          it_l1approver = it_l1_apprv
-          it_l2approver = it_l2_apprv
-          iv_auto       = iv_auto
-        ).
-
-        lo_instance->submit( ).
-
-        rv_success = abap_true.
-
-      CATCH cx_root.
-        rv_success = abap_false.
-    ENDTRY.
-
-  ENDMETHOD.
-
-
-class ZCL_A2R_WBS_REQUEST_FLEXWF definition
-  public
-  create public .
-
-*  FOR EVENT HANDLER.
-public section.
-
-  interfaces BI_OBJECT .
-  interfaces BI_PERSISTENT .
-  interfaces IF_WORKFLOW .
-
-  types:
-    BEGIN OF t_instance ,
-        insid    TYPE sibfinstid,
-        instance TYPE REF TO zcl_a2r_wbs_request_flexwf,
-      END OF t_instance .
-  types:
-    t_instances TYPE STANDARD TABLE OF t_instance .
-
-  data MS_HEADER type ZTB_A2R_WBSHDR read-only .
-  data MT_L2APPROVER type HPA_T_BNAME read-only .
-  data MS_LPOR type SIBFLPOR read-only .
-  data MT_L1APPROVER type HPA_T_BNAME read-only .
-  data MV_EVENT_ID type SIBFEVENT read-only value 'START' ##NO_TEXT.
-  class-data MT_INSTANCE type T_INSTANCES read-only .
-  data MT_WBSCAR type ZTT_A2R_WBSITEM .
-  data MT_WBSHIER type ZTT_A2R_WBSHIER .
-  data MT_WBSUNCLOSE type ZTT_A2R_WBSUNCLOSE .
-  data MV_AUTO type CHAR1 read-only .
-
-  events START
-    exporting
-      value(IV_HEADER) type ZTB_A2R_WBSHDR
-      value(IT_L1APPROVER) type HPA_T_BNAME
-      value(IT_L2APPROVER) type HPA_T_BNAME
-      value(IT_WBSCAR) type ZTT_A2R_WBSITEM
-      value(IT_WBS_HIER) type ZTT_A2R_WBSHIER
-      value(IT_WBSUNCLOSE) type ZTT_A2R_WBSUNCLOSE
-      value(IV_AUTO) type CHAR1 .
-
-  methods CONSTRUCTOR
-    importing
-      !IT_L1APPROVER type HPA_T_BNAME optional
-      !IT_L2APPROVER type HPA_T_BNAME optional
-      !IS_HEADER type ZTB_A2R_WBSHDR optional
-      !IT_WBSHIER type ZTT_A2R_WBSHIER optional
-      !IT_WBSCAR type ZTT_A2R_WBSITEM optional
-      !IT_WBSUNCLOSE type ZTT_A2R_WBSUNCLOSE optional
-      !IV_AUTO type CHAR1 optional .
-  methods SUBMIT .
-private section.
-ENDCLASS.
-
-
-
-CLASS ZCL_A2R_WBS_REQUEST_FLEXWF IMPLEMENTATION.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~DEFAULT_ATTRIBUTE_VALUE
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RESULT                         TYPE REF TO DATA
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD bi_object~default_attribute_value ##NEEDED.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~EXECUTE_DEFAULT_METHOD
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  method BI_OBJECT~EXECUTE_DEFAULT_METHOD ##NEEDED.
-  endmethod.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_OBJECT~RELEASE
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD bi_object~release ##NEEDED.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_A2R_WBS_REQUEST_FLEXWF=>BI_PERSISTENT~FIND_BY_LPOR
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] LPOR                           TYPE        SIBFLPOR
-* | [<-()] RESULT                         TYPE REF TO BI_PERSISTENT
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD bi_persistent~find_by_lpor.
-    DATA lv_typename      TYPE seoclsname.
-    DATA ls_instance      TYPE zcl_a2r_wbs_request_flexwf=>t_instance.
-    DATA lo_instance      TYPE REF TO zcl_a2r_wbs_request_flexwf.
-    CHECK lpor-instid IS NOT INITIAL.
-    CHECK strlen( lpor-instid ) = 10.
-    lv_typename = lpor-typeid.
-    READ TABLE mt_instance WITH KEY insid = lpor-instid INTO ls_instance.
-    IF sy-subrc <> 0.
-      TRY.
-          CREATE OBJECT lo_instance TYPE (lv_typename)
-            EXPORTING
-              IV_REQNUM = lpor-instid.
-        CATCH cx_bo_error .
-          EXIT.
-      ENDTRY.
-      ls_instance-insid    = lpor-instid.
-      ls_instance-instance = lo_instance.
-      APPEND ls_instance TO mt_instance.
-    ENDIF.
-    result = ls_instance-instance.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_PERSISTENT~LPOR
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RESULT                         TYPE        SIBFLPOR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD bi_persistent~lpor.
-     result = me->ms_lpor.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->BI_PERSISTENT~REFRESH
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  method BI_PERSISTENT~REFRESH ##NEEDED.
-  endmethod.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->CONSTRUCTOR
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IT_L1APPROVER                  TYPE        HPA_T_BNAME(optional)
-* | [--->] IT_L2APPROVER                  TYPE        HPA_T_BNAME(optional)
-* | [--->] IS_HEADER                      TYPE        ZTB_A2R_WBSHDR(optional)
-* | [--->] IT_WBSHIER                     TYPE        ZTT_A2R_WBSHIER(optional)
-* | [--->] IT_WBSCAR                      TYPE        ZTT_A2R_WBSITEM(optional)
-* | [--->] IT_WBSUNCLOSE                  TYPE        ZTT_A2R_WBSUNCLOSE(optional)
-* | [--->] IV_AUTO                        TYPE        CHAR1(optional)
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD constructor.
-    me->ms_lpor-catid  = cl_swf_evt_event=>mc_objcateg_cl.
-    me->ms_lpor-typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'.
-    me->ms_lpor-instid = is_header-zreq_num.
-    me->mt_l1approver = it_l1approver.
-    me->mt_l2approver = it_l2approver.
-    me->mt_wbscar     = it_wbscar.
-    me->mt_wbshier    = it_wbshier.
-    me->mt_wbsunclose = it_wbsunclose.
-    me->ms_header     = is_header.
-    me->mv_auto       = iv_auto.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Instance Public Method ZCL_A2R_WBS_REQUEST_FLEXWF->SUBMIT
-* +-------------------------------------------------------------------------------------------------+
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD submit.
-    DATA:
-      lv_event            TYPE        sibfevent,
-      lv_objkey           TYPE        sibfinstid,
-      lr_event_parameters TYPE REF TO cl_swf_cnt_container.
-
-
-    CREATE OBJECT lr_event_parameters.
-
-    lv_event  = me->mv_event_id.
-    lv_objkey = me->ms_header-zreq_num.
-    DATA(lv_typeid) = 'ZCL_A2R_WBS_REQUEST_FLEXWF'.
-
-    " Set the header details
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
           EXPORTING
-            name  = 'IV_HEADER'
-            value = me->ms_header.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
-
-    " Set the auto approval indicator
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+            name  = 'WORKITEM_ID'
+            value = workitem_id.
+        CALL METHOD lh_trc_data->element_set
           EXPORTING
-            name  = 'IV_AUTO'
-            value = me->mv_auto.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
-
-    " Set the approval level 1
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+            name  = 'USER'
+            value = user.
+        CALL METHOD lh_trc_data->element_set
           EXPORTING
-            name  = 'IT_L1APPROVER'
-            value = me->mt_l1approver.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
-
-
-    " Set the approval level 2
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+            name  = 'LANGUAGE'
+            value = language.
+        CALL METHOD lh_trc_data->element_set "- 1865998
           EXPORTING
-            name  = 'IT_L2APPROVER'
-            value = me->mt_l2approver.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
-
-    " Set the Hierarchy pointers
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
+            name  = 'COMMENT_SEMANTIC_ONLY'
+            value = comment_semantic_only.
+        CALL METHOD lv_wapi->write_trace
           EXPORTING
-            name  = 'IT_WBS_HIER'
-            value = me->mt_wbshier.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
+            im_evt  = swwtr_api_init
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
     ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
 
-    " Set the WBS Items
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
-          EXPORTING
-            name  = 'IT_WBSCAR'
-            value = me->mt_wbscar.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
 
-    " Set the WBS Items
-    TRY.
-        CALL METHOD lr_event_parameters->if_swf_cnt_element_access_1~element_set_value
-          EXPORTING
-            name  = 'IT_WBSUNCLOSE'
-            value = me->mt_wbsunclose.
-      CATCH cx_root ##NO_HANDLER ##CATCH_ALL.
-    ENDTRY.
+*- get attachments
+  TRY.
+      CALL METHOD cl_swf_run_wim_factory=>find_by_wiid
+        EXPORTING
+          im_wiid     = workitem_id
+        RECEIVING
+          re_instance = lv_wi_handle.
+*---- note 1519755: always get container from database
+      MOVE-CORRESPONDING lv_wi_handle->m_sww_wihead TO ls_swwwihead.
+      ls_lpor = cl_swf_utl_pers_profile=>get_cnt_lpor_from_header( im_header = ls_swwwihead ).
+      lh_container = cl_swf_cnt_factory=>create( ibf_por = ls_lpor ).
+* --- note 1865998 ---
+*     lt_objects = lv_wi_handle->get_attach_objects( im_container = lh_container ).
+      lt_comment_objects = lv_wi_handle->get_attach_objects(
+                               im_container        = lh_container
+                               im_comment_semantic = 'X' ).
+      attachments[] = cl_swf_utl_wapi_services=>get_swr_object_1( lt_comment_objects ).
+      ls_swrobj-object_typ = 'CM'.
+      MODIFY attachments FROM ls_swrobj TRANSPORTING object_typ WHERE object_typ IS INITIAL.
 
-    " Event riase to trigger the WF
+      IF comment_semantic_only NE 'X'.
+        lt_objects = lv_wi_handle->get_attach_objects(
+                                 im_container        = lh_container
+                                 im_comment_semantic = space ).
+        LOOP AT lt_comment_objects INTO ls_object.
+          DELETE lt_objects WHERE instid EQ ls_object-instid
+                              AND typeid EQ ls_object-typeid
+                              AND catid EQ ls_object-catid.
+        ENDLOOP.
+        lt_attachments[] = cl_swf_utl_wapi_services=>get_swr_object_1( lt_objects ).
+        ls_swrobj-object_typ = 'AT'.
+        MODIFY lt_attachments FROM ls_swrobj TRANSPORTING object_typ WHERE object_typ IS INITIAL.
+        APPEND LINES OF lt_attachments TO attachments.
+      ENDIF.
+
+*- delete identical entries (note 2169516)
+      lt_attachments = attachments[].
+      clear attachments[].
+      loop at lt_attachments into ls_swrobj.
+        read table attachments with key object_id = ls_swrobj-object_id TRANSPORTING NO FIELDS.
+        if sy-subrc ne 0.
+          append ls_swrobj to attachments.
+        endif.
+      endloop.
+
+      DESCRIBE TABLE attachments LINES hlp_lines.
+      ls_t100msg-msgid = 'WZ'.
+      ls_t100msg-msgno = 513.
+      ls_t100msg-msgty = 'S'.
+      ls_t100msg-msgv1 = hlp_lines.
+      CALL METHOD msg->set_t100msg( ls_t100msg ).
+    CATCH cx_swf_ifs_exception INTO lv_excp.
+      return_code = 1.
+      CALL METHOD msg->set_exception_object
+        EXPORTING
+          im_excp = lv_excp.
+  ENDTRY.
+
+*- set export
+  message_lines[] = msg->get_message_lines( ).
+  message_struct[] = msg->get_message_struct( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
     TRY.
-        CALL METHOD cl_swf_evt_event=>raise
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
           EXPORTING
-            im_objcateg        = cl_swf_evt_event=>mc_objcateg_cl
-            im_objtype         = lv_typeid
-            im_event           = lv_event
-            im_objkey          = lv_objkey
-            im_event_container = lr_event_parameters.
-        COMMIT WORK.
-      CATCH cx_swf_evt_invalid_objtype  ##NO_HANDLER.
-      CATCH cx_swf_evt_invalid_event  ##NO_HANDLER.
+            name  = 'RETURN_CODE'
+            value = return_code.
+        lt_attachments = attachments[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'ATTACHMENTS'
+            value = lt_attachments[].
+        lt_message_lines = message_lines[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_LINES'
+            value = lt_message_lines.
+        lt_message_struct = message_struct[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_STRUCT'
+            value = lt_message_struct.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_result
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
     ENDTRY.
-  ENDMETHOD.
-ENDCLASS.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+
+*- unregister to framework
+  CALL METHOD lv_wapi->unregister( lv_handle ).
+
+ENDFUNCTION.
