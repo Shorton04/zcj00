@@ -1,204 +1,5 @@
-*---------------------------------------------------------------------*
-* Workflow Log
-*---------------------------------------------------------------------*
-TYPES: BEGIN OF ty_wflog,
-         wi_id         TYPE sww_wiid,
-         top_wi_id     TYPE sww_wiid,
-         wi_text       TYPE char120,
-         agent         TYPE char40,
-         status        TYPE char20,
-         created_on    TYPE sydatum,
-         created_at    TYPE syuzeit,
-         completed_on  TYPE sydatum,
-         completed_at  TYPE syuzeit,
-         comment       TYPE string,
-       END OF ty_wflog.
-
-TYPES ty_t_wflog TYPE STANDARD TABLE OF ty_wflog WITH DEFAULT KEY.
-
-DATA: gt_wflog TYPE ty_t_wflog,
-      gs_wflog TYPE ty_wflog.
-
-DATA: gv_top_wi_id TYPE sww_wiid.
-
-
-
-
-FORM show_workflow_log.
-
-  DATA: lv_top_wi_id TYPE sww_wiid.
-
-  CLEAR: gt_wflog, gv_top_wi_id.
-
-  PERFORM get_top_wi_id_for_req USING    gs_header-zreq_num
-                                CHANGING lv_top_wi_id.
-
-  IF lv_top_wi_id IS INITIAL.
-    MESSAGE 'No workflow log found' TYPE 'I'.
-    RETURN.
-  ENDIF.
-
-  gv_top_wi_id = lv_top_wi_id.
-
-  PERFORM get_workflow_log USING    gv_top_wi_id
-                           CHANGING gt_wflog.
-
-  IF gt_wflog IS INITIAL.
-    MESSAGE 'Workflow log is empty' TYPE 'I'.
-    RETURN.
-  ENDIF.
-
-  PERFORM display_workflow_log_popup.
-
-ENDFORM.
-
-
-
-FORM get_top_wi_id_for_req USING    iv_zreq_num   TYPE ztb_a2r_wbshdr-zreq_num
-                           CHANGING cv_top_wi_id TYPE sww_wiid.
-
-  CLEAR cv_top_wi_id.
-
-  SELECT SINGLE top_wi_id
-    INTO cv_top_wi_id
-    FROM sww_wi2obj
-   WHERE instid = iv_zreq_num
-     AND typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'
-     AND catid  = 'CL'
-   ORDER BY crea_tmp DESCENDING.
-
-ENDFORM.
-
-
-FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
-                      CHANGING ct_wflog     TYPE ty_t_wflog.
-
-  DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
-        ls_worklist      TYPE swr_wihdr,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc,
-        ls_wflog         TYPE ty_wflog.
-
-  CLEAR ct_wflog.
-
-*---------------------------------------------------------------------*
-* Read top workitem
-*---------------------------------------------------------------------*
-  CLEAR ls_wflog.
-  PERFORM read_single_wi_log USING    iv_top_wi_id
-                             CHANGING ls_wflog.
-
-  IF ls_wflog-wi_id IS NOT INITIAL.
-    APPEND ls_wflog TO ct_wflog.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Read child workitems
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
-    EXPORTING
-      workitem_id = iv_top_wi_id
-      user        = sy-uname
-      text        = abap_true
-      language    = sy-langu
-    IMPORTING
-      return_code = lv_return_code
-    TABLES
-      worklist       = lt_worklist
-      message_lines  = lt_message_lines
-      message_struct = lt_message_struc.
-
-  LOOP AT lt_worklist INTO ls_worklist.
-
-    CLEAR ls_wflog.
-
-    PERFORM read_single_wi_log USING    ls_worklist-wi_id
-                               CHANGING ls_wflog.
-
-    IF ls_wflog-wi_id IS NOT INITIAL.
-      APPEND ls_wflog TO ct_wflog.
-    ENDIF.
-
-  ENDLOOP.
-
-  SORT ct_wflog BY wi_id.
-  DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
-
-  SORT ct_wflog BY created_on created_at wi_id.
-
-ENDFORM.
-
-
-
-FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
-                        CHANGING cs_wflog TYPE ty_wflog.
-
-  DATA: ls_header        TYPE swr_wihdr,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc.
-
-  CLEAR cs_wflog.
-
-*---------------------------------------------------------------------*
-* Header
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-    EXPORTING
-      workitem_id         = iv_wi_id
-      user                = sy-uname
-      language            = sy-langu
-      translate_texts     = abap_true
-    IMPORTING
-      workitem_attributes = ls_header
-      return_code         = lv_return_code
-    TABLES
-      message_lines       = lt_message_lines
-      message_struct      = lt_message_struc.
-
-  IF lv_return_code <> 0.
-    RETURN.
-  ENDIF.
-
-  cs_wflog-wi_id         = ls_header-wi_id.
-  cs_wflog-top_wi_id     = gv_top_wi_id.
-  cs_wflog-wi_text       = ls_header-wi_text.
-  cs_wflog-created_on    = ls_header-wi_cd.
-  cs_wflog-created_at    = ls_header-wi_ct.
-  cs_wflog-completed_on  = ls_header-wi_led.
-  cs_wflog-completed_at  = ls_header-wi_let.
-
-*---------------------------------------------------------------------*
-* Agent
-*---------------------------------------------------------------------*
-  IF ls_header-wi_aa_name IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_aa_name.
-  ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-    cs_wflog-agent = ls_header-wi_aagent.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Status
-*---------------------------------------------------------------------*
-  IF ls_header-statustext IS NOT INITIAL.
-    cs_wflog-status = ls_header-statustext.
-  ELSE.
-    cs_wflog-status = ls_header-wi_stat.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Comment from attachment
-*---------------------------------------------------------------------*
-  PERFORM get_wi_comment USING    iv_wi_id
-                         CHANGING cs_wflog-comment.
-
-ENDFORM.
-
-
-
-FORM get_wi_comment USING    iv_wi_id TYPE sww_wiid
-                    CHANGING cv_comment TYPE string.
+FORM get_wi_comment USING    iv_wi_id    TYPE sww_wiid
+                    CHANGING cv_comment  TYPE string.
 
   DATA: lt_attachments   TYPE STANDARD TABLE OF swr_object,
         ls_attachment    TYPE swr_object,
@@ -206,8 +7,20 @@ FORM get_wi_comment USING    iv_wi_id TYPE sww_wiid
         lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
         lv_return_code   TYPE sy-subrc.
 
-  CLEAR cv_comment.
+  DATA: lv_doc_id        TYPE so_entryid,
+        lt_objcont       TYPE STANDARD TABLE OF soli,
+        ls_objcont       TYPE soli,
+        lt_objhead       TYPE STANDARD TABLE OF soli,
+        ls_objhead       TYPE soli,
+        lv_text          TYPE string.
 
+  CLEAR: cv_comment, lv_doc_id, lv_text.
+  CLEAR: lt_attachments, lt_message_lines, lt_message_struc,
+         lt_objcont, lt_objhead.
+
+*---------------------------------------------------------------------*
+* Get comment-semantic attachments only
+*---------------------------------------------------------------------*
   CALL FUNCTION 'SAP_WAPI_GET_ATTACHMENTS'
     EXPORTING
       workitem_id           = iv_wi_id
@@ -221,70 +34,67 @@ FORM get_wi_comment USING    iv_wi_id TYPE sww_wiid
       message_lines         = lt_message_lines
       message_struct        = lt_message_struc.
 
-  IF lv_return_code <> 0.
+  IF lv_return_code <> 0 OR lt_attachments IS INITIAL.
     RETURN.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* For now show attachment title / existence
+* Find "Approver Comments"
 *---------------------------------------------------------------------*
-  READ TABLE lt_attachments INTO ls_attachment INDEX 1.
-  IF sy-subrc = 0.
-    cv_comment = 'Comment exists (see attachment)'.
+  READ TABLE lt_attachments INTO ls_attachment
+    WITH KEY def_attrib = 'Approver Comments'.
+
+  IF sy-subrc <> 0.
+    READ TABLE lt_attachments INTO ls_attachment INDEX 1.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
   ENDIF.
 
-ENDFORM.
+*---------------------------------------------------------------------*
+* Extract SAPoffice document id from OBJECT_ID
+* Example:
+*   FOL500000000000004RAW51000000055075
+*   folder = FOL500000000000004
+*   docid  = RAW51000000055075
+*---------------------------------------------------------------------*
+  IF ls_attachment-object_id CS 'RAW'.
+    lv_doc_id = ls_attachment-object_id+18.
+  ELSE.
+    RETURN.
+  ENDIF.
 
-
-
-FORM display_workflow_log_popup.
-
-  DATA: lt_fcat   TYPE slis_t_fieldcat_alv,
-        ls_layout TYPE slis_layout_alv.
-
-  PERFORM build_wflog_fieldcat CHANGING lt_fcat.
-
-  ls_layout-zebra             = abap_true.
-  ls_layout-colwidth_optimize = abap_true.
-
-  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+*---------------------------------------------------------------------*
+* Read document text
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SO_DOCUMENT_READ_API1'
     EXPORTING
-      i_callback_program    = sy-repid
-      is_layout             = ls_layout
-      it_fieldcat           = lt_fcat
-      i_screen_start_column = 10
-      i_screen_start_line   = 5
-      i_screen_end_column   = 180
-      i_screen_end_line     = 25
+      document_id    = lv_doc_id
     TABLES
-      t_outtab              = gt_wflog.
+      object_header  = lt_objhead
+      object_content = lt_objcont
+    EXCEPTIONS
+      document_id_not_exist = 1
+      operation_no_authorization = 2
+      x_error = 3
+      OTHERS = 4.
 
-ENDFORM.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
 
+*---------------------------------------------------------------------*
+* Build comment text
+*---------------------------------------------------------------------*
+  LOOP AT lt_objcont INTO ls_objcont.
+    IF lv_text IS INITIAL.
+      lv_text = ls_objcont-line.
+    ELSE.
+      CONCATENATE lv_text ls_objcont-line INTO lv_text
+        SEPARATED BY cl_abap_char_utilities=>newline.
+    ENDIF.
+  ENDLOOP.
 
-
-FORM build_wflog_fieldcat CHANGING ct_fcat TYPE slis_t_fieldcat_alv.
-
-  DATA: ls_fcat TYPE slis_fieldcat_alv.
-
-  CLEAR ct_fcat.
-
-  DEFINE add_fcat.
-    CLEAR ls_fcat.
-    ls_fcat-fieldname = &1.
-    ls_fcat-seltext_l = &2.
-    ls_fcat-outputlen = &3.
-    APPEND ls_fcat TO ct_fcat.
-  END-OF-DEFINITION.
-
-  add_fcat 'WI_ID'         'Workitem ID'   12.
-  add_fcat 'WI_TEXT'       'Step Text'     50.
-  add_fcat 'AGENT'         'Agent'         25.
-  add_fcat 'STATUS'        'Status'        20.
-  add_fcat 'CREATED_ON'    'Created On'    10.
-  add_fcat 'CREATED_AT'    'Created At'    8.
-  add_fcat 'COMPLETED_ON'  'Completed On'  10.
-  add_fcat 'COMPLETED_AT'  'Completed At'  8.
-  add_fcat 'COMMENT'       'Comment'       50.
+  cv_comment = lv_text.
 
 ENDFORM.
