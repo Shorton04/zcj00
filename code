@@ -183,3 +183,349 @@ FUNCTION sap_wapi_get_child_workitems ##RFC_PERFORMANCE_OK.
   CALL METHOD lv_wapi->unregister( lv_handle ).
 
 ENDFUNCTION.
+
+
+
+
+FUNCTION sap_wapi_get_header .
+*"----------------------------------------------------------------------
+*"*"Lokale Schnittstelle:
+*"  IMPORTING
+*"     VALUE(WORKITEM_ID) LIKE  SWR_STRUCT-WORKITEMID
+*"     VALUE(USER) TYPE  SYUNAME DEFAULT SY-UNAME
+*"     VALUE(LANGUAGE) TYPE  SYLANGU DEFAULT SY-LANGU
+*"     VALUE(TRANSLATE_TEXTS) TYPE  XFELD DEFAULT SPACE
+*"  EXPORTING
+*"     VALUE(WORKITEM_ATTRIBUTES) LIKE  SWR_WIHDR STRUCTURE  SWR_WIHDR
+*"     VALUE(RETURN_CODE) LIKE  SY-SUBRC
+*"  TABLES
+*"      MESSAGE_LINES STRUCTURE  SWR_MESSAG OPTIONAL
+*"      MESSAGE_STRUCT STRUCTURE  SWR_MSTRUC OPTIONAL
+*"----------------------------------------------------------------------
+  DATA: msg TYPE REF TO cl_swf_utl_wapi_message,
+        funcname TYPE funcname VALUE 'SAP_WAPI_GET_HEADER',
+        ls_t100msg TYPE swf_t100ms,
+        lv_excp TYPE REF TO cx_swf_run_wim,
+        lv_wi_handle TYPE REF TO if_swf_run_wim_internal,
+        lv_handle TYPE sytabix,
+        lv_helper TYPE REF TO if_swf_run_wim_wapi,
+        lv_wapi TYPE REF TO if_swf_utl_wapi_framework.
+  DATA: ls_swwwihead TYPE swwwihead. " note 1463965
+  DATA: lh_trc_data TYPE REF TO if_swf_cnt_container.
+  DATA: lt_message_lines TYPE sapi_msg_lines.
+  DATA: lt_message_struct TYPE sapi_msg_struc.
+  DATA: instance_mgr TYPE REF TO cl_swf_utl_gen_instance_mgr.
+  DATA: context TYPE sww_wimctx.
+
+*- register to framework and get message object
+  lv_wapi = cl_swf_utl_wapi_framework=>create( im_language = language ).
+  lv_handle = lv_wapi->register_function( funcname ).
+  msg = lv_wapi->get_message_object( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND AND lv_wapi->get_trace_enabled( ) EQ 'X'.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'WORKITEM_ID'
+            value = workitem_id.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'USER'
+            value = user.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'LANGUAGE'
+            value = language.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'TRANSLATE_TEXTS'
+            value = translate_texts.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_init
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+
+*- get header
+  TRY.
+*     * note 880863 - wapi must not fiddle with runtime instance buffer
+*     *               the empty instance mgr guarantees a fresh wim handle,
+*     *               therefore we do not need to call ->refresh().
+*     *               we must not call ->refersh() as the container may
+*     *               still be read from runtime buffer!
+      CREATE OBJECT instance_mgr.
+      CALL METHOD cl_swf_run_wim_factory=>find_by_wiid
+        EXPORTING
+          im_wiid         = workitem_id
+          im_instance_mgr = instance_mgr
+        RECEIVING
+          re_instance     = lv_wi_handle.
+
+      context = lv_wi_handle->if_swf_run_wim_context~get_context( ).
+      context-exec_user = user.
+*- note 1266816 translate texts (status text, wi_type, wi_rhtext texts are automatically translated
+*- when the language is passed via context. wi_text must be translated explicitly, see below
+      IF translate_texts IS NOT INITIAL. " note 1463965
+        context-language = language.
+      ENDIF.
+      lv_wi_handle->if_swf_run_wim_context~set_context( im_context = context ).
+
+*- set export parameter
+      lv_helper = lv_wi_handle->get_wapi_object( ).
+      workitem_attributes = lv_helper->get_header( ).
+
+*- note 1463965:
+      IF translate_texts IS NOT INITIAL.
+        MOVE-CORRESPONDING lv_wi_handle->m_sww_wihead TO ls_swwwihead.
+        CALL METHOD cl_swf_utl_workitem_text=>translate
+          EXPORTING
+            im_langu    = language
+          CHANGING
+            ch_workitem = ls_swwwihead.
+        workitem_attributes-wi_lang = ls_swwwihead-wi_lang.
+        workitem_attributes-wi_text = ls_swwwihead-wi_text.
+      ENDIF.
+
+      ls_t100msg-msgid = 'WZ'.
+      ls_t100msg-msgno = 516.
+      ls_t100msg-msgty = 'S'.
+      CALL METHOD msg->set_t100msg( ls_t100msg ).
+    CATCH cx_swf_run_wim INTO lv_excp.
+      return_code = 1.
+      CALL METHOD msg->set_exception_object
+        EXPORTING
+          im_excp = lv_excp.
+  ENDTRY.
+
+*- set export
+  message_lines[] = msg->get_message_lines( ).
+  message_struct[] = msg->get_message_struct( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND AND lv_wapi->get_trace_enabled( ) EQ 'X'.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'RETURN_CODE'
+            value = return_code.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'WORKITEM_ATTRIBUTES'
+            value = workitem_attributes.
+        lt_message_lines = message_lines[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_LINES'
+            value = lt_message_lines.
+        lt_message_struct = message_struct[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_STRUCT'
+            value = lt_message_struct.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_result
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+
+*- unregister to framework
+  CALL METHOD lv_wapi->unregister( lv_handle ).
+
+ENDFUNCTION.
+
+
+
+
+FUNCTION sap_wapi_get_wi_agents.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(LANGUAGE) TYPE  SYLANGU DEFAULT SY-LANGU
+*"     VALUE(WORKITEMS) TYPE  SWRTWIID
+*"     VALUE(USER) TYPE  SYUNAME DEFAULT SY-UNAME
+*"     VALUE(WITH_SUBSTITUTES) TYPE  XFELD OPTIONAL
+*"     VALUE(DO_COMMIT) TYPE  XFELD DEFAULT 'X'
+*"  EXPORTING
+*"     VALUE(RETURN_CODE) TYPE  SYSUBRC
+*"     VALUE(TIMESTAMP) TYPE  TIMESTAMPL
+*"     VALUE(WI_AGENTS) TYPE  SWRTWIAGENT
+*"  TABLES
+*"      MESSAGE_LINES STRUCTURE  SWR_MESSAG OPTIONAL
+*"      MESSAGE_STRUCT STRUCTURE  SWR_MSTRUC OPTIONAL
+*"----------------------------------------------------------------------
+  DATA: lv_wapi TYPE REF TO if_swf_utl_wapi_framework.
+  DATA: lv_sv TYPE REF TO cl_swf_utl_wapi_services.
+  DATA: msg TYPE REF TO cl_swf_utl_wapi_message.
+  DATA: lv_handle TYPE sytabix.
+  DATA: ls_t100msg TYPE swf_t100ms.
+  DATA: l_ifs_excp TYPE REF TO cx_swf_ifs_exception.
+  DATA: funcname TYPE funcname VALUE 'SAP_WAPI_GET_WI_AGENTS'.
+  DATA: l_request TYPE REF TO cl_swf_run_wim_request.
+  DATA: l_cnt TYPE REF TO if_swf_ifs_parameter_container.
+  DATA: l_timestamp TYPE timestampl.
+  DATA: l_utc TYPE tznzone VALUE 'UTC'.
+  DATA: lh_trc_data TYPE REF TO if_swf_cnt_container.
+  DATA: lt_message_lines TYPE sapi_msg_lines.
+  DATA: lt_message_struct TYPE sapi_msg_struc.
+  DATA: l_count TYPE sytabix.
+
+*- register to framework and get message object
+  lv_wapi = cl_swf_utl_wapi_framework=>create( im_language = language ).
+  lv_handle = lv_wapi->register_function( funcname ).
+  msg = lv_wapi->get_message_object( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'USER'
+            value = user.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'LANGUAGE'
+            value = language.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'WITH_SUBSTITUTES'
+            value = with_substitutes.
+        DESCRIBE TABLE workitems LINES l_count     .
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'COUNT_WORKITEMS'
+            value = l_count.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_init
+            im_data = lh_trc_data.
+        IF lv_wapi->m_trace_handle->get_trace_level( ) EQ swftr_trace_level_high.
+          lh_trc_data = lv_wapi->get_initial_trace_data( ).
+          CALL METHOD lh_trc_data->element_set
+            EXPORTING
+              name  = 'WORKITEMS'
+              value = workitems.
+          CALL METHOD lv_wapi->write_trace
+            EXPORTING
+              im_evt  = swwtr_api_init_extended
+              im_data = lh_trc_data.
+        ENDIF.
+
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+
+*- get request handle
+  TRY.
+      CALL METHOD cl_swf_run_wim_request_handler=>get_instance
+        EXPORTING
+          im_reqtyp    = swfrq_wapi_get_wi_agents
+          im_do_commit = do_commit
+        RECEIVING
+          re_request = l_request.
+
+*- set parameters
+      l_cnt = l_request->get_data_container( ).
+      CALL METHOD l_cnt->set
+        EXPORTING
+          name  = 'IM_LANGUAGE'
+          value = language.
+      CALL METHOD l_cnt->set
+        EXPORTING
+          name  = 'IM_USER'
+          value = user.
+      CALL METHOD l_cnt->set
+        EXPORTING
+          name  = 'IM_WIIDS'
+          value = workitems.
+      CALL METHOD l_cnt->set
+        EXPORTING
+          name  = 'IM_WITH_SUBSTITUTES'
+          value = with_substitutes.
+
+*- set log method
+      l_request->set_log_method( funcname ).
+
+*- execute request
+      l_request->execute( ).
+
+*- get result
+      CALL METHOD l_cnt->get
+        EXPORTING
+          name  = 'EX_WI_AGENTS'
+        IMPORTING
+          value = wi_agents.
+      CALL METHOD l_cnt->get
+        EXPORTING
+          name  = 'EX_TIMESTAMP'
+        IMPORTING
+          value = timestamp.
+
+*- set request completed (write trace,...)
+      l_request->set_completed( ).
+
+      return_code = 0.
+      CLEAR ls_t100msg.
+      ls_t100msg-msgid = 'WZ'.
+      ls_t100msg-msgno = '525'.
+      ls_t100msg-msgty = 'S'.
+      CALL METHOD msg->set_t100msg( ls_t100msg ).
+
+    CATCH cx_swf_ifs_exception INTO l_ifs_excp.
+      CALL METHOD msg->set_exception_object
+        EXPORTING
+          im_excp = l_ifs_excp.
+  ENDTRY.
+
+*- set export
+  message_lines[] = msg->get_message_lines( ).
+  message_struct[] = msg->get_message_struct( ).
+
+*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+  IF lv_wapi->m_trace_handle IS BOUND.
+    TRY.
+        lh_trc_data = lv_wapi->get_initial_trace_data( ).
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'RETURN_CODE'
+            value = return_code.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'TIMESTAMP'
+            value = timestamp.
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'WI_AGENTS'
+            value = wi_agents.
+        lt_message_lines = message_lines[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_LINES'
+            value = lt_message_lines.
+        lt_message_struct = message_struct[].
+        CALL METHOD lh_trc_data->element_set
+          EXPORTING
+            name  = 'MESSAGE_STRUCT'
+            value = lt_message_struct.
+        CALL METHOD lv_wapi->write_trace
+          EXPORTING
+            im_evt  = swwtr_api_result
+            im_data = lh_trc_data.
+      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
+
+  CALL METHOD lv_wapi->unregister( lv_handle ).
+
+ENDFUNCTION.
