@@ -1,169 +1,290 @@
-FUNCTION sap_wapi_get_attachments .
-*"----------------------------------------------------------------------
-*"*"Local Interface:
-*"  IMPORTING
-*"     VALUE(WORKITEM_ID) LIKE  SWR_STRUCT-WORKITEMID
-*"     VALUE(USER) TYPE  SYUNAME DEFAULT SY-UNAME
-*"     VALUE(LANGUAGE) TYPE  SYLANGU DEFAULT SY-LANGU
-*"     VALUE(COMMENT_SEMANTIC_ONLY) TYPE  XFLAG DEFAULT SPACE
-*"  EXPORTING
-*"     VALUE(RETURN_CODE) LIKE  SY-SUBRC
-*"  TABLES
-*"      ATTACHMENTS STRUCTURE  SWR_OBJECT OPTIONAL
-*"      MESSAGE_LINES STRUCTURE  SWR_MESSAG OPTIONAL
-*"      MESSAGE_STRUCT STRUCTURE  SWR_MSTRUC OPTIONAL
-*"----------------------------------------------------------------------
-  DATA: ls_attachobj LIKE swotobjid,
-        msg          TYPE REF TO cl_swf_utl_wapi_message,
-        funcname     TYPE funcname VALUE 'SAP_WAPI_GET_ATTACHMENTS',
-        ls_t100msg   TYPE swf_t100ms,
-        lt_objects   TYPE sibflporbt,
-        lv_excp      TYPE REF TO cx_swf_ifs_exception,
-        hlp_lines    TYPE sytabix,
-        ls_swrobj    TYPE swr_object,
-        lv_wi_handle TYPE REF TO if_swf_run_wim_internal,
-        lv_handle    TYPE sytabix,
-        lv_wapi      TYPE REF TO if_swf_utl_wapi_framework.
-  DATA: lh_trc_data TYPE REF TO if_swf_cnt_container.
-  DATA: lt_message_lines TYPE sapi_msg_lines.
-  DATA: lt_message_struct TYPE sapi_msg_struc.
-  DATA: lt_attachments TYPE swrtobject.
-  DATA: lh_container TYPE REF TO if_swf_cnt_container.
-  DATA: ls_lpor TYPE sibflpor.
-  DATA: ls_swwwihead TYPE swwwihead.
-  DATA: lt_comment_objects TYPE sibflporbt.
-  DATA: ls_object LIKE LINE OF lt_objects.
+*---------------------------------------------------------------------*
+* Workflow Log
+*---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_wflog,
+         wi_id         TYPE sww_wiid,
+         top_wi_id     TYPE sww_wiid,
+         wi_text       TYPE char120,
+         agent         TYPE char40,
+         status        TYPE char20,
+         created_on    TYPE sydatum,
+         created_at    TYPE syuzeit,
+         completed_on  TYPE sydatum,
+         completed_at  TYPE syuzeit,
+         comment       TYPE string,
+       END OF ty_wflog.
 
-*- register to framework and get message object
-  lv_wapi = cl_swf_utl_wapi_framework=>create( im_language = language ).
-  lv_handle = lv_wapi->register_function( funcname ).
-  msg = lv_wapi->get_message_object( ).
+TYPES ty_t_wflog TYPE STANDARD TABLE OF ty_wflog WITH DEFAULT KEY.
 
-*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
-  IF lv_wapi->m_trace_handle IS BOUND.
-    TRY.
-        lh_trc_data = lv_wapi->get_initial_trace_data( ).
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'WORKITEM_ID'
-            value = workitem_id.
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'USER'
-            value = user.
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'LANGUAGE'
-            value = language.
-        CALL METHOD lh_trc_data->element_set "- 1865998
-          EXPORTING
-            name  = 'COMMENT_SEMANTIC_ONLY'
-            value = comment_semantic_only.
-        CALL METHOD lv_wapi->write_trace
-          EXPORTING
-            im_evt  = swwtr_api_init
-            im_data = lh_trc_data.
-      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
-    ENDTRY.
+DATA: gt_wflog TYPE ty_t_wflog,
+      gs_wflog TYPE ty_wflog.
+
+DATA: gv_top_wi_id TYPE sww_wiid.
+
+
+
+
+FORM show_workflow_log.
+
+  DATA: lv_top_wi_id TYPE sww_wiid.
+
+  CLEAR: gt_wflog, gv_top_wi_id.
+
+  PERFORM get_top_wi_id_for_req USING    gs_header-zreq_num
+                                CHANGING lv_top_wi_id.
+
+  IF lv_top_wi_id IS INITIAL.
+    MESSAGE 'No workflow log found' TYPE 'I'.
+    RETURN.
   ENDIF.
-*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
 
+  gv_top_wi_id = lv_top_wi_id.
 
-*- get attachments
-  TRY.
-      CALL METHOD cl_swf_run_wim_factory=>find_by_wiid
-        EXPORTING
-          im_wiid     = workitem_id
-        RECEIVING
-          re_instance = lv_wi_handle.
-*---- note 1519755: always get container from database
-      MOVE-CORRESPONDING lv_wi_handle->m_sww_wihead TO ls_swwwihead.
-      ls_lpor = cl_swf_utl_pers_profile=>get_cnt_lpor_from_header( im_header = ls_swwwihead ).
-      lh_container = cl_swf_cnt_factory=>create( ibf_por = ls_lpor ).
-* --- note 1865998 ---
-*     lt_objects = lv_wi_handle->get_attach_objects( im_container = lh_container ).
-      lt_comment_objects = lv_wi_handle->get_attach_objects(
-                               im_container        = lh_container
-                               im_comment_semantic = 'X' ).
-      attachments[] = cl_swf_utl_wapi_services=>get_swr_object_1( lt_comment_objects ).
-      ls_swrobj-object_typ = 'CM'.
-      MODIFY attachments FROM ls_swrobj TRANSPORTING object_typ WHERE object_typ IS INITIAL.
+  PERFORM get_workflow_log USING    gv_top_wi_id
+                           CHANGING gt_wflog.
 
-      IF comment_semantic_only NE 'X'.
-        lt_objects = lv_wi_handle->get_attach_objects(
-                                 im_container        = lh_container
-                                 im_comment_semantic = space ).
-        LOOP AT lt_comment_objects INTO ls_object.
-          DELETE lt_objects WHERE instid EQ ls_object-instid
-                              AND typeid EQ ls_object-typeid
-                              AND catid EQ ls_object-catid.
-        ENDLOOP.
-        lt_attachments[] = cl_swf_utl_wapi_services=>get_swr_object_1( lt_objects ).
-        ls_swrobj-object_typ = 'AT'.
-        MODIFY lt_attachments FROM ls_swrobj TRANSPORTING object_typ WHERE object_typ IS INITIAL.
-        APPEND LINES OF lt_attachments TO attachments.
-      ENDIF.
-
-*- delete identical entries (note 2169516)
-      lt_attachments = attachments[].
-      clear attachments[].
-      loop at lt_attachments into ls_swrobj.
-        read table attachments with key object_id = ls_swrobj-object_id TRANSPORTING NO FIELDS.
-        if sy-subrc ne 0.
-          append ls_swrobj to attachments.
-        endif.
-      endloop.
-
-      DESCRIBE TABLE attachments LINES hlp_lines.
-      ls_t100msg-msgid = 'WZ'.
-      ls_t100msg-msgno = 513.
-      ls_t100msg-msgty = 'S'.
-      ls_t100msg-msgv1 = hlp_lines.
-      CALL METHOD msg->set_t100msg( ls_t100msg ).
-    CATCH cx_swf_ifs_exception INTO lv_excp.
-      return_code = 1.
-      CALL METHOD msg->set_exception_object
-        EXPORTING
-          im_excp = lv_excp.
-  ENDTRY.
-
-*- set export
-  message_lines[] = msg->get_message_lines( ).
-  message_struct[] = msg->get_message_struct( ).
-
-*~~ begin of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
-  IF lv_wapi->m_trace_handle IS BOUND.
-    TRY.
-        lh_trc_data = lv_wapi->get_initial_trace_data( ).
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'RETURN_CODE'
-            value = return_code.
-        lt_attachments = attachments[].
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'ATTACHMENTS'
-            value = lt_attachments[].
-        lt_message_lines = message_lines[].
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'MESSAGE_LINES'
-            value = lt_message_lines.
-        lt_message_struct = message_struct[].
-        CALL METHOD lh_trc_data->element_set
-          EXPORTING
-            name  = 'MESSAGE_STRUCT'
-            value = lt_message_struct.
-        CALL METHOD lv_wapi->write_trace
-          EXPORTING
-            im_evt  = swwtr_api_result
-            im_data = lh_trc_data.
-      CATCH cx_swf_ifs_exception.                       "#EC NO_HANDLER
-    ENDTRY.
+  IF gt_wflog IS INITIAL.
+    MESSAGE 'Workflow log is empty' TYPE 'I'.
+    RETURN.
   ENDIF.
-*~~ end of trace specific coding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
 
-*- unregister to framework
-  CALL METHOD lv_wapi->unregister( lv_handle ).
+  PERFORM display_workflow_log_popup.
 
-ENDFUNCTION.
+ENDFORM.
+
+
+
+FORM get_top_wi_id_for_req USING    iv_zreq_num   TYPE ztb_a2r_wbshdr-zreq_num
+                           CHANGING cv_top_wi_id TYPE sww_wiid.
+
+  CLEAR cv_top_wi_id.
+
+  SELECT SINGLE top_wi_id
+    INTO cv_top_wi_id
+    FROM sww_wi2obj
+   WHERE instid = iv_zreq_num
+     AND typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'
+     AND catid  = 'CL'
+   ORDER BY crea_tmp DESCENDING.
+
+ENDFORM.
+
+
+FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
+                      CHANGING ct_wflog     TYPE ty_t_wflog.
+
+  DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
+        ls_worklist      TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc,
+        ls_wflog         TYPE ty_wflog.
+
+  CLEAR ct_wflog.
+
+*---------------------------------------------------------------------*
+* Read top workitem
+*---------------------------------------------------------------------*
+  CLEAR ls_wflog.
+  PERFORM read_single_wi_log USING    iv_top_wi_id
+                             CHANGING ls_wflog.
+
+  IF ls_wflog-wi_id IS NOT INITIAL.
+    APPEND ls_wflog TO ct_wflog.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read child workitems
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
+    EXPORTING
+      workitem_id = iv_top_wi_id
+      user        = sy-uname
+      text        = abap_true
+      language    = sy-langu
+    IMPORTING
+      return_code = lv_return_code
+    TABLES
+      worklist       = lt_worklist
+      message_lines  = lt_message_lines
+      message_struct = lt_message_struc.
+
+  LOOP AT lt_worklist INTO ls_worklist.
+
+    CLEAR ls_wflog.
+
+    PERFORM read_single_wi_log USING    ls_worklist-wi_id
+                               CHANGING ls_wflog.
+
+    IF ls_wflog-wi_id IS NOT INITIAL.
+      APPEND ls_wflog TO ct_wflog.
+    ENDIF.
+
+  ENDLOOP.
+
+  SORT ct_wflog BY wi_id.
+  DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
+
+  SORT ct_wflog BY created_on created_at wi_id.
+
+ENDFORM.
+
+
+
+FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
+                        CHANGING cs_wflog TYPE ty_wflog.
+
+  DATA: ls_header        TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc.
+
+  CLEAR cs_wflog.
+
+*---------------------------------------------------------------------*
+* Header
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
+    EXPORTING
+      workitem_id         = iv_wi_id
+      user                = sy-uname
+      language            = sy-langu
+      translate_texts     = abap_true
+    IMPORTING
+      workitem_attributes = ls_header
+      return_code         = lv_return_code
+    TABLES
+      message_lines       = lt_message_lines
+      message_struct      = lt_message_struc.
+
+  IF lv_return_code <> 0.
+    RETURN.
+  ENDIF.
+
+  cs_wflog-wi_id         = ls_header-wi_id.
+  cs_wflog-top_wi_id     = gv_top_wi_id.
+  cs_wflog-wi_text       = ls_header-wi_text.
+  cs_wflog-created_on    = ls_header-wi_cd.
+  cs_wflog-created_at    = ls_header-wi_ct.
+  cs_wflog-completed_on  = ls_header-wi_led.
+  cs_wflog-completed_at  = ls_header-wi_let.
+
+*---------------------------------------------------------------------*
+* Agent
+*---------------------------------------------------------------------*
+  IF ls_header-wi_aa_name IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aa_name.
+  ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aagent.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Status
+*---------------------------------------------------------------------*
+  IF ls_header-statustext IS NOT INITIAL.
+    cs_wflog-status = ls_header-statustext.
+  ELSE.
+    cs_wflog-status = ls_header-wi_stat.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Comment from attachment
+*---------------------------------------------------------------------*
+  PERFORM get_wi_comment USING    iv_wi_id
+                         CHANGING cs_wflog-comment.
+
+ENDFORM.
+
+
+
+FORM get_wi_comment USING    iv_wi_id TYPE sww_wiid
+                    CHANGING cv_comment TYPE string.
+
+  DATA: lt_attachments   TYPE STANDARD TABLE OF swr_object,
+        ls_attachment    TYPE swr_object,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc.
+
+  CLEAR cv_comment.
+
+  CALL FUNCTION 'SAP_WAPI_GET_ATTACHMENTS'
+    EXPORTING
+      workitem_id           = iv_wi_id
+      user                  = sy-uname
+      language              = sy-langu
+      comment_semantic_only = 'X'
+    IMPORTING
+      return_code           = lv_return_code
+    TABLES
+      attachments           = lt_attachments
+      message_lines         = lt_message_lines
+      message_struct        = lt_message_struc.
+
+  IF lv_return_code <> 0.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* For now show attachment title / existence
+*---------------------------------------------------------------------*
+  READ TABLE lt_attachments INTO ls_attachment INDEX 1.
+  IF sy-subrc = 0.
+    cv_comment = 'Comment exists (see attachment)'.
+  ENDIF.
+
+ENDFORM.
+
+
+
+FORM display_workflow_log_popup.
+
+  DATA: lt_fcat   TYPE slis_t_fieldcat_alv,
+        ls_layout TYPE slis_layout_alv.
+
+  PERFORM build_wflog_fieldcat CHANGING lt_fcat.
+
+  ls_layout-zebra             = abap_true.
+  ls_layout-colwidth_optimize = abap_true.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program    = sy-repid
+      is_layout             = ls_layout
+      it_fieldcat           = lt_fcat
+      i_screen_start_column = 10
+      i_screen_start_line   = 5
+      i_screen_end_column   = 180
+      i_screen_end_line     = 25
+    TABLES
+      t_outtab              = gt_wflog.
+
+ENDFORM.
+
+
+
+FORM build_wflog_fieldcat CHANGING ct_fcat TYPE slis_t_fieldcat_alv.
+
+  DATA: ls_fcat TYPE slis_fieldcat_alv.
+
+  CLEAR ct_fcat.
+
+  DEFINE add_fcat.
+    CLEAR ls_fcat.
+    ls_fcat-fieldname = &1.
+    ls_fcat-seltext_l = &2.
+    ls_fcat-outputlen = &3.
+    APPEND ls_fcat TO ct_fcat.
+  END-OF-DEFINITION.
+
+  add_fcat 'WI_ID'         'Workitem ID'   12.
+  add_fcat 'WI_TEXT'       'Step Text'     50.
+  add_fcat 'AGENT'         'Agent'         25.
+  add_fcat 'STATUS'        'Status'        20.
+  add_fcat 'CREATED_ON'    'Created On'    10.
+  add_fcat 'CREATED_AT'    'Created At'    8.
+  add_fcat 'COMPLETED_ON'  'Completed On'  10.
+  add_fcat 'COMPLETED_AT'  'Completed At'  8.
+  add_fcat 'COMMENT'       'Comment'       50.
+
+ENDFORM.
