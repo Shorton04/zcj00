@@ -4,9 +4,9 @@
 TYPES: BEGIN OF ty_wflog,
          wi_id         TYPE sww_wiid,
          top_wi_id     TYPE sww_wiid,
-         wi_text       TYPE char80,
-         agent         TYPE syuname,
-         status        TYPE char30,
+         wi_text       TYPE char120,
+         agent         TYPE char40,
+         status        TYPE char20,
          created_on    TYPE sydatum,
          created_at    TYPE syuzeit,
          completed_on  TYPE sydatum,
@@ -17,19 +17,6 @@ DATA: gt_wflog TYPE STANDARD TABLE OF ty_wflog,
       gs_wflog TYPE ty_wflog.
 
 DATA: gv_top_wi_id TYPE sww_wiid.
-
-
-
-
-
-MODULE user_command_0200 INPUT.
-
-  CASE sy-ucomm.
-    WHEN 'WFLOG'.
-      PERFORM show_workflow_log.
-  ENDCASE.
-
-ENDMODULE.
 
 
 
@@ -86,8 +73,6 @@ FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
         lv_return_code   TYPE sy-subrc,
         ls_wflog         TYPE ty_wflog.
 
-  FIELD-SYMBOLS: <lv_workitemid> TYPE any.
-
   CLEAR ct_wflog.
 
 *---------------------------------------------------------------------*
@@ -126,15 +111,9 @@ FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
 *---------------------------------------------------------------------*
   LOOP AT lt_worklist INTO ls_worklist.
 
-    UNASSIGN <lv_workitemid>.
-    ASSIGN COMPONENT 'WORKITEMID' OF STRUCTURE ls_worklist TO <lv_workitemid>.
-    IF sy-subrc <> 0 OR <lv_workitemid> IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
     CLEAR ls_wflog.
 
-    PERFORM read_single_wi_log USING    <lv_workitemid>
+    PERFORM read_single_wi_log USING    ls_worklist-wi_id
                                CHANGING ls_wflog.
 
     IF ls_wflog-wi_id IS NOT INITIAL.
@@ -144,7 +123,7 @@ FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
   ENDLOOP.
 
 *---------------------------------------------------------------------*
-* Remove duplicate top WI if ever returned again
+* Remove duplicates
 *---------------------------------------------------------------------*
   SORT ct_wflog BY wi_id.
   DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
@@ -156,33 +135,25 @@ ENDFORM.
 
 
 
-FORM read_single_wi_log USING    iv_wi_id   TYPE sww_wiid
-                        CHANGING cs_wflog   TYPE ty_wflog.
+FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
+                        CHANGING cs_wflog TYPE ty_wflog.
 
   DATA: ls_header        TYPE swr_wihdr,
         lt_message_lines TYPE STANDARD TABLE OF swr_messag,
         lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc,
-        lt_wiids         TYPE swrtwiid,
-        lt_wi_agents     TYPE swrtwiagent,
-        lv_timestamp     TYPE timestampl.
-
-  FIELD-SYMBOLS: <lv_val>   TYPE any,
-                 <ls_agent> TYPE any,
-                 <lv_objid> TYPE any,
-                 <lv_user>  TYPE any.
+        lv_return_code   TYPE sy-subrc.
 
   CLEAR cs_wflog.
 
 *---------------------------------------------------------------------*
-* Get header of one workitem
+* Get workitem header
 *---------------------------------------------------------------------*
   CALL FUNCTION 'SAP_WAPI_GET_HEADER'
     EXPORTING
-      workitem_id       = iv_wi_id
-      user              = sy-uname
-      language          = sy-langu
-      translate_texts   = abap_true
+      workitem_id         = iv_wi_id
+      user                = sy-uname
+      language            = sy-langu
+      translate_texts     = abap_true
     IMPORTING
       workitem_attributes = ls_header
       return_code         = lv_return_code
@@ -195,113 +166,41 @@ FORM read_single_wi_log USING    iv_wi_id   TYPE sww_wiid
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Move header values dynamically from SWR_WIHDR
+* Fill popup structure
 *---------------------------------------------------------------------*
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WORKITEMID' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-wi_id = <lv_val>.
+  cs_wflog-wi_id         = ls_header-wi_id.
+  cs_wflog-top_wi_id     = gv_top_wi_id.
+  cs_wflog-wi_text       = ls_header-wi_text.
+  cs_wflog-created_on    = ls_header-wi_cd.
+  cs_wflog-created_at    = ls_header-wi_ct.
+  cs_wflog-completed_on  = ls_header-wi_led.
+  cs_wflog-completed_at  = ls_header-wi_let.
+
+*---------------------------------------------------------------------*
+* Agent
+*---------------------------------------------------------------------*
+  IF ls_header-wi_aa_name IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aa_name.
+  ELSEIF ls_header-wi_agent IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_agent.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Status
+*---------------------------------------------------------------------*
+  IF ls_header-statusxt IS NOT INITIAL.
+    cs_wflog-status = ls_header-statusxt.
   ELSE.
-    cs_wflog-wi_id = iv_wi_id.
-  ENDIF.
-
-  cs_wflog-top_wi_id = iv_wi_id.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_TEXT' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-wi_text = <lv_val>.
-  ENDIF.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_STAT' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    PERFORM get_wi_status_text USING    <lv_val>
+    PERFORM get_wi_status_text USING    ls_header-wi_stat
                                CHANGING cs_wflog-status.
-  ENDIF.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_CD' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-created_on = <lv_val>.
-  ENDIF.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_CT' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-created_at = <lv_val>.
-  ENDIF.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_AED' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-completed_on = <lv_val>.
-  ENDIF.
-
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'WI_AET' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0.
-    cs_wflog-completed_at = <lv_val>.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Get top workitem id from header if available
-*---------------------------------------------------------------------*
-  UNASSIGN <lv_val>.
-  ASSIGN COMPONENT 'TOP_WI_ID' OF STRUCTURE ls_header TO <lv_val>.
-  IF sy-subrc = 0 AND <lv_val> IS NOT INITIAL.
-    cs_wflog-top_wi_id = <lv_val>.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Get agent of one workitem
-*---------------------------------------------------------------------*
-  CLEAR lt_wiids.
-  APPEND iv_wi_id TO lt_wiids.
-
-  CLEAR: lt_message_lines, lt_message_struc, lv_return_code, lt_wi_agents, lv_timestamp.
-
-  CALL FUNCTION 'SAP_WAPI_GET_WI_AGENTS'
-    EXPORTING
-      language         = sy-langu
-      workitems        = lt_wiids
-      user             = sy-uname
-      with_substitutes = abap_false
-      do_commit        = abap_false
-    IMPORTING
-      return_code      = lv_return_code
-      timestamp        = lv_timestamp
-      wi_agents        = lt_wi_agents
-    TABLES
-      message_lines    = lt_message_lines
-      message_struct   = lt_message_struc.
-
-  IF lv_return_code = 0.
-    READ TABLE lt_wi_agents ASSIGNING <ls_agent> INDEX 1.
-    IF sy-subrc = 0.
-
-      UNASSIGN <lv_objid>.
-      ASSIGN COMPONENT 'OBJID' OF STRUCTURE <ls_agent> TO <lv_objid>.
-      IF sy-subrc = 0 AND <lv_objid> IS NOT INITIAL.
-        cs_wflog-agent = <lv_objid>.
-      ELSE.
-        UNASSIGN <lv_user>.
-        ASSIGN COMPONENT 'USER_ID' OF STRUCTURE <ls_agent> TO <lv_user>.
-        IF sy-subrc = 0 AND <lv_user> IS NOT INITIAL.
-          cs_wflog-agent = <lv_user>.
-        ENDIF.
-      ENDIF.
-
-    ENDIF.
   ENDIF.
 
 ENDFORM.
 
 
 
-
 FORM get_wi_status_text USING    iv_stat TYPE any
-                        CHANGING cv_text TYPE char30.
+                        CHANGING cv_text TYPE char20.
 
   CASE iv_stat.
     WHEN 'READY'.
@@ -362,30 +261,20 @@ FORM build_wflog_fieldcat CHANGING ct_fcat TYPE slis_t_fieldcat_alv.
     CLEAR ls_fcat.
     ls_fcat-fieldname = &1.
     ls_fcat-seltext_l = &2.
-    ls_fcat-seltext_m = &2.
-    ls_fcat-seltext_s = &2.
-    ls_fcat-outputlen = &3.
+    ls_fcat-seltext_m = &3.
+    ls_fcat-seltext_s = &4.
+    ls_fcat-outputlen = &5.
     APPEND ls_fcat TO ct_fcat.
   END-OF-DEFINITION.
 
-  add_fcat 'WI_ID'         'Workitem'      12.
-  add_fcat 'TOP_WI_ID'     'Top WI'        12.
-  add_fcat 'WI_TEXT'       'Step Text'     40.
-  add_fcat 'AGENT'         'Agent'         15.
-  add_fcat 'STATUS'        'Status'        20.
-  add_fcat 'CREATED_ON'    'Created On'    10.
-  add_fcat 'CREATED_AT'    'Created At'    8.
-  add_fcat 'COMPLETED_ON'  'Completed On'  10.
-  add_fcat 'COMPLETED_AT'  'Completed At'  8.
+  add_fcat 'WI_ID'         'Workitem ID'  'Workitem'  'WI ID'    12.
+  add_fcat 'TOP_WI_ID'     'Top Workitem' 'Top WI'    'Top WI'   12.
+  add_fcat 'WI_TEXT'       'Step Text'    'Step Text' 'Step'     50.
+  add_fcat 'AGENT'         'Agent'        'Agent'     'Agent'    20.
+  add_fcat 'STATUS'        'Status'       'Status'    'Status'   20.
+  add_fcat 'CREATED_ON'    'Created On'   'Created'   'Cr.On'    10.
+  add_fcat 'CREATED_AT'    'Created At'   'Cr.Time'   'Cr.At'    8.
+  add_fcat 'COMPLETED_ON'  'Completed On' 'Compl.On'  'Cmp.On'   10.
+  add_fcat 'COMPLETED_AT'  'Completed At' 'Compl.At'  'Cmp.At'   8.
 
 ENDFORM.
-
-
-
-
-ZTOP_WI_ID TYPE SWW_WIID
-
-
-UPDATE ztb_a2r_wbshdr
-   SET ztop_wi_id = @lv_top_wi_id
- WHERE zreq_num   = @gs_header-zreq_num.
