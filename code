@@ -1,32 +1,49 @@
-FORM get_text.
+FORM display_text USING iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num.
+
+  DATA: lv_remarks TYPE ztb_a2r_wbshdr-z_remarks,
+        lt_text    TYPE STANDARD TABLE OF tline,
+        ls_text    TYPE tline,
+        lt_lines   TYPE STANDARD TABLE OF string,
+        lv_line    TYPE string.
 
   CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
 
-  CLEAR: ls_text, lt_text.
+  CLEAR: lv_remarks, lt_text, lt_lines.
 
-  CALL METHOD lo_editor->get_text_as_r3table
-    IMPORTING
+*---------------------------------------------------------------------*
+* Get remarks from header table
+*---------------------------------------------------------------------*
+  SELECT SINGLE z_remarks
+    INTO lv_remarks
+    FROM ztb_a2r_wbshdr
+    WHERE zreq_num = iv_zreq_num.
+
+  IF sy-subrc <> 0 OR lv_remarks IS INITIAL.
+    CALL METHOD lo_editor->set_text_as_r3table
+      EXPORTING
+        table = lt_text.
+    CALL METHOD lo_editor->flush.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Convert stored # into multiple editor lines
+*---------------------------------------------------------------------*
+  SPLIT lv_remarks AT '#' INTO TABLE lt_lines.
+
+  LOOP AT lt_lines INTO lv_line.
+    CLEAR ls_text.
+    ls_text-tdline = lv_line.
+    APPEND ls_text TO lt_text.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Display in text editor
+*---------------------------------------------------------------------*
+  CALL METHOD lo_editor->set_text_as_r3table
+    EXPORTING
       table = lt_text.
 
   CALL METHOD lo_editor->flush.
-
-  " FIXED: Store remarks in global variable
-  CLEAR gv_z_remarks.
-  LOOP AT lt_text INTO ls_text.
-    IF gv_z_remarks IS INITIAL.
-      gv_z_remarks = ls_text-text.
-    ELSE.
-      CONCATENATE gv_z_remarks ls_text-text INTO gv_z_remarks
-        SEPARATED BY cl_abap_char_utilities=>newline.
-    ENDIF.
-  ENDLOOP.
-
-  " Additional Lines Check
-  IF lines( lt_text ) > lv_rlines.
-    READ TABLE lt_text INTO ls_text INDEX ( lv_rlines + 1 ).
-    IF ls_text IS INITIAL.
-      DELETE lt_text INDEX ( lv_rlines + 1 ).
-    ENDIF.
-  ENDIF.
 
 ENDFORM.
