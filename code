@@ -1,21 +1,18 @@
+FIELD-SYMBOLS: <fs_unclose> TYPE ty_wbs_unclose.
+
 DATA lv_tabix TYPE sy-tabix.
 
-LOOP AT gt_wbs_unclose INTO gs_wbs_unclose.
+LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
   lv_tabix = sy-tabix.
 
-  READ TABLE gt_wbs_items INTO gs_wbs_item
-    WITH KEY posid = gs_wbs_unclose-wbs_element_code.
+  READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
   IF sy-subrc = 0.
-
     IF gs_wbs_item-zstat IS NOT INITIAL.
-      gs_wbs_unclose-status = gs_wbs_item-zstat.
+      <fs_unclose>-status = gs_wbs_item-zstat.
     ENDIF.
 
     IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
-      gs_wbs_unclose-to_be = gs_wbs_item-zstat_tobe.
+      <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
     ENDIF.
-
-    MODIFY gt_wbs_unclose FROM gs_wbs_unclose INDEX lv_tabix.
   ENDIF.
-
 ENDLOOP.
