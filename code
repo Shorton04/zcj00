@@ -1,59 +1,42 @@
-FORM create_text_editor .
+FORM get_text.
+
+  DATA: lv_remarks TYPE ztb_a2r_wbshdr-z_remarks.
 
   CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
 
-  IF lo_editor IS INITIAL.
-    CREATE OBJECT lo_editor
-      EXPORTING
-        repid                      = sy-repid
-        dynnr                      = sy-dynnr
-        dynpro_container           = 'REMARKS'
-        wordwrap_mode              = 2
-        wordwrap_position          = 72
-        wordwrap_to_linebreak_mode = 1.
-  ENDIF.
+  CLEAR: ls_text, lt_text.
 
-  CHECK lo_editor IS BOUND.
+*---------------------------------------------------------------------*
+* DISPLAY REQUEST MODE
+*---------------------------------------------------------------------*
+  IF gv_disp_req = abap_true.
 
-  IF lines( lt_text ) = lv_rlines AND NOT lt_text IS INITIAL.
-    APPEND INITIAL LINE TO lt_text.
-  ENDIF.
-  CALL METHOD lo_editor->set_text_as_r3table
-    EXPORTING
-      table = lt_text.
+    SELECT SINGLE z_remarks
+      INTO lv_remarks
+      FROM ztb_a2r_wbshdr
+      WHERE zreq_num = gs_header-zreq_num.
 
-  IF NOT lt_text IS INITIAL AND NOT lv_rlines IS INITIAL.
-    CALL METHOD lo_editor->select_lines
-      EXPORTING
-        from_line = 1
-        to_line   = lv_rlines.
-    CALL METHOD lo_editor->protect_selection
-      EXPORTING
-        protect_mode = lc_true.
-    CALL METHOD lo_editor->set_selection_pos_in_line
-      EXPORTING
-        line                   = ( lv_rlines + 1 )
-        pos                    = 0
-      EXCEPTIONS
-        error_cntl_call_method = 1
-        OTHERS                 = 2.
-    IF sy-subrc <> 0.
-*    implement suitable error handling here
+    IF sy-subrc = 0 AND lv_remarks IS NOT INITIAL.
+      CLEAR ls_text.
+      ls_text-text = lv_remarks.
+      APPEND ls_text TO lt_text.
     ENDIF.
-  ENDIF.
+
+    CALL METHOD lo_editor->set_text_as_r3table
+      EXPORTING
+        table = lt_text.
 
 *--- statusbar in text-control
-  CALL METHOD lo_editor->set_statusbar_mode
-    EXPORTING
-      statusbar_mode = lc_true.
+    CALL METHOD lo_editor->set_statusbar_mode
+      EXPORTING
+        statusbar_mode = lc_true.
 
-*--- Toolbar in text-control
-  CALL METHOD lo_editor->set_toolbar_mode
-    EXPORTING
-      toolbar_mode = lc_true.
+*--- toolbar in text-control
+    CALL METHOD lo_editor->set_toolbar_mode
+      EXPORTING
+        toolbar_mode = lc_true.
 
-*Set Visibility for Remarks
-  IF NOT lv_dflag IS INITIAL.
+*--- display only
     CALL METHOD lo_editor->set_readonly_mode
       EXPORTING
         readonly_mode          = lc_true
@@ -61,10 +44,52 @@ FORM create_text_editor .
         error_cntl_call_method = 1
         invalid_parameter      = 2
         OTHERS                 = 3.
-    IF sy-subrc <> 0.
-    ENDIF.
+
+    CALL METHOD lo_editor->flush.
+
+    RETURN.
   ENDIF.
+
+*---------------------------------------------------------------------*
+* INPUT / EDIT MODE
+*---------------------------------------------------------------------*
+  CALL METHOD lo_editor->get_text_as_r3table
+    IMPORTING
+      table = lt_text.
+
+*--- statusbar in text-control
+  CALL METHOD lo_editor->set_statusbar_mode
+    EXPORTING
+      statusbar_mode = lc_true.
+
+*--- toolbar in text-control
+  CALL METHOD lo_editor->set_toolbar_mode
+    EXPORTING
+      toolbar_mode = lc_true.
 
   CALL METHOD lo_editor->flush.
 
-ENDFORM.                    " CREATE_TEXT_EDITOR
+  CLEAR gv_z_remarks.
+
+  LOOP AT lt_text INTO ls_text.
+    IF gv_z_remarks IS INITIAL.
+      gv_z_remarks = ls_text-text.
+    ELSE.
+      CONCATENATE gv_z_remarks
+                  ls_text-text
+             INTO gv_z_remarks
+        SEPARATED BY cl_abap_char_utilities=>newline.
+    ENDIF.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Additional Lines Check
+*---------------------------------------------------------------------*
+  IF lines( lt_text ) > lv_rlines.
+    READ TABLE lt_text INTO ls_text INDEX ( lv_rlines + 1 ).
+    IF ls_text IS INITIAL.
+      DELETE lt_text INDEX ( lv_rlines + 1 ).
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
