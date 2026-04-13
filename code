@@ -1,122 +1,32 @@
-FORM get_wi_comment USING    iv_wi_id     TYPE sww_wiid
-                    CHANGING cv_comment   TYPE string.
+FORM get_text.
 
-  DATA: lt_attachments   TYPE STANDARD TABLE OF swr_object,
-        ls_attachment    TYPE swr_object,
-        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-        lv_return_code   TYPE sy-subrc.
+  CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
 
-  DATA: lt_objcont       TYPE STANDARD TABLE OF soli,
-        ls_objcont       TYPE soli,
-        lt_objhead       TYPE STANDARD TABLE OF soli,
-        lv_text          TYPE string,
-        lv_doc_id        TYPE sofolenti1-doc_id.
+  CLEAR: ls_text, lt_text.
 
-  DATA: lt_parts         TYPE STANDARD TABLE OF string,
-        lv_part          TYPE string.
-
-  DATA: ls_filter        TYPE sofilteri1.
-
-  CLEAR: cv_comment,
-         lt_attachments,
-         lt_message_lines,
-         lt_message_struc,
-         ls_filter.
-
-*---------------------------------------------------------------------*
-* Get only comment-semantic attachments
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_ATTACHMENTS'
-    EXPORTING
-      workitem_id           = iv_wi_id
-      user                  = sy-uname
-      language              = sy-langu
-      comment_semantic_only = 'X'
+  CALL METHOD lo_editor->get_text_as_r3table
     IMPORTING
-      return_code           = lv_return_code
-    TABLES
-      attachments           = lt_attachments
-      message_lines         = lt_message_lines
-      message_struct        = lt_message_struc.
+      table = lt_text.
 
-  IF lv_return_code <> 0 OR lt_attachments IS INITIAL.
-    RETURN.
-  ENDIF.
+  CALL METHOD lo_editor->flush.
 
-*---------------------------------------------------------------------*
-* Read all "Approver Comments" attachments and keep the latest
-*---------------------------------------------------------------------*
-  LOOP AT lt_attachments INTO ls_attachment
-    WHERE def_attrib = 'Approver Comments'
-       OR object_typ = 'CM'.
-
-    CLEAR: lt_parts, lv_part, lv_doc_id, lt_objhead, lt_objcont, lv_text.
-
-*-------------------------------------------------------------------*
-* OBJECT_ID format:
-* SOFM      FOL50000000000004RAW51000000055075
-* Need the 2nd token only
-*-------------------------------------------------------------------*
-    SPLIT ls_attachment-object_id AT space INTO TABLE lt_parts.
-    DELETE lt_parts WHERE table_line IS INITIAL.
-
-    READ TABLE lt_parts INTO lv_part INDEX 2.
-    IF sy-subrc <> 0 OR lv_part IS INITIAL.
-      CONTINUE.
+  " FIXED: Store remarks in global variable
+  CLEAR gv_z_remarks.
+  LOOP AT lt_text INTO ls_text.
+    IF gv_z_remarks IS INITIAL.
+      gv_z_remarks = ls_text-text.
+    ELSE.
+      CONCATENATE gv_z_remarks ls_text-text INTO gv_z_remarks
+        SEPARATED BY cl_abap_char_utilities=>newline.
     ENDIF.
-
-    lv_doc_id = lv_part.
-
-*-------------------------------------------------------------------*
-* Read SAPoffice document text
-*-------------------------------------------------------------------*
-    ls_filter-send_info  = space.
-    ls_filter-no_content = space.
-    ls_filter-rec_list   = space.
-
-    CALL FUNCTION 'SO_DOCUMENT_READ_API1'
-      EXPORTING
-        document_id                = lv_doc_id
-        filter                     = ls_filter
-      TABLES
-        object_header              = lt_objhead
-        object_content             = lt_objcont
-      EXCEPTIONS
-        document_id_not_exist      = 1
-        operation_no_authorization = 2
-        x_error                    = 3
-        OTHERS                     = 4.
-
-    IF sy-subrc <> 0 OR lt_objcont IS INITIAL.
-      CONTINUE.
-    ENDIF.
-
-*-------------------------------------------------------------------*
-* Build text for this attachment
-*-------------------------------------------------------------------*
-    LOOP AT lt_objcont INTO ls_objcont.
-      IF ls_objcont-line IS INITIAL.
-        CONTINUE.
-      ENDIF.
-
-      IF lv_text IS INITIAL.
-        lv_text = ls_objcont-line.
-      ELSE.
-        CONCATENATE lv_text ls_objcont-line
-          INTO lv_text
-          SEPARATED BY cl_abap_char_utilities=>newline.
-      ENDIF.
-    ENDLOOP.
-
-*-------------------------------------------------------------------*
-* Keep the latest non-initial comment
-* Since loop continues, later attachment overwrites older one
-*-------------------------------------------------------------------*
-    IF lv_text IS NOT INITIAL.
-      cv_comment = lv_text.
-    ENDIF.
-
   ENDLOOP.
+
+  " Additional Lines Check
+  IF lines( lt_text ) > lv_rlines.
+    READ TABLE lt_text INTO ls_text INDEX ( lv_rlines + 1 ).
+    IF ls_text IS INITIAL.
+      DELETE lt_text INDEX ( lv_rlines + 1 ).
+    ENDIF.
+  ENDIF.
 
 ENDFORM.
