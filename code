@@ -1,49 +1,70 @@
-FORM display_text USING iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num.
-
-  DATA: lv_remarks TYPE ztb_a2r_wbshdr-z_remarks,
-        lt_text    TYPE STANDARD TABLE OF tline,
-        ls_text    TYPE tline,
-        lt_lines   TYPE STANDARD TABLE OF string,
-        lv_line    TYPE string.
+FORM create_text_editor .
 
   CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
 
-  CLEAR: lv_remarks, lt_text, lt_lines.
-
-*---------------------------------------------------------------------*
-* Get remarks from header table
-*---------------------------------------------------------------------*
-  SELECT SINGLE z_remarks
-    INTO lv_remarks
-    FROM ztb_a2r_wbshdr
-    WHERE zreq_num = iv_zreq_num.
-
-  IF sy-subrc <> 0 OR lv_remarks IS INITIAL.
-    CALL METHOD lo_editor->set_text_as_r3table
+  IF lo_editor IS INITIAL.
+    CREATE OBJECT lo_editor
       EXPORTING
-        table = lt_text.
-    CALL METHOD lo_editor->flush.
-    RETURN.
+        repid                      = sy-repid
+        dynnr                      = sy-dynnr
+        dynpro_container           = 'REMARKS'
+        wordwrap_mode              = 2
+        wordwrap_position          = 72
+        wordwrap_to_linebreak_mode = 1.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Convert stored # into multiple editor lines
-*---------------------------------------------------------------------*
-  SPLIT lv_remarks AT '#' INTO TABLE lt_lines.
+  CHECK lo_editor IS BOUND.
 
-  LOOP AT lt_lines INTO lv_line.
-    CLEAR ls_text.
-    ls_text-tdline = lv_line.
-    APPEND ls_text TO lt_text.
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* Display in text editor
-*---------------------------------------------------------------------*
+  IF lines( lt_text ) = lv_rlines AND NOT lt_text IS INITIAL.
+    APPEND INITIAL LINE TO lt_text.
+  ENDIF.
   CALL METHOD lo_editor->set_text_as_r3table
     EXPORTING
       table = lt_text.
 
+  IF NOT lt_text IS INITIAL AND NOT lv_rlines IS INITIAL.
+    CALL METHOD lo_editor->select_lines
+      EXPORTING
+        from_line = 1
+        to_line   = lv_rlines.
+    CALL METHOD lo_editor->protect_selection
+      EXPORTING
+        protect_mode = lc_true.
+    CALL METHOD lo_editor->set_selection_pos_in_line
+      EXPORTING
+        line                   = ( lv_rlines + 1 )
+        pos                    = 0
+      EXCEPTIONS
+        error_cntl_call_method = 1
+        OTHERS                 = 2.
+    IF sy-subrc <> 0.
+*    implement suitable error handling here
+    ENDIF.
+  ENDIF.
+
+*--- statusbar in text-control
+  CALL METHOD lo_editor->set_statusbar_mode
+    EXPORTING
+      statusbar_mode = lc_true.
+
+*--- Toolbar in text-control
+  CALL METHOD lo_editor->set_toolbar_mode
+    EXPORTING
+      toolbar_mode = lc_true.
+
+*Set Visibility for Remarks
+  IF NOT lv_dflag IS INITIAL.
+    CALL METHOD lo_editor->set_readonly_mode
+      EXPORTING
+        readonly_mode          = lc_true
+      EXCEPTIONS
+        error_cntl_call_method = 1
+        invalid_parameter      = 2
+        OTHERS                 = 3.
+    IF sy-subrc <> 0.
+    ENDIF.
+  ENDIF.
+
   CALL METHOD lo_editor->flush.
 
-ENDFORM.
+ENDFORM.                    " CREATE_TEXT_EDITOR
