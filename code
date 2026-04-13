@@ -1,88 +1,21 @@
-FORM populate_wbs_unclose_status.
+DATA lv_tabix TYPE sy-tabix.
 
-*---------------------------------------------------------------------*
-* Local Types
-*---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_prps_stat,
-           posid TYPE prps-posid,
-           objnr TYPE prps-objnr,
-           stat  TYPE jest-stat,
-           txt04 TYPE tj02t-txt04,
-         END OF ty_prps_stat.
+LOOP AT gt_wbs_unclose INTO gs_wbs_unclose.
+  lv_tabix = sy-tabix.
 
-  TYPES: BEGIN OF ty_posid_range,
-           sign   TYPE c LENGTH 1,
-           option TYPE c LENGTH 2,
-           low    TYPE prps-posid,
-           high   TYPE prps-posid,
-         END OF ty_posid_range.
+  READ TABLE gt_wbs_items INTO gs_wbs_item
+    WITH KEY posid = gs_wbs_unclose-wbs_element_code.
+  IF sy-subrc = 0.
 
-  TYPES: BEGIN OF ty_disp_stat,
-           posid        TYPE ztb_a2r_wbsitem-posid,
-           zstat        TYPE ztb_a2r_wbsitem-zstat,
-           zstat_tobe   TYPE ztb_a2r_wbsitem-zstat_tobe,
-         END OF ty_disp_stat.
-
-*---------------------------------------------------------------------*
-* Data
-*---------------------------------------------------------------------*
-  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
-        ls_posid_range TYPE ty_posid_range,
-        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
-        lt_disp_stat   TYPE STANDARD TABLE OF ty_disp_stat,
-        ls_disp_stat   TYPE ty_disp_stat.
-
-  FIELD-SYMBOLS: <fs_unclose> TYPE zsa2r_wbsunclose.
-
-*---------------------------------------------------------------------*
-* Check data
-*---------------------------------------------------------------------*
-  IF gt_wbs_unclose IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* DISPLAY MODE
-*---------------------------------------------------------------------*
-  IF gv_disp_req = abap_true.
-
-    SELECT posid,
-           zstat,
-           zstat_tobe
-      INTO TABLE @lt_disp_stat
-      FROM ztb_a2r_wbsitem
-      WHERE zreq_num = @gs_header-zreq_num.
-
-    IF sy-subrc <> 0.
-      RETURN.
+    IF gs_wbs_item-zstat IS NOT INITIAL.
+      gs_wbs_unclose-status = gs_wbs_item-zstat.
     ENDIF.
 
-    SORT lt_disp_stat BY posid.
+    IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
+      gs_wbs_unclose-to_be = gs_wbs_item-zstat_tobe.
+    ENDIF.
 
-    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-
-      READ TABLE lt_disp_stat INTO ls_disp_stat
-        WITH KEY posid = <fs_unclose>-wbs_element_code
-        BINARY SEARCH.
-
-      IF sy-subrc = 0.
-
-        IF ls_disp_stat-zstat IS NOT INITIAL.
-          <fs_unclose>-status = ls_disp_stat-zstat.
-        ENDIF.
-
-        IF ls_disp_stat-zstat_tobe IS NOT INITIAL.
-          <fs_unclose>-to_be = ls_disp_stat-zstat_tobe.
-        ENDIF.
-
-      ENDIF.
-
-    ENDLOOP.
-
-    RETURN.
-
+    MODIFY gt_wbs_unclose FROM gs_wbs_unclose INDEX lv_tabix.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* EDIT MODE -> keep your existing logic below
-*---------------------------------------------------------------------*
+ENDLOOP.
