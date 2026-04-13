@@ -1,37 +1,21 @@
-MODULE f4_help_person_responsible INPUT.
+MODULE status_dropdown OUTPUT.
 
-  " Get IM responsible persons
-  SELECT DISTINCT vernr, verna
-    FROM prps
-    WHERE vernr IS NOT INITIAL
-    ORDER BY verna
-    INTO TABLE @lt_personnel.
-  IF sy-subrc <> 0.
-    MESSAGE i000(zmsg_a2r) WITH 'No IM Responsible Persons Found'(m17).
-    RETURN.
-  ENDIF.
+  DATA: lt_values TYPE vrm_values,
+        ls_value  TYPE vrm_value.
 
+  CLEAR lt_values.
 
-  " Display F4
-  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+  ls_value-key  = 'REL'.
+  ls_value-text = 'REL'.
+  APPEND ls_value TO lt_values.
+
+  ls_value-key  = 'TECO'.
+  ls_value-text = 'TECO'.
+  APPEND ls_value TO lt_values.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
     EXPORTING
-      retfield        = 'VERNR'
-      dynpprog        = sy-cprog
-      dynpnr          = sy-dynnr
-      dynprofield     = 'GS_HEADER-VERNR'
-      value_org       = 'S'
-      window_title    = 'Select Person Responsible' ##NO_TEXT
-    TABLES
-      value_tab       = lt_personnel
-      return_tab      = lt_return
-    EXCEPTIONS
-      parameter_error = 1
-      no_values_found = 2
-      OTHERS          = 3.
+      id     = 'GT_WBS_UNCLOSE-TO_BE'
+      values = lt_values.
 
-  IF sy-subrc = 0.
-    READ TABLE lt_return INTO ls_return INDEX 1.
-    IF sy-subrc = 0.
-      gs_header-vernr  = ls_return-fieldval.
-      p_verna          = gs_header-vernr.
-      gv_
+ENDMODULE.
