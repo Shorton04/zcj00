@@ -77,3 +77,70 @@ FORM populate_wbs_unclose_status.
   IF sy-subrc <> 0.
     RETURN.
   ENDIF.
+
+*---------------------------------------------------------------------*
+* Update gt_wbs_unclose-status
+*---------------------------------------------------------------------*
+  SORT lt_prps_stat BY posid txt04.
+
+  IF sy-uname <> 'EV92123'.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      CLEAR lv_status.
+
+      LOOP AT lt_prps_stat INTO ls_prps_stat
+        WHERE posid = <fs_unclose>-wbs_element_code.
+
+        IF lv_status IS INITIAL.
+          lv_status = ls_prps_stat-txt04.
+        ELSE.
+          CONCATENATE lv_status ls_prps_stat-txt04
+            INTO lv_status SEPARATED BY ', '.
+        ENDIF.
+      ENDLOOP.
+
+      <fs_unclose>-status = lv_status.
+    ENDLOOP.
+
+  ELSE.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+
+      <fs_unclose>-status =
+        REDUCE string(
+          INIT lv = ``
+          FOR ls_stat IN lt_prps_stat
+          WHERE ( posid = <fs_unclose>-wbs_element_code )
+          NEXT lv = condense(
+                     SWITCH string(
+                       lv
+                       WHEN `` THEN ls_stat-txt04
+                       ELSE |{ lv }, { ls_stat-txt04 }|
+                     )
+                   )
+        ).
+
+    ENDLOOP.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* DISPLAY MODE
+*---------------------------------------------------------------------*
+
+  IF gv_disp_req = abap_true.
+
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      lv_tabix = sy-tabix.
+
+      READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
+      IF sy-subrc = 0.
+        IF gs_wbs_item-zstat IS NOT INITIAL.
+          <fs_unclose>-status = gs_wbs_item-zstat.
+        ENDIF.
+
+        IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
+          <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+ENDFORM.
