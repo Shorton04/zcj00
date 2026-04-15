@@ -1,18 +1,79 @@
-FIELD-SYMBOLS: <fs_unclose> TYPE ty_wbs_unclose.
+FORM populate_wbs_unclose_status.
 
-DATA lv_tabix TYPE sy-tabix.
+*---------------------------------------------------------------------*
+* Local Types
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_prps_stat,
+           posid TYPE prps-posid,
+           objnr TYPE prps-objnr,
+           stat  TYPE jest-stat,
+           txt04 TYPE tj02t-txt04,
+         END OF ty_prps_stat.
 
-LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-  lv_tabix = sy-tabix.
+  TYPES: BEGIN OF ty_posid_range,
+           sign   TYPE c LENGTH 1,
+           option TYPE c LENGTH 2,
+           low    TYPE prps-posid,
+           high   TYPE prps-posid,
+         END OF ty_posid_range.
 
-  READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
-  IF sy-subrc = 0.
-    IF gs_wbs_item-zstat IS NOT INITIAL.
-      <fs_unclose>-status = gs_wbs_item-zstat.
-    ENDIF.
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        ls_posid_range TYPE ty_posid_range,
+        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
+        ls_prps_stat   TYPE ty_prps_stat,
+        lv_status      TYPE string.
 
-    IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
-      <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
-    ENDIF.
+  DATA lv_tabix TYPE sy-tabix.
+
+
+*---------------------------------------------------------------------*
+* Check data
+*---------------------------------------------------------------------*
+  IF gt_wbs_unclose IS INITIAL.
+    RETURN.
   ENDIF.
-ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Build POSID range from gt_wbs_unclose
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
+    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
+      REPLACE ALL OCCURRENCES OF '.' IN <fs_unclose>-wbs_element_code WITH ''.
+      CLEAR ls_posid_range.
+      ls_posid_range-sign   = 'I'.
+      ls_posid_range-option = 'EQ'.
+      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
+      APPEND ls_posid_range TO lt_posid_range.
+    ENDIF.
+  ENDLOOP.
+
+  IF lt_posid_range IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Get PRPS-OBJNR + JEST-STAT + TJ02T-TXT04
+* Active statuses only, text in logon language
+*---------------------------------------------------------------------*
+  SELECT a~posid,
+         a~objnr,
+         b~stat,
+         c~txt04
+    INTO TABLE @lt_prps_stat
+    FROM prps  AS a
+    INNER JOIN jest  AS b
+      ON b~objnr = a~objnr
+    INNER JOIN tj02t AS c
+      ON c~istat = b~stat
+     AND c~spras = @sy-langu
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space
+     AND b~stat IN ( 'I0002', 'I0045', 'I0046' ).
+*      AND b~stat IN ( 'I0045', 'I0046' ).
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
