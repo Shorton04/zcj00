@@ -1,9 +1,9 @@
 FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
-  DATA: ls_hdr_db TYPE ztb_a2r_wbshdr,
-        ls_item   TYPE ztb_a2r_wbsitem,
-        ls_wbs    TYPE ztb_a2r_wbsitem.
-
+  DATA: ls_hdr_db  TYPE ztb_a2r_wbshdr,
+        ls_item    TYPE ztb_a2r_wbsitem,
+        ls_wbs     TYPE ztb_a2r_wbsitem,
+        lt_items   TYPE STANDARD TABLE OF ztb_a2r_wbsitem.
 
   "Read existing header to keep audit fields (ernam/erdat)
   SELECT SINGLE *
@@ -16,29 +16,35 @@ FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
   ENDIF.
 
   "Update ONLY editable fields, keep original ernam/erdat
-  ls_hdr_db-profl        = gs_header-profl.
-  ls_hdr_db-kostl        = gs_header-kostl.
-  ls_hdr_db-post1        = gs_header-post1.
-  ls_hdr_db-vernr        = gs_header-vernr.
-  ls_hdr_db-plsez        = gs_header-plsez.
-  ls_hdr_db-prctr        = gs_header-prctr.
-  ls_hdr_db-waers        = gv_project_currency.
-  ls_hdr_db-z_remarks    = gs_header-z_remarks.
+  ls_hdr_db-profl         = gs_header-profl.
+  ls_hdr_db-kostl         = gs_header-kostl.
+  ls_hdr_db-post1         = gs_header-post1.
+  ls_hdr_db-vernr         = gs_header-vernr.
+  ls_hdr_db-plsez         = gs_header-plsez.
+  ls_hdr_db-prctr         = gs_header-prctr.
+  ls_hdr_db-waers         = gv_project_currency.
+  ls_hdr_db-z_remarks     = gs_header-z_remarks.
   ls_hdr_db-zunifier_proj = gs_header-zunifier_proj.
 
   "keep these from db or refresh from IM if you want:
-  ls_hdr_db-posnr        = gs_header-posnr.
-  ls_hdr_db-prnam        = gs_header-prnam.
-  ls_hdr_db-bukrs        = gs_header-bukrs.
-  ls_hdr_db-werks        = gs_header-werks.
-  ls_hdr_db-izwek        = gs_header-izwek.
-  ls_hdr_db-usr008       = gs_header-usr008.
-  ls_hdr_db-z_reqtype    = gs_header-z_reqtype.
+  ls_hdr_db-posnr         = gs_header-posnr.
+  ls_hdr_db-prnam         = gs_header-prnam.
+  ls_hdr_db-bukrs         = gs_header-bukrs.
+  ls_hdr_db-werks         = gs_header-werks.
+  ls_hdr_db-izwek         = gs_header-izwek.
+  ls_hdr_db-usr008        = gs_header-usr008.
+  ls_hdr_db-z_reqtype     = gs_header-z_reqtype.
 
   UPDATE ztb_a2r_wbshdr FROM ls_hdr_db.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
 
   "Replace items
-  DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = @iv_reqnum.
+  DELETE FROM ztb_a2r_wbsitem
+    WHERE zreq_num = @iv_reqnum.
+
+  CLEAR lt_items.
 
   LOOP AT gt_wbs_items INTO ls_wbs.
     CLEAR ls_item.
@@ -56,9 +62,14 @@ FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
     ls_item-gjahr         = ls_wbs-gjahr.
     ls_item-posnr         = ls_wbs-posnr.
 
-    INSERT ztb_a2r_wbsitem FROM ls_item.
+    APPEND ls_item TO lt_items.
+  ENDLOOP.
+
+  IF lt_items IS NOT INITIAL.
+    INSERT ztb_a2r_wbsitem FROM TABLE lt_items.
     IF sy-subrc <> 0.
       RETURN.
     ENDIF.
-  ENDLOOP.
+  ENDIF.
+
 ENDFORM.
