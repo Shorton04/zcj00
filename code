@@ -26,10 +26,6 @@ FORM populate_wbs_unclose_status.
         ls_prps_stat   TYPE ty_prps_stat,
         lv_status      TYPE string.
 
-  DATA: lt_tj02t TYPE SORTED TABLE OF tj02t
-                   WITH UNIQUE KEY spras istat,
-        ls_tj02t TYPE tj02t.
-
   DATA lv_tabix TYPE sy-tabix.
 
 
@@ -59,17 +55,8 @@ FORM populate_wbs_unclose_status.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Get TJ02T text separately
-*---------------------------------------------------------------------*
-  SELECT *
-    INTO TABLE @lt_tj02t
-    FROM tj02t
-   WHERE spras = @sy-langu
-     AND istat IN ( 'I0002', 'I0045', 'I0046' ).
-
-*---------------------------------------------------------------------*
 * Get PRPS-OBJNR + JEST-STAT
-* Active statuses only, text in logon language
+* Active statuses only
 *---------------------------------------------------------------------*
   SELECT a~posid,
          a~objnr,
@@ -88,15 +75,17 @@ FORM populate_wbs_unclose_status.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* Fill TXT04 from TJ02T
+* Fill TXT04 as constant
 *---------------------------------------------------------------------*
   LOOP AT lt_prps_stat INTO ls_prps_stat.
-    CLEAR ls_tj02t.
-    READ TABLE lt_tj02t INTO ls_tj02t
-      WITH TABLE KEY spras = sy-langu
-                     istat = ls_prps_stat-stat.
-    IF sy-subrc = 0.
-      ls_prps_stat-txt04 = ls_tj02t-txt04.
-      MODIFY lt_prps_stat FROM ls_prps_stat INDEX sy-tabix.
-    ENDIF.
+    CASE ls_prps_stat-stat.
+      WHEN 'I0002'.
+        ls_prps_stat-txt04 = 'REL'.
+      WHEN 'I0045'.
+        ls_prps_stat-txt04 = 'TECO'.
+      WHEN 'I0046'.
+        ls_prps_stat-txt04 = 'CLSD'.
+    ENDCASE.
+
+    MODIFY lt_prps_stat FROM ls_prps_stat INDEX sy-tabix.
   ENDLOOP.
