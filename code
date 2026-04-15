@@ -1,146 +1,64 @@
-FORM populate_wbs_unclose_status.
+FORM update_draft_request_db USING iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num.
 
-*---------------------------------------------------------------------*
-* Local Types
-*---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_prps_stat,
-           posid TYPE prps-posid,
-           objnr TYPE prps-objnr,
-           stat  TYPE jest-stat,
-           txt04 TYPE tj02t-txt04,
-         END OF ty_prps_stat.
-
-  TYPES: BEGIN OF ty_posid_range,
-           sign   TYPE c LENGTH 1,
-           option TYPE c LENGTH 2,
-           low    TYPE prps-posid,
-           high   TYPE prps-posid,
-         END OF ty_posid_range.
-
-*---------------------------------------------------------------------*
-* Data
-*---------------------------------------------------------------------*
-  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
-        ls_posid_range TYPE ty_posid_range,
-        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
-        ls_prps_stat   TYPE ty_prps_stat,
-        lv_status      TYPE string.
-
-  DATA lv_tabix TYPE sy-tabix.
+  DATA: ls_hdr_db TYPE ztb_a2r_wbshdr,
+        ls_item   TYPE ztb_a2r_wbsitem,
+        ls_wbs    TYPE ztb_a2r_wbsitem.
 
 
-*---------------------------------------------------------------------*
-* Check data
-*---------------------------------------------------------------------*
-  IF gt_wbs_unclose IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Build POSID range from gt_wbs_unclose
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
-    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
-      REPLACE ALL OCCURRENCES OF '.' IN <fs_unclose>-wbs_element_code WITH ''.
-      CLEAR ls_posid_range.
-      ls_posid_range-sign   = 'I'.
-      ls_posid_range-option = 'EQ'.
-      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
-      APPEND ls_posid_range TO lt_posid_range.
-    ENDIF.
-  ENDLOOP.
-
-  IF lt_posid_range IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Get PRPS-OBJNR + JEST-STAT + TJ02T-TXT04
-* Active statuses only, text in logon language
-*---------------------------------------------------------------------*
-  SELECT a~posid,
-         a~objnr,
-         b~stat,
-         c~txt04
-    INTO TABLE @lt_prps_stat
-    FROM prps  AS a
-    INNER JOIN jest  AS b
-      ON b~objnr = a~objnr
-    INNER JOIN tj02t AS c
-      ON c~istat = b~stat
-     AND c~spras = @sy-langu
-   WHERE a~posid IN @lt_posid_range
-     AND b~inact = @space
-     AND b~stat IN ( 'I0002', 'I0045', 'I0046' ).
-*      AND b~stat IN ( 'I0045', 'I0046' ).
+  "Read existing header to keep audit fields (ernam/erdat)
+  SELECT SINGLE *
+    FROM ztb_a2r_wbshdr
+    INTO @ls_hdr_db
+    WHERE zreq_num = @iv_reqnum.
 
   IF sy-subrc <> 0.
     RETURN.
   ENDIF.
 
-*---------------------------------------------------------------------*
-* Update gt_wbs_unclose-status
-*---------------------------------------------------------------------*
-  SORT lt_prps_stat BY posid txt04.
+  "Update ONLY editable fields, keep original ernam/erdat
+  ls_hdr_db-profl        = gs_header-profl.
+  ls_hdr_db-kostl        = gs_header-kostl.
+  ls_hdr_db-post1        = gs_header-post1.
+  ls_hdr_db-vernr        = gs_header-vernr.
+  ls_hdr_db-plsez        = gs_header-plsez.
+  ls_hdr_db-prctr        = gs_header-prctr.
+  ls_hdr_db-waers        = gv_project_currency.
+  ls_hdr_db-z_remarks    = gs_header-z_remarks.
+  ls_hdr_db-zunifier_proj = gs_header-zunifier_proj.
 
-  IF sy-uname <> 'EV92123'.
-    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-      CLEAR lv_status.
+  "keep these from db or refresh from IM if you want:
+  ls_hdr_db-posnr        = gs_header-posnr.
+  ls_hdr_db-prnam        = gs_header-prnam.
+  ls_hdr_db-bukrs        = gs_header-bukrs.
+  ls_hdr_db-werks        = gs_header-werks.
+  ls_hdr_db-izwek        = gs_header-izwek.
+  ls_hdr_db-usr008       = gs_header-usr008.
+  ls_hdr_db-z_reqtype    = gs_header-z_reqtype.
 
-      LOOP AT lt_prps_stat INTO ls_prps_stat
-        WHERE posid = <fs_unclose>-wbs_element_code.
+  UPDATE ztb_a2r_wbshdr FROM ls_hdr_db.
 
-        IF lv_status IS INITIAL.
-          lv_status = ls_prps_stat-txt04.
-        ELSE.
-          CONCATENATE lv_status ls_prps_stat-txt04
-            INTO lv_status SEPARATED BY ', '.
-        ENDIF.
-      ENDLOOP.
+  "Replace items
+  DELETE FROM ztb_a2r_wbsitem WHERE zreq_num = @iv_reqnum.
 
-      <fs_unclose>-status = lv_status.
-    ENDLOOP.
+  LOOP AT gt_wbs_items INTO ls_wbs.
+    CLEAR ls_item.
+    ls_item-mandt         = sy-mandt.
+    ls_item-zreq_num      = iv_reqnum.
+    ls_item-bukrs         = ls_hdr_db-bukrs.
+    ls_item-posid         = ls_wbs-posid.
+    ls_item-stufe         = ls_wbs-stufe.
+    ls_item-post1         = ls_wbs-post1.
+    ls_item-kostl         = ls_wbs-kostl.
+    ls_item-wert2         = ls_wbs-wert2.
+    ls_item-zbudget_check = ls_wbs-zbudget_check.
+    ls_item-imprf         = ls_wbs-imprf.
+    ls_item-prart         = ls_wbs-prart.
+    ls_item-gjahr         = ls_wbs-gjahr.
+    ls_item-posnr         = ls_wbs-posnr.
 
-  ELSE.
-    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-
-      <fs_unclose>-status =
-        REDUCE string(
-          INIT lv = ``
-          FOR ls_stat IN lt_prps_stat
-          WHERE ( posid = <fs_unclose>-wbs_element_code )
-          NEXT lv = condense(
-                     SWITCH string(
-                       lv
-                       WHEN `` THEN ls_stat-txt04
-                       ELSE |{ lv }, { ls_stat-txt04 }|
-                     )
-                   )
-        ).
-
-    ENDLOOP.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* DISPLAY MODE
-*---------------------------------------------------------------------*
-
-  IF gv_disp_req = abap_true.
-
-    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
-      lv_tabix = sy-tabix.
-
-      READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
-      IF sy-subrc = 0.
-        IF gs_wbs_item-zstat IS NOT INITIAL.
-          <fs_unclose>-status = gs_wbs_item-zstat.
-        ENDIF.
-
-        IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
-          <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
-        ENDIF.
-      ENDIF.
-    ENDLOOP.
-  ENDIF.
-
+    INSERT ztb_a2r_wbsitem FROM ls_item.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+  ENDLOOP.
 ENDFORM.
