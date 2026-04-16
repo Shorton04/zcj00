@@ -1,10 +1,12 @@
-gt_wbs_items    TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-      gs_wbs_item     TYPE ztb_a2r_wbsitem,
+DATA: gt_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+      gs_wbs_item  TYPE ztb_a2r_wbsitem.
 
-DATA: ls_items            TYPE ts_items.
+" FIX: align type with gt_wbs_items
+DATA: ls_items TYPE ztb_a2r_wbsitem.
 
 
 FORM download.
+
   TYPES: BEGIN OF ty_download,
            pspid   TYPE ztb_a2r_wbsitem-pspid,
            zchange TYPE ztb_a2r_wbsitem-zchange,
@@ -27,18 +29,30 @@ FORM download.
         lv_path     TYPE string.
 
   "Append header to the Excel file.
-  ls_fieldnames-fieldname = 'Level'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'WBS Element'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'Description'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
-  ls_fieldnames-fieldname = 'Budget'.APPEND ls_fieldnames TO lt_fieldnames.CLEAR ls_fieldnames.
+  ls_fieldnames-fieldname = 'Level'.
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'WBS Element'.
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'Description'.
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'Budget'.
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
 
   LOOP AT gt_wbs_items INTO ls_items.
-    ls_download-stufe = ls_items-stufe.
-    ls_download-post1 = ls_items-post1.
-    ls_download-pspid = ls_items-pspid.
+    ls_download-stufe  = ls_items-stufe.
+    ls_download-post1  = ls_items-post1.
+    ls_download-pspid  = ls_items-pspid.
     ls_download-budget = ls_items-zbudget_check.
+
     APPEND ls_download TO lt_download.
-    CLEAR: ls_download.
+    CLEAR ls_download.
   ENDLOOP.
 
   CALL METHOD cl_gui_frontend_services=>file_save_dialog
@@ -52,6 +66,7 @@ FORM download.
       path              = lv_path
       fullpath          = lv_fullpath
       user_action       = lv_action.
+
   IF NOT lv_action IS INITIAL.
     EXIT.
   ENDIF.
@@ -64,4 +79,5 @@ FORM download.
       fieldnames            = lt_fieldnames
     CHANGING
       data_tab              = lt_download.
+
 ENDFORM.
