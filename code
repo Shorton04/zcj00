@@ -1,10 +1,6 @@
 DATA: gt_wbs_items TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
       gs_wbs_item  TYPE ztb_a2r_wbsitem.
 
-" FIX: align type with gt_wbs_items
-DATA: ls_items TYPE ztb_a2r_wbsitem.
-
-
 FORM download.
 
   TYPES: BEGIN OF ty_download,
@@ -45,11 +41,11 @@ FORM download.
   APPEND ls_fieldnames TO lt_fieldnames.
   CLEAR ls_fieldnames.
 
-  LOOP AT gt_wbs_items INTO ls_items.
-    ls_download-stufe  = ls_items-stufe.
-    ls_download-post1  = ls_items-post1.
-    ls_download-pspid  = ls_items-pspid.
-    ls_download-budget = ls_items-zbudget_check.
+  LOOP AT gt_wbs_items INTO gs_wbs_item.
+    ls_download-stufe  = gs_wbs_item-stufe.
+    ls_download-post1  = gs_wbs_item-post1.
+    ls_download-pspid  = gs_wbs_item-pspid.
+    ls_download-budget = gs_wbs_item-zbudget_check.
 
     APPEND ls_download TO lt_download.
     CLEAR ls_download.
