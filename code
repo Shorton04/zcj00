@@ -1,91 +1,19 @@
-FORM populate_wbs_unclose_status.
-
-*---------------------------------------------------------------------*
-* Local Types
-*---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_prps_stat,
-           posid TYPE prps-posid,
-           objnr TYPE prps-objnr,
-           stat  TYPE jest-stat,
-           txt04 TYPE tj02t-txt04,
-         END OF ty_prps_stat.
-
-  TYPES: BEGIN OF ty_posid_range,
-           sign   TYPE c LENGTH 1,
-           option TYPE c LENGTH 2,
-           low    TYPE prps-posid,
-           high   TYPE prps-posid,
-         END OF ty_posid_range.
-
-*---------------------------------------------------------------------*
-* Data
-*---------------------------------------------------------------------*
-  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
-        ls_posid_range TYPE ty_posid_range,
-        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
-        ls_prps_stat   TYPE ty_prps_stat,
-        lv_status      TYPE string.
-
-  DATA lv_tabix TYPE sy-tabix.
-
-
-*---------------------------------------------------------------------*
-* Check data
-*---------------------------------------------------------------------*
-  IF gt_wbs_unclose IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Build POSID range from gt_wbs_unclose
-*---------------------------------------------------------------------*
-  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
-    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
-      REPLACE ALL OCCURRENCES OF '.' IN <fs_unclose>-wbs_element_code WITH ''.
-      CLEAR ls_posid_range.
-      ls_posid_range-sign   = 'I'.
-      ls_posid_range-option = 'EQ'.
-      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
-      APPEND ls_posid_range TO lt_posid_range.
-    ENDIF.
-  ENDLOOP.
-
-  IF lt_posid_range IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Get PRPS-OBJNR + JEST-STAT
-* Active statuses only
-*---------------------------------------------------------------------*
-  SELECT a~posid,
-         a~objnr,
-         b~stat
-    INTO CORRESPONDING FIELDS OF TABLE @lt_prps_stat
-    FROM prps  AS a
-    INNER JOIN jest  AS b
-      ON b~objnr = a~objnr
-   WHERE a~posid IN @lt_posid_range
-     AND b~inact = @space
-     AND b~stat IN ( 'I0002', 'I0045', 'I0046' ).
-*      AND b~stat IN ( 'I0045', 'I0046' ).
-
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* Fill TXT04 as constant
-*---------------------------------------------------------------------*
-  LOOP AT lt_prps_stat INTO ls_prps_stat.
-    CASE ls_prps_stat-stat.
-      WHEN 'I0002'.
-        ls_prps_stat-txt04 = 'REL'.
-      WHEN 'I0045'.
-        ls_prps_stat-txt04 = 'TECO'.
-      WHEN 'I0046'.
-        ls_prps_stat-txt04 = 'CLSD'.
-    ENDCASE.
-
-    MODIFY lt_prps_stat FROM ls_prps_stat INDEX sy-tabix.
-  ENDLOOP.
+SELECT DISTINCT
+       a~posnr,
+       a~psphi,
+       a~up,
+       a~down,
+       a~left,
+       a~right,
+       b~pspnr,
+       b~posid,
+       b~stufe
+  INTO TABLE @DATA(lt_hier_join)
+  FROM phris AS a
+  INNER JOIN prpss AS b
+    ON b~pspnr = a~posnr
+    OR b~pspnr = a~up
+    OR b~pspnr = a~left
+    OR b~pspnr = a~down
+    OR b~pspnr = a~right
+ WHERE a~psphi = @lv_psphi.
