@@ -1,3 +1,6 @@
+i want you to apply extensioin for zunifier_proj and thr value came from is_header-zunifier_proj
+
+these codes use as reference (from ECC)
 FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
                                 ct_extensionin TYPE STANDARD TABLE.
 
@@ -152,3 +155,33 @@ FORM check_prps_create CHANGING ct_wbs_element TYPE STANDARD TABLE
   ENDLOOP.
 
 ENDFORM.                    " CHECK_PRPS_CREATE
+
+
+and here my code in s4hana
+
+      ls_wbs_celement-description      = ls_wbs-post1.
+      ls_wbs_celement-company_code     = is_header-bukrs.
+      ls_wbs_celement-profit_ctr       = is_header-prctr.
+      ls_wbs_celement-controlling_area = is_header-vkokr.
+      ls_wbs_celement-plant            = is_header-werks.
+
+      ls_wbs_celement-wbs_planning_element = abap_true.
+      ls_wbs_celement-inv_reason           = is_header-izwek.
+
+      IF ls_wbs-stufe = 1.
+        ls_wbs_celement-invest_profile = ls_wbs-imprf.
+      ELSE.
+        CLEAR ls_wbs_celement-invest_profile.
+      ENDIF.
+
+      ls_wbs_celement-respsbl_cctr   = ls_wbs-kostl.
+      ls_wbs_celement-inv_reason     = is_header-izwek.
+      ls_wbs_celement-responsible_no = is_header-vernr.
+
+      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+      ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
