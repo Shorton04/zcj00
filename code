@@ -1,56 +1,68 @@
-METHODS log_bapi_messages
+METHODS process_bapi_messages
   IMPORTING
-    iv_reqnum   TYPE ztb_a2r_wbshdr-zreq_num
-    iv_posid    TYPE prps-posid OPTIONAL
-    iv_pspnr    TYPE prps-pspnr OPTIONAL
-    iv_process  TYPE char30
-    it_return   TYPE bapiret2_t.
+    it_return TYPE bapiret2_t
+    iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num
+    iv_posid  TYPE prps-posid OPTIONAL
+    iv_pspnr  TYPE prps-pspnr OPTIONAL
+    iv_process TYPE char30.
 
 
-METHOD log_bapi_messages.
 
-  DATA(lt_msg) = VALUE ztb_a2r_wbsmsg_tt( ).
+METHOD process_bapi_messages.
 
-  LOOP AT it_return INTO DATA(ls_ret)
-       WHERE type IN ( 'E', 'W', 'A' ).
+  " 1. Filter only E/W/A
+  DATA(lt_messages) = VALUE bapiret2_t(
+    FOR ls_ret IN it_return
+    WHERE ( type = 'E' OR type = 'W' OR type = 'A' )
+    ( ls_ret )
+  ).
 
-    APPEND VALUE #( 
+  " 2. If no messages → do nothing
+  IF lt_messages IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " 3. Prepare DB entries (temporary behavior)
+  DATA(lt_msg_db) = VALUE ztb_a2r_wbsmsg_tt( ).
+
+  LOOP AT lt_messages INTO DATA(ls_msg).
+
+    " Get full formatted message (important for real SAP messages)
+    MESSAGE ID ls_msg-id TYPE ls_msg-type NUMBER ls_msg-number
+      WITH ls_msg-message_v1 ls_msg-message_v2
+           ls_msg-message_v3 ls_msg-message_v4
+      INTO DATA(lv_text).
+
+    APPEND VALUE #(
       mandt       = sy-mandt
+      guid        = cl_system_uuid=>create_uuid_x16_static( )
+
       req_num     = iv_reqnum
       posid       = iv_posid
       pspnr       = iv_pspnr
       process     = iv_process
 
-      type        = ls_ret-type
-      id          = ls_ret-id
-      number      = ls_ret-number
-      message     = ls_ret-message
-      log_no      = ls_ret-log_no
-      log_msg_no  = ls_ret-log_msg_no
-      message_v1  = ls_ret-message_v1
-      message_v2  = ls_ret-message_v2
-      message_v3  = ls_ret-message_v3
-      message_v4  = ls_ret-message_v4
+      type        = ls_msg-type
+      id          = ls_msg-id
+      number      = ls_msg-number
+      message     = lv_text   " ✔ formatted message
+
+      log_no      = ls_msg-log_no
+      log_msg_no  = ls_msg-log_msg_no
+      message_v1  = ls_msg-message_v1
+      message_v2  = ls_msg-message_v2
+      message_v3  = ls_msg-message_v3
+      message_v4  = ls_msg-message_v4
 
       ernam       = sy-uname
       erdat       = sy-datum
       erzet       = sy-uzeit
-    ) TO lt_msg.
+    ) TO lt_msg_db.
 
   ENDLOOP.
 
-  IF lt_msg IS NOT INITIAL.
-    INSERT ztb_a2r_wbsmsg FROM TABLE @lt_msg.
-  ENDIF.
+  " 4. Save to table (temporary instead of email)
+  INSERT ztb_a2r_wbsmsg FROM TABLE @lt_msg_db.
 
 ENDMETHOD.
 
-
-
-me->log_bapi_messages(
-  iv_reqnum  = gv_reqnum
-  iv_posid   = lv_posid
-  iv_pspnr   = lv_pspnr
-  iv_process = 'CREATE_WBS'
-  it_return  = lt_return
-).
