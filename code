@@ -1,27 +1,56 @@
-DATA(lv_left_int_t) = ls_phris_hier_t-wbs_left.
-DATA(lv_left_check) = lv_left_int_t.
+METHODS log_bapi_messages
+  IMPORTING
+    iv_reqnum   TYPE ztb_a2r_wbshdr-zreq_num
+    iv_posid    TYPE prps-posid OPTIONAL
+    iv_pspnr    TYPE prps-pspnr OPTIONAL
+    iv_process  TYPE char30
+    it_return   TYPE bapiret2_t.
 
-IF lv_left_check IS NOT INITIAL.
 
-  "Normalize format (important if POSID has no dots)
-  REPLACE ALL OCCURRENCES OF '.' IN lv_left_check WITH ''.
+METHOD log_bapi_messages.
 
-  "Check if LEFT exists in WBS items
-  READ TABLE it_wbs_items TRANSPORTING NO FIELDS
-    WITH KEY posid = lv_left_check.
+  DATA(lt_msg) = VALUE ztb_a2r_wbsmsg_tt( ).
 
-  IF sy-subrc = 0.
-    "✔ Valid → convert
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-      EXPORTING
-        input  = lv_left_int_t
-      IMPORTING
-        output = lv_left_int_t.
-  ELSE.
-    "Invalid → clear
-    CLEAR lv_left_int_t.
+  LOOP AT it_return INTO DATA(ls_ret)
+       WHERE type IN ( 'E', 'W', 'A' ).
+
+    APPEND VALUE #( 
+      mandt       = sy-mandt
+      req_num     = iv_reqnum
+      posid       = iv_posid
+      pspnr       = iv_pspnr
+      process     = iv_process
+
+      type        = ls_ret-type
+      id          = ls_ret-id
+      number      = ls_ret-number
+      message     = ls_ret-message
+      log_no      = ls_ret-log_no
+      log_msg_no  = ls_ret-log_msg_no
+      message_v1  = ls_ret-message_v1
+      message_v2  = ls_ret-message_v2
+      message_v3  = ls_ret-message_v3
+      message_v4  = ls_ret-message_v4
+
+      ernam       = sy-uname
+      erdat       = sy-datum
+      erzet       = sy-uzeit
+    ) TO lt_msg.
+
+  ENDLOOP.
+
+  IF lt_msg IS NOT INITIAL.
+    INSERT ztb_a2r_wbsmsg FROM TABLE @lt_msg.
   ENDIF.
 
-ENDIF.
+ENDMETHOD.
 
-ls_wbs_celement-wbs_left = lv_left_int_t.
+
+
+me->log_bapi_messages(
+  iv_reqnum  = gv_reqnum
+  iv_posid   = lv_posid
+  iv_pspnr   = lv_pspnr
+  iv_process = 'CREATE_WBS'
+  it_return  = lt_return
+).
