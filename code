@@ -1,41 +1,74 @@
-                                                METHOD get_approvers.
+METHOD send_email_to_agent.
 
-                                                  DATA:
-                                                    lv_objid TYPE hrobjid.
+  DATA: lv_email     TYPE adr6-smtp_addr,
+        lv_subject   TYPE so_obj_des VALUE 'Workflow Notification',
+        lt_text      TYPE bcsy_text,
+        lv_line      TYPE string,
+        lo_send_req  TYPE REF TO cl_bcs,
+        lo_document  TYPE REF TO cl_document_bcs,
+        lo_recipient TYPE REF TO if_recipient_bcs.
 
-                                                  IF iv_pos IS INITIAL.
-                                                    RETURN.
-                                                  ENDIF.
+*---------------------------------------------------------------------*
+* 1. Get Email from SYUNAME
+*---------------------------------------------------------------------*
+  SELECT SINGLE a~smtp_addr
+    INTO lv_email
+    FROM usr21 AS u
+    INNER JOIN adr6 AS a
+      ON u~addrnumber = a~addrnumber
+     AND u~persnumber = a~persnumber
+   WHERE u~bname = @iv_agent.
 
-                                                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-                                                    EXPORTING
-                                                      input  = iv_pos
-                                                    IMPORTING
-                                                      output = lv_objid.
+  IF lv_email IS INITIAL.
+    MESSAGE |No email found for user { iv_agent }| TYPE 'I'.
+    RETURN.
+  ENDIF.
 
-                                                  " Read only needed field (VARYF)
-                                                  SELECT varyf
-                                                    FROM hrp1001
-                                                    WHERE objid = @lv_objid
-                                                      AND otype = 'S'
-                                                      AND plvar = '01'
-                                                      AND rsign = 'A'
-                                                      AND relat = '008'
-                                                      AND sclas = 'US'
-                                                      AND endda >= @sy-datum
-                                                      AND begda <= @sy-datum
-                                                    INTO TABLE @DATA(lt_users).
+*---------------------------------------------------------------------*
+* 2. Convert LT_MESSAGES to email body
+*---------------------------------------------------------------------*
+  LOOP AT it_messages INTO DATA(ls_msg).
 
-                                                    " Exit early if nothing found
-                                                    IF lt_users IS INITIAL.
-                                                      RETURN.
-                                                    ENDIF.
+    lv_line = |{ ls_msg-type } - { ls_msg-message }|.
+    APPEND lv_line TO lt_text.
 
-                                                    " Remove duplicates and empty values
-                                                    DELETE lt_users WHERE varyf IS INITIAL.
-                                                    SORT lt_users BY varyf.
-                                                    DELETE ADJACENT DUPLICATES FROM lt_users COMPARING varyf.
+  ENDLOOP.
 
-                                                    " Append to output table
-                                                    ct_approvers = VALUE #( FOR ls IN lt_users ( CONV #( ls-varyf ) ) ).
-                                                  ENDMETHOD.
+*---------------------------------------------------------------------*
+* 3. Create Email
+*---------------------------------------------------------------------*
+  lo_send_req = cl_bcs=>create_persistent( ).
+
+  lo_document = cl_document_bcs=>create_document(
+                  i_type    = 'RAW'
+                  i_text    = lt_text
+                  i_subject = lv_subject ).
+
+  lo_send_req->set_document( lo_document ).
+
+*---------------------------------------------------------------------*
+* 4. Set Recipient
+*---------------------------------------------------------------------*
+  lo_recipient = cl_cam_address_bcs=>create_internet_address( lv_email ).
+
+  lo_send_req->add_recipient(
+    EXPORTING
+      i_recipient = lo_recipient
+      i_express   = abap_true ).
+
+*---------------------------------------------------------------------*
+* 5. Send Email
+*---------------------------------------------------------------------*
+  lo_send_req->send( i_with_error_screen = abap_true ).
+
+  COMMIT WORK.
+
+ENDMETHOD.
+
+
+
+
+METHODS send_email_to_agent
+  IMPORTING
+    iv_agent    TYPE syuname
+    it_messages TYPE bapiret2_t.
