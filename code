@@ -1,14 +1,68 @@
-METHOD get_last_approver_by_req.
+METHODS get_workflow_log_by_req
+  IMPORTING
+    iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num
+  RETURNING
+    VALUE(rt_wflog) TYPE ty_t_wflog.
+
+METHODS get_last_approver
+  IMPORTING
+    iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num
+  RETURNING
+    VALUE(rv_agent) TYPE syuname.
+
+
+
+METHOD get_last_approver.
+
+  DATA: lt_wflog TYPE ty_t_wflog,
+        ls_wflog TYPE ty_wflog.
+
+  CLEAR rv_agent.
+
+*---------------------------------------------------------------------*
+* 1. Get full workflow log
+*---------------------------------------------------------------------*
+  lt_wflog = get_workflow_log_by_req( iv_zreq_num ).
+
+  IF lt_wflog IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 2. Filter ONLY real approval steps
+*---------------------------------------------------------------------*
+  DELETE lt_wflog WHERE wi_text NOT CP 'WBS Approval*'
+                    OR agent IS INITIAL
+                    OR agent CP 'IF On-prem*'
+                    OR agent CP 'Workflow*'
+                    OR agent CP 'RFC*'
+                    OR agent CP 'S/4HANA*'.
+
+*---------------------------------------------------------------------*
+* 3. Get latest approver
+*---------------------------------------------------------------------*
+  SORT lt_wflog BY created_on created_at wi_id.
+
+  READ TABLE lt_wflog INTO ls_wflog INDEX lines( lt_wflog ).
+
+  IF sy-subrc = 0.
+    rv_agent = ls_wflog-agent.
+  ENDIF.
+
+ENDMETHOD.
+
+
+
+METHOD get_workflow_log_by_req.
 
   DATA: lv_top_wi_id    TYPE sww_wiid,
         lt_worklist     TYPE STANDARD TABLE OF swr_wihdr,
         ls_worklist     TYPE swr_wihdr,
         ls_header       TYPE swr_wihdr,
-        lt_wflog        TYPE STANDARD TABLE OF ty_wflog,
         ls_wflog        TYPE ty_wflog,
         lv_return_code  TYPE sy-subrc.
 
-  CLEAR rv_agent.
+  CLEAR rt_wflog.
 
 *---------------------------------------------------------------------*
 * 1. Get TOP WI ID
@@ -26,9 +80,35 @@ METHOD get_last_approver_by_req.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 2. Read TOP Workitem (same as read_single_wi_log)
+* 2. Helper macro-like logic (inline)
 *---------------------------------------------------------------------*
-  PERFORM_READ_WI:
+  DEFINE append_wflog.
+    CLEAR ls_wflog.
+
+    ls_wflog-wi_id      = ls_header-wi_id.
+    ls_wflog-top_wi_id  = lv_top_wi_id.
+    ls_wflog-wi_text    = ls_header-wi_text.
+    ls_wflog-created_on = ls_header-wi_cd.
+    ls_wflog-created_at = ls_header-wi_ct.
+
+    IF ls_header-wi_aa_name IS NOT INITIAL.
+      ls_wflog-agent = ls_header-wi_aa_name.
+    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+      ls_wflog-agent = ls_header-wi_aagent.
+    ENDIF.
+
+    IF ls_header-statustext IS NOT INITIAL.
+      ls_wflog-status = ls_header-statustext.
+    ELSE.
+      ls_wflog-status = ls_header-wi_stat.
+    ENDIF.
+
+    APPEND ls_wflog TO rt_wflog.
+  END-OF-DEFINITION.
+
+*---------------------------------------------------------------------*
+* 3. Read TOP workitem
+*---------------------------------------------------------------------*
   CALL FUNCTION 'SAP_WAPI_GET_HEADER'
     EXPORTING
       workitem_id         = lv_top_wi_id
@@ -40,23 +120,11 @@ METHOD get_last_approver_by_req.
       return_code         = lv_return_code.
 
   IF lv_return_code = 0.
-    CLEAR ls_wflog.
-    ls_wflog-wi_id      = ls_header-wi_id.
-    ls_wflog-wi_text    = ls_header-wi_text.
-    ls_wflog-created_on = ls_header-wi_cd.
-    ls_wflog-created_at = ls_header-wi_ct.
-
-    IF ls_header-wi_aa_name IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aa_name.
-    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aagent.
-    ENDIF.
-
-    APPEND ls_wflog TO lt_wflog.
+    append_wflog.
   ENDIF.
 
 *---------------------------------------------------------------------*
-* 3. Get CHILD Workitems
+* 4. Read CHILD workitems
 *---------------------------------------------------------------------*
   CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
     EXPORTING
@@ -70,8 +138,6 @@ METHOD get_last_approver_by_req.
       worklist    = lt_worklist.
 
   LOOP AT lt_worklist INTO ls_worklist.
-
-    CLEAR ls_header.
 
     CALL FUNCTION 'SAP_WAPI_GET_HEADER'
       EXPORTING
@@ -87,56 +153,16 @@ METHOD get_last_approver_by_req.
       CONTINUE.
     ENDIF.
 
-    CLEAR ls_wflog.
-    ls_wflog-wi_id      = ls_header-wi_id.
-    ls_wflog-wi_text    = ls_header-wi_text.
-    ls_wflog-created_on = ls_header-wi_cd.
-    ls_wflog-created_at = ls_header-wi_ct.
-
-    IF ls_header-wi_aa_name IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aa_name.
-    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aagent.
-    ENDIF.
-
-    APPEND ls_wflog TO lt_wflog.
+    append_wflog.
 
   ENDLOOP.
 
 *---------------------------------------------------------------------*
-* 4. Remove duplicates & sort (same as your FORM)
+* 5. Clean + sort
 *---------------------------------------------------------------------*
-  SORT lt_wflog BY wi_id.
-  DELETE ADJACENT DUPLICATES FROM lt_wflog COMPARING wi_id.
+  SORT rt_wflog BY wi_id.
+  DELETE ADJACENT DUPLICATES FROM rt_wflog COMPARING wi_id.
 
-*---------------------------------------------------------------------*
-* 5. Filter ONLY real approval agents (your logic)
-*---------------------------------------------------------------------*
-  DELETE lt_wflog WHERE wi_text NOT CP 'WBS Approval*'
-                    OR agent IS INITIAL
-                    OR agent CP 'IF On-prem*'
-                    OR agent CP 'Workflow*'
-                    OR agent CP 'RFC*'
-                    OR agent CP 'S/4HANA*'.
-
-*---------------------------------------------------------------------*
-* 6. Get LAST approver
-*---------------------------------------------------------------------*
-  SORT lt_wflog BY created_on created_at wi_id.
-
-  READ TABLE lt_wflog INTO ls_wflog INDEX lines( lt_wflog ).
-
-  IF sy-subrc = 0.
-    rv_agent = ls_wflog-agent.
-  ENDIF.
+  SORT rt_wflog BY created_on created_at wi_id.
 
 ENDMETHOD.
-
-
-
-
-METHODS get_last_approver_by_req
-  IMPORTING
-    iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num
-  RETURNING
-    VALUE(rv_agent) TYPE syuname.
