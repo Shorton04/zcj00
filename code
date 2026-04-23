@@ -1,168 +1,41 @@
-METHODS get_workflow_log_by_req
-  IMPORTING
-    iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num
-  RETURNING
-    VALUE(rt_wflog) TYPE ty_t_wflog.
+                                                METHOD get_approvers.
 
-METHODS get_last_approver
-  IMPORTING
-    iv_zreq_num TYPE ztb_a2r_wbshdr-zreq_num
-  RETURNING
-    VALUE(rv_agent) TYPE syuname.
+                                                  DATA:
+                                                    lv_objid TYPE hrobjid.
 
+                                                  IF iv_pos IS INITIAL.
+                                                    RETURN.
+                                                  ENDIF.
 
+                                                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                                                    EXPORTING
+                                                      input  = iv_pos
+                                                    IMPORTING
+                                                      output = lv_objid.
 
-METHOD get_last_approver.
+                                                  " Read only needed field (VARYF)
+                                                  SELECT varyf
+                                                    FROM hrp1001
+                                                    WHERE objid = @lv_objid
+                                                      AND otype = 'S'
+                                                      AND plvar = '01'
+                                                      AND rsign = 'A'
+                                                      AND relat = '008'
+                                                      AND sclas = 'US'
+                                                      AND endda >= @sy-datum
+                                                      AND begda <= @sy-datum
+                                                    INTO TABLE @DATA(lt_users).
 
-  DATA: lt_wflog TYPE ty_t_wflog,
-        ls_wflog TYPE ty_wflog.
+                                                    " Exit early if nothing found
+                                                    IF lt_users IS INITIAL.
+                                                      RETURN.
+                                                    ENDIF.
 
-  CLEAR rv_agent.
+                                                    " Remove duplicates and empty values
+                                                    DELETE lt_users WHERE varyf IS INITIAL.
+                                                    SORT lt_users BY varyf.
+                                                    DELETE ADJACENT DUPLICATES FROM lt_users COMPARING varyf.
 
-*---------------------------------------------------------------------*
-* 1. Get full workflow log
-*---------------------------------------------------------------------*
-  lt_wflog = get_workflow_log_by_req( iv_zreq_num ).
-
-  IF lt_wflog IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 2. Filter ONLY real approval steps
-*---------------------------------------------------------------------*
-  DELETE lt_wflog WHERE wi_text NOT CP 'WBS Approval*'
-                    OR agent IS INITIAL
-                    OR agent CP 'IF On-prem*'
-                    OR agent CP 'Workflow*'
-                    OR agent CP 'RFC*'
-                    OR agent CP 'S/4HANA*'.
-
-*---------------------------------------------------------------------*
-* 3. Get latest approver
-*---------------------------------------------------------------------*
-  SORT lt_wflog BY created_on created_at wi_id.
-
-  READ TABLE lt_wflog INTO ls_wflog INDEX lines( lt_wflog ).
-
-  IF sy-subrc = 0.
-    rv_agent = ls_wflog-agent.
-  ENDIF.
-
-ENDMETHOD.
-
-
-
-METHOD get_workflow_log_by_req.
-
-  DATA: lv_top_wi_id    TYPE sww_wiid,
-        lt_worklist     TYPE STANDARD TABLE OF swr_wihdr,
-        ls_worklist     TYPE swr_wihdr,
-        ls_header       TYPE swr_wihdr,
-        ls_wflog        TYPE ty_wflog,
-        lv_return_code  TYPE sy-subrc.
-
-  CLEAR rt_wflog.
-
-*---------------------------------------------------------------------*
-* 1. Get TOP WI ID
-*---------------------------------------------------------------------*
-  SELECT SINGLE top_wi_id
-    INTO lv_top_wi_id
-    FROM sww_wi2obj
-   WHERE instid = @iv_zreq_num
-     AND typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'
-     AND catid  = 'CL'
-   ORDER BY top_wi_id DESCENDING.
-
-  IF lv_top_wi_id IS INITIAL.
-    RETURN.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 2. Helper macro-like logic (inline)
-*---------------------------------------------------------------------*
-  DEFINE append_wflog.
-    CLEAR ls_wflog.
-
-    ls_wflog-wi_id      = ls_header-wi_id.
-    ls_wflog-top_wi_id  = lv_top_wi_id.
-    ls_wflog-wi_text    = ls_header-wi_text.
-    ls_wflog-created_on = ls_header-wi_cd.
-    ls_wflog-created_at = ls_header-wi_ct.
-
-    IF ls_header-wi_aa_name IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aa_name.
-    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-      ls_wflog-agent = ls_header-wi_aagent.
-    ENDIF.
-
-    IF ls_header-statustext IS NOT INITIAL.
-      ls_wflog-status = ls_header-statustext.
-    ELSE.
-      ls_wflog-status = ls_header-wi_stat.
-    ENDIF.
-
-    APPEND ls_wflog TO rt_wflog.
-  END-OF-DEFINITION.
-
-*---------------------------------------------------------------------*
-* 3. Read TOP workitem
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-    EXPORTING
-      workitem_id         = lv_top_wi_id
-      user                = sy-uname
-      language            = sy-langu
-      translate_texts     = abap_true
-    IMPORTING
-      workitem_attributes = ls_header
-      return_code         = lv_return_code.
-
-  IF lv_return_code = 0.
-    append_wflog.
-  ENDIF.
-
-*---------------------------------------------------------------------*
-* 4. Read CHILD workitems
-*---------------------------------------------------------------------*
-  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
-    EXPORTING
-      workitem_id = lv_top_wi_id
-      user        = sy-uname
-      text        = abap_true
-      language    = sy-langu
-    IMPORTING
-      return_code = lv_return_code
-    TABLES
-      worklist    = lt_worklist.
-
-  LOOP AT lt_worklist INTO ls_worklist.
-
-    CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-      EXPORTING
-        workitem_id         = ls_worklist-wi_id
-        user                = sy-uname
-        language            = sy-langu
-        translate_texts     = abap_true
-      IMPORTING
-        workitem_attributes = ls_header
-        return_code         = lv_return_code.
-
-    IF lv_return_code <> 0.
-      CONTINUE.
-    ENDIF.
-
-    append_wflog.
-
-  ENDLOOP.
-
-*---------------------------------------------------------------------*
-* 5. Clean + sort
-*---------------------------------------------------------------------*
-  SORT rt_wflog BY wi_id.
-  DELETE ADJACENT DUPLICATES FROM rt_wflog COMPARING wi_id.
-
-  SORT rt_wflog BY created_on created_at wi_id.
-
-ENDMETHOD.
+                                                    " Append to output table
+                                                    ct_approvers = VALUE #( FOR ls IN lt_users ( CONV #( ls-varyf ) ) ).
+                                                  ENDMETHOD.
