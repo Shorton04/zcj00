@@ -1,68 +1,182 @@
-METHODS process_bapi_messages
-  IMPORTING
-    it_return TYPE bapiret2_t
-    iv_reqnum TYPE ztb_a2r_wbshdr-zreq_num
-    iv_posid  TYPE prps-posid OPTIONAL
-    iv_pspnr  TYPE prps-pspnr OPTIONAL
-    iv_process TYPE char30.
+FORM show_workflow_log.
 
+  DATA: lv_top_wi_id TYPE sww_wiid.
 
+  CLEAR: gt_wflog, gv_top_wi_id.
 
-METHOD process_bapi_messages.
+  PERFORM get_top_wi_id_for_req USING    gs_header-zreq_num
+                                CHANGING lv_top_wi_id.
 
-  " 1. Filter only E/W/A
-  DATA(lt_messages) = VALUE bapiret2_t(
-    FOR ls_ret IN it_return
-    WHERE ( type = 'E' OR type = 'W' OR type = 'A' )
-    ( ls_ret )
-  ).
-
-  " 2. If no messages → do nothing
-  IF lt_messages IS INITIAL.
+  IF lv_top_wi_id IS INITIAL.
+    MESSAGE 'No workflow log found'(v29) TYPE 'I'.
     RETURN.
   ENDIF.
 
-  " 3. Prepare DB entries (temporary behavior)
-  DATA(lt_msg_db) = VALUE ztb_a2r_wbsmsg_tt( ).
+  gv_top_wi_id = lv_top_wi_id.
 
-  LOOP AT lt_messages INTO DATA(ls_msg).
+  PERFORM get_workflow_log USING    gv_top_wi_id
+                           CHANGING gt_wflog.
 
-    " Get full formatted message (important for real SAP messages)
-    MESSAGE ID ls_msg-id TYPE ls_msg-type NUMBER ls_msg-number
-      WITH ls_msg-message_v1 ls_msg-message_v2
-           ls_msg-message_v3 ls_msg-message_v4
-      INTO DATA(lv_text).
+  IF gt_wflog IS INITIAL.
+    MESSAGE 'Workflow log is empty'(v30) TYPE 'I'.
+    RETURN.
+  ENDIF.
 
-    APPEND VALUE #(
-      mandt       = sy-mandt
-      guid        = cl_system_uuid=>create_uuid_x16_static( )
+  PERFORM display_workflow_log_popup.
 
-      req_num     = iv_reqnum
-      posid       = iv_posid
-      pspnr       = iv_pspnr
-      process     = iv_process
+ENDFORM.
 
-      type        = ls_msg-type
-      id          = ls_msg-id
-      number      = ls_msg-number
-      message     = lv_text   " ✔ formatted message
+*&---------------------------------------------------------------------*
+*& Form get_top_wi_id_for_req
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_top_wi_id_for_req USING    iv_zreq_num   TYPE ztb_a2r_wbshdr-zreq_num
+                           CHANGING cv_top_wi_id TYPE sww_wiid.
 
-      log_no      = ls_msg-log_no
-      log_msg_no  = ls_msg-log_msg_no
-      message_v1  = ls_msg-message_v1
-      message_v2  = ls_msg-message_v2
-      message_v3  = ls_msg-message_v3
-      message_v4  = ls_msg-message_v4
+  CLEAR cv_top_wi_id.
 
-      ernam       = sy-uname
-      erdat       = sy-datum
-      erzet       = sy-uzeit
-    ) TO lt_msg_db.
+
+  SELECT top_wi_id
+    FROM sww_wi2obj
+    INTO @cv_top_wi_id
+    UP TO 1 ROWS
+   WHERE instid = @iv_zreq_num
+     AND typeid = 'ZCL_A2R_WBS_REQUEST_FLEXWF'
+     AND catid  = 'CL'.
+  ENDSELECT.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_workflow_log
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
+                      CHANGING ct_wflog     TYPE ty_t_wflog.
+
+  DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
+        ls_worklist      TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc,
+        ls_wflog         TYPE ty_wflog.
+
+  CLEAR ct_wflog.
+
+*---------------------------------------------------------------------*
+* Read top workitem
+*---------------------------------------------------------------------*
+  CLEAR ls_wflog.
+  PERFORM read_single_wi_log USING    iv_top_wi_id
+                             CHANGING ls_wflog.
+
+  IF ls_wflog-wi_id IS NOT INITIAL.
+    APPEND ls_wflog TO ct_wflog.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read child workitems
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
+    EXPORTING
+      workitem_id    = iv_top_wi_id
+      user           = sy-uname
+      text           = abap_true
+      language       = sy-langu
+    IMPORTING
+      return_code    = lv_return_code
+    TABLES
+      worklist       = lt_worklist
+      message_lines  = lt_message_lines
+      message_struct = lt_message_struc.
+
+  LOOP AT lt_worklist INTO ls_worklist.
+
+    CLEAR ls_wflog.
+
+    PERFORM read_single_wi_log USING    ls_worklist-wi_id
+                               CHANGING ls_wflog.
+
+    IF ls_wflog-wi_id IS NOT INITIAL.
+      APPEND ls_wflog TO ct_wflog.
+    ENDIF.
 
   ENDLOOP.
 
-  " 4. Save to table (temporary instead of email)
-  INSERT ztb_a2r_wbsmsg FROM TABLE @lt_msg_db.
+  SORT ct_wflog BY wi_id.
+  DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
 
-ENDMETHOD.
+  SORT ct_wflog BY created_on created_at wi_id.
 
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form read_single_wi_log
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
+                        CHANGING cs_wflog TYPE ty_wflog.
+
+  DATA: ls_header        TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc.
+
+  CLEAR cs_wflog.
+
+  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
+    EXPORTING
+      workitem_id         = iv_wi_id
+      user                = sy-uname
+      language            = sy-langu
+      translate_texts     = abap_true
+    IMPORTING
+      workitem_attributes = ls_header
+      return_code         = lv_return_code
+    TABLES
+      message_lines       = lt_message_lines
+      message_struct      = lt_message_struc.
+
+  IF lv_return_code <> 0.
+    RETURN.
+  ENDIF.
+
+  cs_wflog-wi_id         = ls_header-wi_id.
+  cs_wflog-top_wi_id     = gv_top_wi_id.
+  cs_wflog-wi_text       = ls_header-wi_text.
+  cs_wflog-created_on    = ls_header-wi_cd.
+  cs_wflog-created_at    = ls_header-wi_ct.
+
+
+  IF ls_header-wi_aa_name IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aa_name.
+  ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aagent.
+  ENDIF.
+
+  IF ls_header-statustext IS NOT INITIAL.
+    cs_wflog-status = ls_header-statustext.
+  ELSE.
+    cs_wflog-status = ls_header-wi_stat.
+  ENDIF.
+
+  CLEAR cs_wflog-comment.
+
+*---------------------------------------------------------------------*
+* Read comment only for real human approval workitems
+*---------------------------------------------------------------------*
+  IF cs_wflog-wi_text CP 'WBS Approval*'
+     AND cs_wflog-agent IS NOT INITIAL
+     AND cs_wflog-agent NS 'IF On-prem'
+     AND cs_wflog-agent NS 'Workflow'
+     AND cs_wflog-agent NS 'RFC'
+     AND cs_wflog-agent NS 'S/4HANA'.
+
+    PERFORM get_wi_comment USING    iv_wi_id
+                           CHANGING cs_wflog-comment.
+  ENDIF.
+
+ENDFORM.
