@@ -1,8 +1,8 @@
 DATA: lt_prps TYPE SORTED TABLE OF prps
-                WITH UNIQUE KEY pspnr,
+                WITH UNIQUE KEY posid,
       lt_bpge TYPE STANDARD TABLE OF bpge.
 
-DATA: lr_pspnr TYPE RANGE OF prps-pspnr,
+DATA: lr_posid TYPE RANGE OF prps-posid,
       lr_objnr TYPE RANGE OF bpge-objnr.
 
 FIELD-SYMBOLS:
@@ -13,12 +13,12 @@ FIELD-SYMBOLS:
 "------------------------------------------------------------
 LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
 
-  IF <fs_wbs_item>-pspnr IS NOT INITIAL.
+  IF <fs_wbs_item>-posid IS NOT INITIAL.
     APPEND VALUE #(
       sign   = 'I'
       option = 'EQ'
-      low    = <fs_wbs_item>-pspnr
-    ) TO lr_pspnr.
+      low    = <fs_wbs_item>-posid
+    ) TO lr_posid.
   ENDIF.
 
   IF <fs_wbs_item>-objnr IS NOT INITIAL.
@@ -31,22 +31,22 @@ LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
 
 ENDLOOP.
 
-SORT lr_pspnr BY low.
-DELETE ADJACENT DUPLICATES FROM lr_pspnr COMPARING low.
+SORT lr_posid BY low.
+DELETE ADJACENT DUPLICATES FROM lr_posid COMPARING low.
 
 SORT lr_objnr BY low.
 DELETE ADJACENT DUPLICATES FROM lr_objnr COMPARING low.
 
 "------------------------------------------------------------
-" Read PRPS for ZUNIFIER_PROJ
+" Read PRPS for ZUNIFIER_PROJ using POSID
 "------------------------------------------------------------
-IF lr_pspnr IS NOT INITIAL.
+IF lr_posid IS NOT INITIAL.
 
-  SELECT pspnr,
+  SELECT posid,
          zunifier_proj
     FROM prps
     INTO TABLE @lt_prps
-    WHERE pspnr IN @lr_pspnr.
+    WHERE posid IN @lr_posid.
 
 ENDIF.
 
@@ -79,10 +79,10 @@ LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
     <fs_wbs_item>-zunifier_proj.
 
   "------------------------------------------
-  " Fill ZUNIFIER_PROJ from PRPS
+  " Fill ZUNIFIER_PROJ from PRPS using POSID
   "------------------------------------------
   READ TABLE lt_prps INTO DATA(ls_prps)
-    WITH KEY pspnr = <fs_wbs_item>-pspnr
+    WITH KEY posid = <fs_wbs_item>-posid
     BINARY SEARCH.
 
   IF sy-subrc = 0.
