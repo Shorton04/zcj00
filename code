@@ -20,20 +20,16 @@ FORM get_raw_data
          END OF ty_proj.
 
   TYPES: BEGIN OF ty_prps,
-           posid          TYPE prps-posid,
-           post1          TYPE prps-post1,
-           objnr          TYPE prps-objnr,
-           pbukr          TYPE prps-pbukr,
-           pkokr          TYPE prps-pkokr,
-           pkstl          TYPE prps-pkstl,
-           werks          TYPE prps-werks,
-           stufe          TYPE prps-stufe,
-           zunifier_proj  TYPE prps-zunifier_proj,
+           posid         TYPE prps-posid,
+           post1         TYPE prps-post1,
+           objnr         TYPE prps-objnr,
+           pbukr         TYPE prps-pbukr,
+           pkokr         TYPE prps-pkokr,
+           pkstl         TYPE prps-pkstl,
+           werks         TYPE prps-werks,
+           stufe         TYPE prps-stufe,
+           zunifier_proj TYPE prps-zunifier_proj,
          END OF ty_prps.
-
-  TYPES: BEGIN OF ty_objnr,
-           objnr TYPE prps-objnr,
-         END OF ty_objnr.
 
   TYPES: BEGIN OF ty_bpge_lednr,
            objnr TYPE bpge-objnr,
@@ -58,10 +54,6 @@ FORM get_raw_data
            prart TYPE v_ivp_pr-prart,
          END OF ty_ivp_pr.
 
-  TYPES: BEGIN OF ty_posnr,
-           posnr TYPE impr-posnr,
-         END OF ty_posnr.
-
   TYPES: BEGIN OF ty_impr,
            posnr TYPE impr-posnr,
            izwek TYPE impr-izwek,
@@ -75,39 +67,42 @@ FORM get_raw_data
   DATA: lt_prps TYPE STANDARD TABLE OF ty_prps,
         ls_prps TYPE ty_prps.
 
-  DATA: lt_objnr TYPE SORTED TABLE OF ty_objnr
-                  WITH UNIQUE KEY objnr.
-
-  DATA: lt_posid TYPE SORTED TABLE OF v_ivp_pr-posid
+  " Single-column tables for IN operator
+  DATA: lt_objnr TYPE SORTED TABLE OF bpge-objnr
+                  WITH UNIQUE KEY table_line,
+        lt_posid TYPE SORTED TABLE OF v_ivp_pr-posid
+                  WITH UNIQUE KEY table_line,
+        lt_posnr TYPE SORTED TABLE OF impr-posnr
                   WITH UNIQUE KEY table_line.
 
-  DATA: lt_posnr TYPE SORTED TABLE OF ty_posnr
-                  WITH UNIQUE KEY posnr.
-
   DATA: lt_max_kstp TYPE HASHED TABLE OF ty_bpge_lednr
-                     WITH UNIQUE KEY objnr.
-
-  DATA: lt_wert2 TYPE HASHED TABLE OF ty_bpge_wert2
-                  WITH UNIQUE KEY objnr.
-
-  DATA: lt_max_kbud TYPE HASHED TABLE OF ty_bpge_lednr
-                     WITH UNIQUE KEY objnr.
-
-  DATA: lt_geber_kbud TYPE HASHED TABLE OF ty_bpge_geber
+                     WITH UNIQUE KEY objnr,
+        lt_wert2 TYPE HASHED TABLE OF ty_bpge_wert2
+                   WITH UNIQUE KEY objnr,
+        lt_max_kbud TYPE HASHED TABLE OF ty_bpge_lednr
+                     WITH UNIQUE KEY objnr,
+        lt_geber_kbud TYPE HASHED TABLE OF ty_bpge_geber
                        WITH UNIQUE KEY objnr.
 
   DATA: lt_ivp_pr_raw TYPE STANDARD TABLE OF ty_ivp_pr,
-        lt_ivp_pr     TYPE HASHED TABLE OF ty_ivp_pr
-                        WITH UNIQUE KEY posid.
+        lt_ivp_pr TYPE HASHED TABLE OF ty_ivp_pr
+                    WITH UNIQUE KEY posid.
 
   DATA: lt_impr TYPE HASHED TABLE OF ty_impr
                  WITH UNIQUE KEY posnr.
 
+  " Explicit declarations (avoid inline @DATA issues)
+  DATA: lt_max_kstp_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
+        lt_max_kbud_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
+        lt_wert2_raw    TYPE STANDARD TABLE OF ty_bpge_wert2,
+        lt_geber_raw    TYPE STANDARD TABLE OF ty_bpge_geber,
+        lt_impr_raw     TYPE STANDARD TABLE OF ty_impr.
+
   FIELD-SYMBOLS:
-    <fs_item>    TYPE ztb_a2r_wbsitem,
-    <fs_wert2>   TYPE ty_bpge_wert2,
-    <fs_ivp_pr>  TYPE ty_ivp_pr,
-    <fs_impr>    TYPE ty_impr.
+    <fs_item>   TYPE ztb_a2r_wbsitem,
+    <fs_wert2>  TYPE ty_bpge_wert2,
+    <fs_ivp_pr> TYPE ty_ivp_pr,
+    <fs_impr>   TYPE ty_impr.
 
   CLEAR: gs_header,
          gt_wbs_items.
@@ -172,21 +167,18 @@ FORM get_raw_data
   ENDIF.
 
   "------------------------------------------------------------
-  " Build unique helper tables
+  " Build helper lists
   "------------------------------------------------------------
   LOOP AT lt_prps INTO ls_prps.
 
-    INSERT VALUE #( objnr = ls_prps-objnr )
-      INTO TABLE lt_objnr.
-
-    INSERT ls_prps-posid
-      INTO TABLE lt_posid.
+    INSERT ls_prps-objnr INTO TABLE lt_objnr.
+    INSERT ls_prps-posid INTO TABLE lt_posid.
 
   ENDLOOP.
 
   "------------------------------------------------------------
   " 4) BPGE KSTP -> WERT2
-  " Highest LEDNR only, no SUM
+  " Highest LEDNR only (no SUM)
   "------------------------------------------------------------
   IF lt_objnr IS NOT INITIAL.
 
@@ -194,10 +186,10 @@ FORM get_raw_data
            objnr,
            MAX( lednr ) AS lednr
       FROM bpge
+      INTO TABLE @lt_max_kstp_raw
       WHERE objnr IN @lt_objnr
         AND vorga = 'KSTP'
-      GROUP BY objnr
-      INTO TABLE @DATA(lt_max_kstp_raw).
+      GROUP BY objnr.
 
     lt_max_kstp = CORRESPONDING #( lt_max_kstp_raw ).
 
@@ -210,8 +202,8 @@ FORM get_raw_data
         INNER JOIN @lt_max_kstp AS b
           ON a~objnr = b~objnr
          AND a~lednr = b~lednr
-        WHERE a~vorga = 'KSTP'
-        INTO TABLE @DATA(lt_wert2_raw).
+        INTO TABLE @lt_wert2_raw
+        WHERE a~vorga = 'KSTP'.
 
       SORT lt_wert2_raw BY objnr.
 
@@ -240,11 +232,11 @@ FORM get_raw_data
            objnr,
            MAX( lednr ) AS lednr
       FROM bpge
+      INTO TABLE @lt_max_kbud_raw
       WHERE objnr IN @lt_objnr
         AND vorga = 'KBUD'
         AND geber <> ''
-      GROUP BY objnr
-      INTO TABLE @DATA(lt_max_kbud_raw).
+      GROUP BY objnr.
 
     lt_max_kbud = CORRESPONDING #( lt_max_kbud_raw ).
 
@@ -257,10 +249,10 @@ FORM get_raw_data
         INNER JOIN @lt_max_kbud AS b
           ON a~objnr = b~objnr
          AND a~lednr = b~lednr
+        INTO TABLE @lt_geber_raw
         WHERE a~vorga = 'KBUD'
           AND a~geber <> ''
-        GROUP BY a~objnr
-        INTO TABLE @DATA(lt_geber_raw).
+        GROUP BY a~objnr.
 
       lt_geber_kbud = CORRESPONDING #( lt_geber_raw ).
 
@@ -281,8 +273,8 @@ FORM get_raw_data
            posnr,
            prart
       FROM v_ivp_pr
-      WHERE posid IN @lt_posid
-      INTO TABLE @lt_ivp_pr_raw.
+      INTO TABLE @lt_ivp_pr_raw
+      WHERE posid IN @lt_posid.
 
     SORT lt_ivp_pr_raw BY posid gjahr posnr.
 
@@ -297,7 +289,7 @@ FORM get_raw_data
         INSERT ls_ivp_raw
           INTO TABLE lt_ivp_pr.
 
-        INSERT VALUE #( posnr = ls_ivp_raw-posnr )
+        INSERT ls_ivp_raw-posnr
           INTO TABLE lt_posnr.
 
       ENDIF.
@@ -315,8 +307,8 @@ FORM get_raw_data
            posnr,
            izwek
       FROM impr
-      WHERE posnr IN @lt_posnr
-      INTO TABLE @DATA(lt_impr_raw).
+      INTO TABLE @lt_impr_raw
+      WHERE posnr IN @lt_posnr.
 
     lt_impr = CORRESPONDING #( lt_impr_raw ).
 
@@ -344,7 +336,7 @@ FORM get_raw_data
       gs_header-zunifier_proj = ls_prps-zunifier_proj.
     ENDIF.
 
-    " WERT2 from BPGE
+    " WERT2
     READ TABLE lt_wert2 ASSIGNING <fs_wert2>
       WITH TABLE KEY objnr = ls_prps-objnr.
 
