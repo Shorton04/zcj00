@@ -31,6 +31,18 @@ FORM get_raw_data
            zunifier_proj TYPE prps-zunifier_proj,
          END OF ty_prps.
 
+  TYPES: BEGIN OF ty_objnr,
+           objnr TYPE bpge-objnr,
+         END OF ty_objnr.
+
+  TYPES: BEGIN OF ty_posid,
+           posid TYPE v_ivp_pr-posid,
+         END OF ty_posid.
+
+  TYPES: BEGIN OF ty_posnr,
+           posnr TYPE impr-posnr,
+         END OF ty_posnr.
+
   TYPES: BEGIN OF ty_bpge_lednr,
            objnr TYPE bpge-objnr,
            lednr TYPE bpge-lednr,
@@ -67,13 +79,12 @@ FORM get_raw_data
   DATA: lt_prps TYPE STANDARD TABLE OF ty_prps,
         ls_prps TYPE ty_prps.
 
-  " Single-column tables for IN operator
-  DATA: lt_objnr TYPE SORTED TABLE OF bpge-objnr
-                  WITH UNIQUE KEY table_line,
-        lt_posid TYPE SORTED TABLE OF v_ivp_pr-posid
-                  WITH UNIQUE KEY table_line,
-        lt_posnr TYPE SORTED TABLE OF impr-posnr
-                  WITH UNIQUE KEY table_line.
+  DATA: lt_objnr TYPE SORTED TABLE OF ty_objnr
+                  WITH UNIQUE KEY objnr,
+        lt_posid TYPE SORTED TABLE OF ty_posid
+                  WITH UNIQUE KEY posid,
+        lt_posnr TYPE SORTED TABLE OF ty_posnr
+                  WITH UNIQUE KEY posnr.
 
   DATA: lt_max_kstp TYPE HASHED TABLE OF ty_bpge_lednr
                      WITH UNIQUE KEY objnr,
@@ -91,7 +102,6 @@ FORM get_raw_data
   DATA: lt_impr TYPE HASHED TABLE OF ty_impr
                  WITH UNIQUE KEY posnr.
 
-  " Explicit declarations (avoid inline @DATA issues)
   DATA: lt_max_kstp_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
         lt_max_kbud_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
         lt_wert2_raw    TYPE STANDARD TABLE OF ty_bpge_wert2,
@@ -111,21 +121,21 @@ FORM get_raw_data
   " 1) Read PROJ Header
   "------------------------------------------------------------
   SELECT SINGLE
-         pspnr,
-         post1,
-         ernam,
-         erdat,
-         vernr,
-         vbukr,
-         vkokr,
-         prctr,
-         plsez,
-         werks,
-         profl,
+         pspnr
+         post1
+         ernam
+         erdat
+         vernr
+         vbukr
+         vkokr
+         prctr
+         plsez
+         werks
+         profl
          kostl
+    INTO ls_proj
     FROM proj
-    INTO @ls_proj
-   WHERE pspid = @iv_pspid_proj.
+   WHERE pspid = iv_pspid_proj.
 
   IF sy-subrc <> 0.
     RETURN.
@@ -149,30 +159,33 @@ FORM get_raw_data
   " 2) Read PRPS Items
   "------------------------------------------------------------
   SELECT
-         posid,
-         post1,
-         objnr,
-         pbukr,
-         pkokr,
-         pkstl,
-         werks,
-         stufe,
+         posid
+         post1
+         objnr
+         pbukr
+         pkokr
+         pkstl
+         werks
+         stufe
          zunifier_proj
+    INTO TABLE lt_prps
     FROM prps
-    INTO TABLE @lt_prps
-   WHERE psphi = @ls_proj-pspnr.
+   WHERE psphi = ls_proj-pspnr.
 
   IF lt_prps IS INITIAL.
     RETURN.
   ENDIF.
 
   "------------------------------------------------------------
-  " Build helper lists
+  " Build helper tables
   "------------------------------------------------------------
   LOOP AT lt_prps INTO ls_prps.
 
-    INSERT ls_prps-objnr INTO TABLE lt_objnr.
-    INSERT ls_prps-posid INTO TABLE lt_posid.
+    INSERT VALUE #( objnr = ls_prps-objnr )
+      INTO TABLE lt_objnr.
+
+    INSERT VALUE #( posid = ls_prps-posid )
+      INTO TABLE lt_posid.
 
   ENDLOOP.
 
@@ -183,12 +196,13 @@ FORM get_raw_data
   IF lt_objnr IS NOT INITIAL.
 
     SELECT
-           objnr,
+           objnr
            MAX( lednr ) AS lednr
+      INTO TABLE lt_max_kstp_raw
       FROM bpge
-      INTO TABLE @lt_max_kstp_raw
-      WHERE objnr IN @lt_objnr
-        AND vorga = 'KSTP'
+      FOR ALL ENTRIES IN lt_objnr
+     WHERE objnr = lt_objnr-objnr
+       AND vorga = 'KSTP'
       GROUP BY objnr.
 
     lt_max_kstp = CORRESPONDING #( lt_max_kstp_raw ).
@@ -196,14 +210,14 @@ FORM get_raw_data
     IF lt_max_kstp IS NOT INITIAL.
 
       SELECT
-             a~objnr,
+             a~objnr
              a~wtges
         FROM bpge AS a
         INNER JOIN @lt_max_kstp AS b
-          ON a~objnr = b~objnr
-         AND a~lednr = b~lednr
-        INTO TABLE @lt_wert2_raw
-        WHERE a~vorga = 'KSTP'.
+           ON a~objnr = b~objnr
+          AND a~lednr = b~lednr
+       WHERE a~vorga = 'KSTP'
+        INTO TABLE @lt_wert2_raw.
 
       SORT lt_wert2_raw BY objnr.
 
@@ -226,16 +240,16 @@ FORM get_raw_data
 
     "----------------------------------------------------------
     " 5) BPGE KBUD -> GEBER
-    " Highest LEDNR + GEBER not initial
     "----------------------------------------------------------
     SELECT
-           objnr,
+           objnr
            MAX( lednr ) AS lednr
+      INTO TABLE lt_max_kbud_raw
       FROM bpge
-      INTO TABLE @lt_max_kbud_raw
-      WHERE objnr IN @lt_objnr
-        AND vorga = 'KBUD'
-        AND geber <> ''
+      FOR ALL ENTRIES IN lt_objnr
+     WHERE objnr = lt_objnr-objnr
+       AND vorga = 'KBUD'
+       AND geber <> ''
       GROUP BY objnr.
 
     lt_max_kbud = CORRESPONDING #( lt_max_kbud_raw ).
@@ -243,16 +257,16 @@ FORM get_raw_data
     IF lt_max_kbud IS NOT INITIAL.
 
       SELECT
-             a~objnr,
+             a~objnr
              MAX( a~geber ) AS geber
         FROM bpge AS a
         INNER JOIN @lt_max_kbud AS b
-          ON a~objnr = b~objnr
-         AND a~lednr = b~lednr
-        INTO TABLE @lt_geber_raw
-        WHERE a~vorga = 'KBUD'
-          AND a~geber <> ''
-        GROUP BY a~objnr.
+           ON a~objnr = b~objnr
+          AND a~lednr = b~lednr
+       WHERE a~vorga = 'KBUD'
+         AND a~geber <> ''
+       GROUP BY a~objnr
+        INTO TABLE @lt_geber_raw.
 
       lt_geber_kbud = CORRESPONDING #( lt_geber_raw ).
 
@@ -267,14 +281,15 @@ FORM get_raw_data
   IF lt_posid IS NOT INITIAL.
 
     SELECT
-           posid,
-           prnam,
-           gjahr,
-           posnr,
+           posid
+           prnam
+           gjahr
+           posnr
            prart
+      INTO TABLE lt_ivp_pr_raw
       FROM v_ivp_pr
-      INTO TABLE @lt_ivp_pr_raw
-      WHERE posid IN @lt_posid.
+      FOR ALL ENTRIES IN lt_posid
+     WHERE posid = lt_posid-posid.
 
     SORT lt_ivp_pr_raw BY posid gjahr posnr.
 
@@ -289,7 +304,7 @@ FORM get_raw_data
         INSERT ls_ivp_raw
           INTO TABLE lt_ivp_pr.
 
-        INSERT ls_ivp_raw-posnr
+        INSERT VALUE #( posnr = ls_ivp_raw-posnr )
           INTO TABLE lt_posnr.
 
       ENDIF.
@@ -304,11 +319,12 @@ FORM get_raw_data
   IF lt_posnr IS NOT INITIAL.
 
     SELECT
-           posnr,
+           posnr
            izwek
+      INTO TABLE lt_impr_raw
       FROM impr
-      INTO TABLE @lt_impr_raw
-      WHERE posnr IN @lt_posnr.
+      FOR ALL ENTRIES IN lt_posnr
+     WHERE posnr = lt_posnr-posnr.
 
     lt_impr = CORRESPONDING #( lt_impr_raw ).
 
@@ -330,13 +346,11 @@ FORM get_raw_data
     <fs_item>-stufe = ls_prps-stufe.
     <fs_item>-werks = ls_prps-werks.
 
-    " First non-initial only
     IF gs_header-zunifier_proj IS INITIAL
        AND ls_prps-zunifier_proj IS NOT INITIAL.
       gs_header-zunifier_proj = ls_prps-zunifier_proj.
     ENDIF.
 
-    " WERT2
     READ TABLE lt_wert2 ASSIGNING <fs_wert2>
       WITH TABLE KEY objnr = ls_prps-objnr.
 
@@ -344,7 +358,6 @@ FORM get_raw_data
       <fs_item>-wert2 = <fs_wert2>-wtges.
     ENDIF.
 
-    " V_IVP_PR mapping
     READ TABLE lt_ivp_pr ASSIGNING <fs_ivp_pr>
       WITH TABLE KEY posid = ls_prps-posid.
 
