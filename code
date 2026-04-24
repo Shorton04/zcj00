@@ -1,168 +1,121 @@
-GET_RAW_DATA – Build Request Header (gs_header) and WBS Items (gt_wbs_items) from PROJ/PRPS/BPGE/V_IVP_PR/IMPR
-Objective
-Build:
+You are an SAP ABAP developer.
+Create the full updated ABAP code for this routine:
+FORM name: get_raw_data
+Signature: FORM get_raw_data USING iv_pspid_proj TYPE ztb_a2r_wbshdr-pspid.
+Global outputs: gs_header (type like ZTB_A2R_WBSHDR) and gt_wbs_items (type table of ZTB_A2R_WBSITEM).
+Requirement: Provide the complete ABAP code of the FORM, using modern Open SQL (SELECT SINGLE, INTO TABLE @itab) and avoid invalid patterns (ENDSELECT with INTO TABLE).
 
-Header structure gs_header (type ZTB_A2R_WBSHDR-like) from PROJ, plus PR master data from V_IVP_PR, plus investment reason from IMPR.
-Item internal table gt_wbs_items (type ZTB_A2R_WBSITEM) from PRPS, enriched with cost values from BPGE and PR attributes from V_IVP_PR.
+1) PROJ Header Read
+Select single from PROJ where pspid = iv_pspid_proj:
 
-Input
+fields: pspnr, post1, ernam, erdat, vernr, vbukr, vkokr, prctr, plsez, werks, profl, kostl
 
-iv_pspid_proj (type ZTB_A2R_WBSHDR-PSPID) — Project Definition external ID (PROJ-PSPID).
+Map to gs_header:
 
-Output
+gs_header-mandt = sy-mandt
+gs_header-pspnr = proj-pspnr
+gs_header-post1 = proj-post1
+gs_header-ernam = proj-ernam
+gs_header-erdat = proj-erdat
+gs_header-vernr = proj-vernr
+gs_header-bukrs = proj-vbukr
+gs_header-vkokr = proj-vkokr
+gs_header-prctr = proj-prctr
+gs_header-plsez = proj-plsez
+gs_header-werks = proj-werks
+gs_header-profl = proj-profl
+gs_header-kostl = proj-kostl
 
-gs_header populated (project header + PR header + investment reason + optional unifier).
-gt_wbs_items populated (WBS lines).
+If PROJ not found, RETURN.
 
+2) PRPS Item Read
+Select all PRPS rows where psphi = proj-pspnr (internal project number):
 
-A) Source Reads (What to SELECT)
-A1) PROJ (Project Header)
-Selection:
-
-Read exactly one row from PROJ where PROJ-PSPID = iv_pspid_proj.
-Fields required:
-PSPNR, POST1, ERNAM, ERDAT, VERNR, VBUKR, VKOKR, PRCTR, PLSEZ, WERKS, PROFL, KOSTL
-
-Derived:
-
-Use PROJ-PSPNR as internal project number for PRPS selection.
-
-
-A2) PRPS (WBS Items)
-Selection:
-
-Read all PRPS where PRPS-PSPHI = PROJ-PSPNR (internal number from PROJ).
-Fields required:
-POSID, POST1, OBJNR, PBUKR, PKOKR, WERKS, STUFE, PKSTL, ZUNIFIER_PROJ
-(and any additional PRPS fields required by your structure)
+fields: posid, post1, objnr, pbukr, pkokr, pkstl, werks, stufe, zunifier_proj
+Store into internal table lt_prps. If empty, RETURN.
 
 
-A3) BPGE (Costs / Budget-like Values)
-For each PRPS-OBJNR, get:
-A3.1 KSTP → WTGES (highest ledger)
+3) Populate gt_wbs_items from PRPS
+Loop lt_prps and append into gt_wbs_items with mapping:
 
-Filter: BPGE-OBJNR = PRPS-OBJNR AND BPGE-VORGA = 'KSTP'
-Rule: pick records where ledger is the highest for that OBJNR (e.g., MAX(LEDNR)).
-Value: aggregate WTGES at that highest ledger (use SUM(WTGES) to avoid multi-line ambiguity).
+gt_wbs_items-mandt = sy-mandt
+gt_wbs_items-pspid = iv_pspid_proj
+gt_wbs_items-posid = prps-posid
+gt_wbs_items-post1 = prps-post1
+gt_wbs_items-bukrs = prps-pbukr
+gt_wbs_items-vkokr = prps-pkokr
+gt_wbs_items-stufe = prps-stufe
+gt_wbs_items-werks = prps-werks
 
-Result mapping: gt_wbs_items-wert2 = SUM(BPGE-wtges) at highest ledger for KSTP
-A3.2 KBUD → GEBER (highest ledger, non-initial)
+Also: set gs_header-zunifier_proj from the first non-initial prps-zunifier_proj encountered (do not overwrite once filled).
 
-Filter: BPGE-OBJNR = PRPS-OBJNR AND BPGE-VORGA = 'KBUD' AND BPGE-GEBER is not initial
-Rule: pick highest ledger for that OBJNR (e.g., MAX(LEDNR) with those filters).
-Value: take a deterministic value if multiple lines exist (e.g., MAX(GEBER)).
+4) BPGE KSTP → WERT2 (Highest Ledger)
+For each prps-objnr:
 
-Result: keep in a lookup map keyed by OBJNR (assign to a target field only if you have one; otherwise keep for later use).
+Filter BPGE by objnr = prps-objnr and vorga = 'KSTP'
+Determine highest ledger value (use MAX( ledger_field ) grouped by OBJNR; ledger field is LEDNR unless I say otherwise)
+Then read BPGE again for that (objnr, highest lednr, vorga = 'KSTP') and compute SUM( wtges )
+Assign: gt_wbs_items-wert2 = summed_wtges
 
-A4) V_IVP_PR (PR Attributes per POSID)
-For each PRPS-POSID, select:
+Implement this efficiently:
 
-V_IVP_PR-PRNAM, GJAHR, POSNR, PRART
-Filter:
-V_IVP_PR-POSID = PRPS-POSID
-
-Important rule (per your request):
-
-No need to compute max GJAHR.
-If multiple rows exist for same POSID, the logic “just gets it” — meaning it picks the first match you decide (common approach: sort by POSID then take first row per POSID, or simply read first found).
-
-Result mapping:
-
-gs_header-prnam, gs_header-gjahr, gs_header-posnr filled using the first available V_IVP_PR row encountered (only fill if header fields are initial to avoid overwriting).
-gt_wbs_items-gjahr, gt_wbs_items-prart filled per item POSID.
+Create unique OBJNR list from lt_prps
+Select max-ledger per OBJNR into table
+Select aggregated wtges into table
+Use HASHED tables for lookups during item loop
 
 
-A5) IMPR (Investment Program Reason)
-Using V_IVP_PR-POSNR:
+5) BPGE KBUD → GEBER (Highest Ledger, GEBER not initial)
+Separately, for each prps-objnr:
 
-Select IMPR-IZWEK
-Filter:
-IMPR-POSNR = V_IVP_PR-POSNR
-
-Result mapping:
-
-gs_header-izwek = IMPR-izwek (fill once, only if header field is initial).
+Filter BPGE by objnr = prps-objnr, vorga = 'KBUD', and geber <> ''
+Determine highest ledger per OBJNR
+Select MAX( geber ) for that (objnr, highest ledger, vorga='KBUD')
+Store results in a hashed lookup table keyed by OBJNR (do NOT assign anywhere unless I have a target field; just prepare it for later).
 
 
-B) Detailed Field Mapping
-B1) Header Mapping: PROJ → GS_HEADER
+6) V_IVP_PR Selection (No Max GJAHR Rule)
+For each prps-posid, select from V_IVP_PR:
 
-gs_header-mandt ← sy-mandt
-gs_header-pspnr ← proj-pspnr
-gs_header-post1 ← proj-post1
-gs_header-ernam ← proj-ernam
-gs_header-erdat ← proj-erdat
-gs_header-vernr ← proj-vernr
-gs_header-bukrs ← proj-vbukr
-gs_header-vkokr ← proj-vkokr
-gs_header-prctr ← proj-prctr
-gs_header-plsez ← proj-plsez
-gs_header-werks ← proj-werks
-gs_header-profl ← proj-profl
-gs_header-kostl ← proj-kostl
+fields: prnam, gjahr, posnr, prart
+where posid = prps-posid
 
-B2) Header Mapping: PRPS/V_IVP_PR/IMPR → GS_HEADER
+IMPORTANT: Do NOT compute MAX(GJAHR).
+If multiple rows exist for the same POSID, keep the first record only (any deterministic method is ok, e.g., sort by POSID then keep first).
+Map results:
 
-gs_header-zunifier_proj ← first non-initial prps-zunifier_proj encountered
-gs_header-prnam ← first available v_ivp_pr-prnam (only if initial)
-gs_header-gjahr ← first available v_ivp_pr-gjahr (only if initial)
-gs_header-posnr ← first available v_ivp_pr-posnr (only if initial)
-gs_header-izwek ← impr-izwek where impr-posnr = gs_header-posnr (only if initial)
+Item-level:
+
+gt_wbs_items-gjahr = v_ivp_pr-gjahr
+gt_wbs_items-prart = v_ivp_pr-prart
 
 
-B3) Item Mapping: PRPS → GT_WBS_ITEMS
-For each PRPS row:
+Header-level (fill only once; do not overwrite once set):
 
-gt_wbs_items-mandt ← sy-mandt
-gt_wbs_items-pspid ← iv_pspid_proj
-gt_wbs_items-posid ← prps-posid
-gt_wbs_items-post1 ← prps-post1
-gt_wbs_items-bukrs ← prps-pbukr
-gt_wbs_items-vkokr ← prps-pkokr
-gt_wbs_items-stufe ← prps-stufe
-gt_wbs_items-werks ← prps-werks
-
-B4) Item Enrichment: BPGE → GT_WBS_ITEMS
-Per item (via prps-objnr):
-
-gt_wbs_items-wert2 ← SUM(bpge-wtges) where:
-
-bpge-objnr = prps-objnr
-bpge-vorga = 'KSTP'
-ledger = highest (e.g., max lednr) for that objnr
+gs_header-prnam = v_ivp_pr-prnam
+gs_header-gjahr = v_ivp_pr-gjahr
+gs_header-posnr = v_ivp_pr-posnr
 
 
 
-(Optionally keep KBUD→GEBER in memory keyed by OBJNR if you need it later.)
-B5) Item Enrichment: V_IVP_PR → GT_WBS_ITEMS
-Per item (via prps-posid):
+Implement as bulk read:
 
-gt_wbs_items-gjahr ← v_ivp_pr-gjahr
-gt_wbs_items-prart ← v_ivp_pr-prart
+Use FOR ALL ENTRIES on lt_prps by POSID OR build POSID list and use IN.
+Use hashed table keyed by POSID for lookup during item loop.
 
 
-C) Processing Order (Algorithm)
+7) IMPR Selection for IZWEK
+From IMPR, select:
 
-Read PROJ header by PSPID.
-Read PRPS items by PSPHI = PROJ-PSPNR.
-Build unique lists:
+izwek
+where posnr = v_ivp_pr-posnr
 
-OBJNR list from PRPS for BPGE queries
-POSID list from PRPS for V_IVP_PR queries
+Bulk approach:
 
+Build POSNR list from selected V_IVP_PR results
+Select IMPR for all POSNRs
+Use hashed table keyed by POSNR
 
-Read BPGE aggregation:
+Map to header (fill only once):
 
-max ledger per OBJNR for KSTP → then sum WTGES at that ledger
-max ledger per OBJNR for KBUD with geber not initial → then pick geber
-
-
-Read V_IVP_PR by POSID (no max gjahr logic).
-Read IMPR by POSNR from V_IVP_PR to get IZWEK.
-Loop PRPS:
-
-build item row from PRPS fields
-assign wert2 from BPGE KSTP map
-assign gjahr/prart from V_IVP_PR map
-fill header PRNAM/GJAHR/POSNR/IZWEK only once (if initial)
-append item to gt_wbs_items
+gs_header-izwek = impr-izwek
