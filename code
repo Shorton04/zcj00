@@ -2,14 +2,13 @@ DATA: lt_prps TYPE SORTED TABLE OF prps
                 WITH UNIQUE KEY posid,
       lt_bpge TYPE STANDARD TABLE OF bpge.
 
-DATA: lr_posid TYPE RANGE OF prps-posid,
-      lr_objnr TYPE RANGE OF bpge-objnr.
+DATA: lr_posid TYPE RANGE OF prps-posid.
 
 FIELD-SYMBOLS:
   <fs_wbs_item> TYPE ztb_a2r_wbsitem.
 
 "------------------------------------------------------------
-" Build ranges from GT_WBS_ITEMS
+" Build range using POSID from GT_WBS_ITEMS
 "------------------------------------------------------------
 LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
 
@@ -21,28 +20,20 @@ LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
     ) TO lr_posid.
   ENDIF.
 
-  IF <fs_wbs_item>-objnr IS NOT INITIAL.
-    APPEND VALUE #(
-      sign   = 'I'
-      option = 'EQ'
-      low    = <fs_wbs_item>-objnr
-    ) TO lr_objnr.
-  ENDIF.
-
 ENDLOOP.
 
 SORT lr_posid BY low.
 DELETE ADJACENT DUPLICATES FROM lr_posid COMPARING low.
 
-SORT lr_objnr BY low.
-DELETE ADJACENT DUPLICATES FROM lr_objnr COMPARING low.
-
 "------------------------------------------------------------
-" Read PRPS for ZUNIFIER_PROJ using POSID
+" Read PRPS for:
+" - ZUNIFIER_PROJ
+" - OBJNR (needed for BPGE)
 "------------------------------------------------------------
 IF lr_posid IS NOT INITIAL.
 
   SELECT posid,
+         objnr,
          zunifier_proj
     FROM prps
     INTO TABLE @lt_prps
@@ -51,17 +42,18 @@ IF lr_posid IS NOT INITIAL.
 ENDIF.
 
 "------------------------------------------------------------
-" Read BPGE for Budget Check
+" Read BPGE using OBJNR from PRPS
 " Need max LEDNR where GEBER is not initial
 "------------------------------------------------------------
-IF lr_objnr IS NOT INITIAL.
+IF lt_prps IS NOT INITIAL.
 
   SELECT objnr,
          lednr,
          geber
     FROM bpge
     INTO TABLE @lt_bpge
-    WHERE objnr IN @lr_objnr
+    FOR ALL ENTRIES IN @lt_prps
+    WHERE objnr = @lt_prps-objnr
       AND wrttp = '41'
       AND geber IS NOT INITIAL.
 
@@ -79,27 +71,30 @@ LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
     <fs_wbs_item>-zunifier_proj.
 
   "------------------------------------------
-  " Fill ZUNIFIER_PROJ from PRPS using POSID
+  " Read PRPS using POSID
   "------------------------------------------
   READ TABLE lt_prps INTO DATA(ls_prps)
     WITH KEY posid = <fs_wbs_item>-posid
     BINARY SEARCH.
 
   IF sy-subrc = 0.
+
+    "Fill ZUNIFIER_PROJ
     <fs_wbs_item>-zunifier_proj = ls_prps-zunifier_proj.
-  ENDIF.
 
-  "------------------------------------------
-  " Budget Check
-  " if max LEDNR exists with GEBER not initial
-  " then set X
-  "------------------------------------------
-  READ TABLE lt_bpge INTO DATA(ls_bpge)
-    WITH KEY objnr = <fs_wbs_item>-objnr
-    BINARY SEARCH.
+    "------------------------------------------
+    " Budget Check from BPGE
+    " if max LEDNR exists with GEBER not initial
+    " then set X
+    "------------------------------------------
+    READ TABLE lt_bpge INTO DATA(ls_bpge)
+      WITH KEY objnr = ls_prps-objnr
+      BINARY SEARCH.
 
-  IF sy-subrc = 0.
-    <fs_wbs_item>-zbudget_check = 'X'.
+    IF sy-subrc = 0.
+      <fs_wbs_item>-zbudget_check = 'X'.
+    ENDIF.
+
   ENDIF.
 
 ENDLOOP.
