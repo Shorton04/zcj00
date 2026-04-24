@@ -1,55 +1,33 @@
 *---------------------------------------------------------------------*
-* Arrange gt_wbs_items-POSID based on PRHI hierarchy sequence
+* Copy KOSTL and PRART from STUFE = 1 WBS to all lower level WBS
 *---------------------------------------------------------------------*
 
-TYPES: BEGIN OF ty_prhi,
-         posid TYPE prps-posid,
-         up    TYPE prhi-up,
-         left  TYPE prhi-left,
-         right TYPE prhi-right,
-       END OF ty_prhi.
+DATA: ls_level1 TYPE ztb_a2r_wbsitem.
 
-DATA: lt_prhi_order   TYPE STANDARD TABLE OF ty_prhi,
-      ls_prhi_order   TYPE ty_prhi,
-      lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-      ls_wbs_item     TYPE ztb_a2r_wbsitem.
-
-CLEAR: lt_prhi_order,
-       lt_wbs_sorted.
+CLEAR ls_level1.
 
 *---------------------------------------------------------------------*
-* Get hierarchy order from PRHI using current project
-* Replace gs_header-pspid with your project definition if needed
+* Get Level 1 WBS (parent/root)
 *---------------------------------------------------------------------*
-SELECT
-    p~posid,
-    h~up,
-    h~left,
-    h~right
-  INTO TABLE @lt_prhi_order
-  FROM prhi AS h
-  INNER JOIN prps AS p
-    ON p~pspnr = h~posnr
-  WHERE h~psphi = @gs_header-pspid
-  ORDER BY h~left ASC.
+READ TABLE gt_wbs_items INTO ls_level1
+  WITH KEY stufe = 1.
 
-*---------------------------------------------------------------------*
-* Arrange gt_wbs_items following PRHI sequence
-*---------------------------------------------------------------------*
-LOOP AT lt_prhi_order INTO ls_prhi_order.
+IF sy-subrc = 0.
 
-  READ TABLE gt_wbs_items INTO ls_wbs_item
-    WITH KEY posid = ls_prhi_order-posid.
+  LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_wbs>).
 
-  IF sy-subrc = 0.
-    APPEND ls_wbs_item TO lt_wbs_sorted.
-  ENDIF.
+    IF <fs_wbs>-stufe > 1.
 
-ENDLOOP.
+      IF <fs_wbs>-kostl IS INITIAL.
+        <fs_wbs>-kostl = ls_level1-kostl.
+      ENDIF.
 
-*---------------------------------------------------------------------*
-* Replace original table with arranged sequence
-*---------------------------------------------------------------------*
-IF lt_wbs_sorted IS NOT INITIAL.
-  gt_wbs_items = lt_wbs_sorted.
+      IF <fs_wbs>-prart IS INITIAL.
+        <fs_wbs>-prart = ls_level1-prart.
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
 ENDIF.
