@@ -1,26 +1,24 @@
 FORM get_raw_data USING iv_pspid_proj TYPE ztb_a2r_wbshdr-pspid.
 
+  "--- Local Declarations
+  DATA: ls_proj        TYPE proj,
+        lt_prps        TYPE STANDARD TABLE OF prps,
+        ls_prps        TYPE prps,
+        ls_item        TYPE ztb_a2r_wbsitem.
+
+  DATA: lt_objnr TYPE STANDARD TABLE OF prps-objnr,
+        lt_posid TYPE STANDARD TABLE OF prps-posid.
+
   "--- Clear outputs
   CLEAR: gs_header, gt_wbs_items.
 
-  "------------------------------------------------------------
-  " 1) PROJ Header Read
-  "------------------------------------------------------------
-  SELECT SINGLE pspnr,
-                post1,
-                ernam,
-                erdat,
-                vernr,
-                vbukr,
-                vkokr,
-                prctr,
-                plsez,
-                werks,
-                profl,
-                kostl
+*---------------------------------------------------------------------*
+* 1) PROJ Header Read
+*---------------------------------------------------------------------*
+  SELECT SINGLE pspnr post1 ernam erdat vernr vbukr vkokr prctr plsez werks profl kostl
+    INTO ls_proj
     FROM proj
-    INTO @DATA(ls_proj)
-    WHERE pspid = @iv_pspid_proj.
+    WHERE pspid = iv_pspid_proj.
 
   IF sy-subrc <> 0.
     RETURN.
@@ -40,114 +38,70 @@ FORM get_raw_data USING iv_pspid_proj TYPE ztb_a2r_wbshdr-pspid.
   gs_header-profl = ls_proj-profl.
   gs_header-kostl = ls_proj-kostl.
 
-  "------------------------------------------------------------
-  " 2) PRPS Item Read
-  "------------------------------------------------------------
-  SELECT posid,
-         post1,
-         objnr,
-         pbukr,
-         pkokr,
-         pkstl,
-         werks,
-         stufe,
-         zunifier_proj
+*---------------------------------------------------------------------*
+* 2) PRPS Read
+*---------------------------------------------------------------------*
+  SELECT posid post1 objnr pbukr pkokr pkstl werks stufe zunifier_proj
+    INTO TABLE lt_prps
     FROM prps
-    INTO TABLE @DATA(lt_prps)
-    WHERE psphi = @ls_proj-pspnr.
+    WHERE psphi = ls_proj-pspnr.
 
   IF lt_prps IS INITIAL.
     RETURN.
   ENDIF.
 
-  "------------------------------------------------------------
-  " Prepare OBJNR + POSID lists
-  "------------------------------------------------------------
-  DATA: lt_objnr TYPE SORTED TABLE OF prps-objnr WITH UNIQUE KEY table_line,
-        lt_posid TYPE SORTED TABLE OF prps-posid WITH UNIQUE KEY table_line.
+*---------------------------------------------------------------------*
+* Build helper lists
+*---------------------------------------------------------------------*
+  LOOP AT lt_prps INTO ls_prps.
+    APPEND ls_prps-objnr TO lt_objnr.
+    APPEND ls_prps-posid TO lt_posid.
+  ENDLOOP.
 
-  lt_objnr = VALUE #( FOR ls_prps IN lt_prps ( ls_prps-objnr ) ).
-  lt_posid = VALUE #( FOR ls_prps IN lt_prps ( ls_prps-posid ) ).
+  DELETE ADJACENT DUPLICATES FROM lt_objnr.
+  DELETE ADJACENT DUPLICATES FROM lt_posid.
 
-  "------------------------------------------------------------
-  " 4) BPGE KSTP → WERT2 (Highest Ledger)
-  "------------------------------------------------------------
-  TYPES: BEGIN OF ty_bpge_kstp,
+*---------------------------------------------------------------------*
+* 4) BPGE KSTP (WERT2)
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_kstp,
            objnr TYPE bpge-objnr,
-           lednr TYPE bpge-lednr,
            wtges TYPE bpge-wtges,
-         END OF ty_bpge_kstp.
+         END OF ty_kstp.
 
-  DATA: lt_kstp_max TYPE HASHED TABLE OF ty_bpge_kstp
-                      WITH UNIQUE KEY objnr,
-        lt_kstp_sum TYPE HASHED TABLE OF ty_bpge_kstp
-                      WITH UNIQUE KEY objnr.
+  DATA: lt_kstp TYPE STANDARD TABLE OF ty_kstp,
+        ls_kstp TYPE ty_kstp.
 
-  " Max ledger per OBJNR
-  SELECT objnr,
-         MAX( lednr ) AS lednr
+  SELECT objnr SUM( wtges ) AS wtges
+    INTO TABLE lt_kstp
     FROM bpge
-    INTO TABLE @DATA(lt_kstp_lednr)
-    FOR ALL ENTRIES IN @lt_objnr
-    WHERE objnr = @lt_objnr-table_line
+    FOR ALL ENTRIES IN lt_objnr
+    WHERE objnr = lt_objnr-table_line
       AND vorga = 'KSTP'
     GROUP BY objnr.
 
-  IF lt_kstp_lednr IS NOT INITIAL.
-    SELECT objnr,
-           lednr,
-           SUM( wtges ) AS wtges
-      FROM bpge
-      INTO TABLE @DATA(lt_kstp_agg)
-      FOR ALL ENTRIES IN @lt_kstp_lednr
-      WHERE objnr = @lt_kstp_lednr-objnr
-        AND lednr = @lt_kstp_lednr-lednr
-        AND vorga = 'KSTP'
-      GROUP BY objnr, lednr.
-
-    lt_kstp_sum = lt_kstp_agg.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 5) BPGE KBUD → GEBER (Highest Ledger, non-initial)
-  "------------------------------------------------------------
-  TYPES: BEGIN OF ty_bpge_kbud,
+*---------------------------------------------------------------------*
+* 5) KBUD (prepare only)
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_kbud,
            objnr TYPE bpge-objnr,
-           lednr TYPE bpge-lednr,
            geber TYPE bpge-geber,
-         END OF ty_bpge_kbud.
+         END OF ty_kbud.
 
-  DATA: lt_kbud_lookup TYPE HASHED TABLE OF ty_bpge_kbud
-                         WITH UNIQUE KEY objnr.
+  DATA: lt_kbud TYPE STANDARD TABLE OF ty_kbud.
 
-  SELECT objnr,
-         MAX( lednr ) AS lednr
+  SELECT objnr MAX( geber ) AS geber
+    INTO TABLE lt_kbud
     FROM bpge
-    INTO TABLE @DATA(lt_kbud_lednr)
-    FOR ALL ENTRIES IN @lt_objnr
-    WHERE objnr = @lt_objnr-table_line
+    FOR ALL ENTRIES IN lt_objnr
+    WHERE objnr = lt_objnr-table_line
       AND vorga = 'KBUD'
       AND geber <> ''
     GROUP BY objnr.
 
-  IF lt_kbud_lednr IS NOT INITIAL.
-    SELECT objnr,
-           lednr,
-           MAX( geber ) AS geber
-      FROM bpge
-      INTO TABLE @DATA(lt_kbud_data)
-      FOR ALL ENTRIES IN @lt_kbud_lednr
-      WHERE objnr = @lt_kbud_lednr-objnr
-        AND lednr = @lt_kbud_lednr-lednr
-        AND vorga = 'KBUD'
-      GROUP BY objnr, lednr.
-
-    lt_kbud_lookup = lt_kbud_data.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 6) V_IVP_PR Selection (No MAX GJAHR)
-  "------------------------------------------------------------
+*---------------------------------------------------------------------*
+* 6) V_IVP_PR
+*---------------------------------------------------------------------*
   TYPES: BEGIN OF ty_ivp,
            posid TYPE v_ivp_pr-posid,
            prnam TYPE v_ivp_pr-prnam,
@@ -156,102 +110,77 @@ FORM get_raw_data USING iv_pspid_proj TYPE ztb_a2r_wbshdr-pspid.
            prart TYPE v_ivp_pr-prart,
          END OF ty_ivp.
 
-  DATA: lt_ivp_raw TYPE STANDARD TABLE OF ty_ivp,
-        lt_ivp     TYPE HASHED TABLE OF ty_ivp WITH UNIQUE KEY posid.
+  DATA: lt_ivp TYPE STANDARD TABLE OF ty_ivp,
+        ls_ivp TYPE ty_ivp.
 
-  SELECT posid,
-         prnam,
-         gjahr,
-         posnr,
-         prart
+  SELECT posid prnam gjahr posnr prart
+    INTO TABLE lt_ivp
     FROM v_ivp_pr
-    INTO TABLE @lt_ivp_raw
-    FOR ALL ENTRIES IN @lt_posid
-    WHERE posid = @lt_posid-table_line.
+    FOR ALL ENTRIES IN lt_posid
+    WHERE posid = lt_posid-table_line.
 
-  SORT lt_ivp_raw BY posid.
+*---------------------------------------------------------------------*
+* 7) IMPR
+*---------------------------------------------------------------------*
+  DATA: lt_impr TYPE STANDARD TABLE OF impr,
+        ls_impr TYPE impr.
 
-  LOOP AT lt_ivp_raw INTO DATA(ls_ivp).
-    READ TABLE lt_ivp WITH KEY posid = ls_ivp-posid TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      INSERT ls_ivp INTO TABLE lt_ivp.
-    ENDIF.
-  ENDLOOP.
+  SELECT posnr izwek
+    INTO TABLE lt_impr
+    FROM impr
+    FOR ALL ENTRIES IN lt_ivp
+    WHERE posnr = lt_ivp-posnr.
 
-  "------------------------------------------------------------
-  " 7) IMPR Selection for IZWEK
-  "------------------------------------------------------------
-  DATA: lt_posnr TYPE SORTED TABLE OF impr-posnr WITH UNIQUE KEY table_line.
+*---------------------------------------------------------------------*
+* 3) Populate Items
+*---------------------------------------------------------------------*
+  LOOP AT lt_prps INTO ls_prps.
 
-  lt_posnr = VALUE #( FOR ls IN lt_ivp_raw WHERE ( posnr IS NOT INITIAL )
-                      ( ls-posnr ) ).
+    CLEAR ls_item.
 
-  DATA: lt_impr TYPE HASHED TABLE OF impr
-                  WITH UNIQUE KEY posnr.
+    ls_item-mandt = sy-mandt.
+    ls_item-pspid = iv_pspid_proj.
+    ls_item-posid = ls_prps-posid.
+    ls_item-post1 = ls_prps-post1.
+    ls_item-bukrs = ls_prps-pbukr.
+    ls_item-vkokr = ls_prps-pkokr.
+    ls_item-stufe = ls_prps-stufe.
+    ls_item-werks = ls_prps-werks.
 
-  IF lt_posnr IS NOT INITIAL.
-    SELECT posnr,
-           izwek
-      FROM impr
-      INTO TABLE @DATA(lt_impr_raw)
-      FOR ALL ENTRIES IN @lt_posnr
-      WHERE posnr = @lt_posnr-table_line.
-
-    lt_impr = lt_impr_raw.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 3) Populate gt_wbs_items
-  "------------------------------------------------------------
-  LOOP AT lt_prps INTO DATA(ls_prps).
-
-    DATA(ls_item) = VALUE ztb_a2r_wbsitem(
-        mandt = sy-mandt
-        pspid = iv_pspid_proj
-        posid = ls_prps-posid
-        post1 = ls_prps-post1
-        bukrs = ls_prps-pbukr
-        vkokr = ls_prps-pkokr
-        stufe = ls_prps-stufe
-        werks = ls_prps-werks ).
-
-    " ZUNIFIER (header only once)
+*--- ZUNIFIER header once
     IF gs_header-zunifier_proj IS INITIAL
        AND ls_prps-zunifier_proj IS NOT INITIAL.
       gs_header-zunifier_proj = ls_prps-zunifier_proj.
     ENDIF.
 
-    " WERT2 from KSTP
-    READ TABLE lt_kstp_sum INTO DATA(ls_kstp)
-         WITH KEY objnr = ls_prps-objnr.
+*--- WERT2
+    READ TABLE lt_kstp INTO ls_kstp
+      WITH KEY objnr = ls_prps-objnr.
     IF sy-subrc = 0.
       ls_item-wert2 = ls_kstp-wtges.
     ENDIF.
 
-    " V_IVP_PR mapping
-    READ TABLE lt_ivp INTO DATA(ls_ivp_map)
-         WITH KEY posid = ls_prps-posid.
+*--- IVP
+    READ TABLE lt_ivp INTO ls_ivp
+      WITH KEY posid = ls_prps-posid.
     IF sy-subrc = 0.
-      ls_item-gjahr = ls_ivp_map-gjahr.
-      ls_item-prart = ls_ivp_map-prart.
 
-      " Header (only once)
+      ls_item-gjahr = ls_ivp-gjahr.
+      ls_item-prart = ls_ivp-prart.
+
       IF gs_header-prnam IS INITIAL.
-        gs_header-prnam = ls_ivp_map-prnam.
-        gs_header-gjahr = ls_ivp_map-gjahr.
-        gs_header-posnr = ls_ivp_map-posnr.
+        gs_header-prnam = ls_ivp-prnam.
+        gs_header-gjahr = ls_ivp-gjahr.
+        gs_header-posnr = ls_ivp-posnr.
       ENDIF.
 
-      " IMPR IZWEK (header only once)
-      IF gs_header-izwek IS INITIAL
-         AND ls_ivp_map-posnr IS NOT INITIAL.
-
-        READ TABLE lt_impr INTO DATA(ls_impr)
-             WITH KEY posnr = ls_ivp_map-posnr.
+*--- IMPR
+      IF gs_header-izwek IS INITIAL.
+        READ TABLE lt_impr INTO ls_impr
+          WITH KEY posnr = ls_ivp-posnr.
         IF sy-subrc = 0.
           gs_header-izwek = ls_impr-izwek.
         ENDIF.
-
       ENDIF.
 
     ENDIF.
