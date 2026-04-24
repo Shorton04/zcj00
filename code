@@ -1,232 +1,168 @@
-FORM get_raw_data USING iv_pspid_proj TYPE ztb_a2r_wbshdr-pspid.
+GET_RAW_DATA – Build Request Header (gs_header) and WBS Items (gt_wbs_items) from PROJ/PRPS/BPGE/V_IVP_PR/IMPR
+Objective
+Build:
 
-*---------------------------------------------------------------------*
-* 1. HEADER
-*---------------------------------------------------------------------*
-  DATA: ls_header TYPE proj.
+Header structure gs_header (type ZTB_A2R_WBSHDR-like) from PROJ, plus PR master data from V_IVP_PR, plus investment reason from IMPR.
+Item internal table gt_wbs_items (type ZTB_A2R_WBSITEM) from PRPS, enriched with cost values from BPGE and PR attributes from V_IVP_PR.
 
-  SELECT SINGLE pspnr post1 ernam erdat vernr
-                vbukr vkokr prctr plsez werks profl kostl
-    INTO ls_header
-    FROM proj
-    WHERE pspid = iv_pspid_proj.
+Input
 
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
+iv_pspid_proj (type ZTB_A2R_WBSHDR-PSPID) — Project Definition external ID (PROJ-PSPID).
 
-  CLEAR: gs_header, gt_wbs_items.
+Output
 
-  MOVE-CORRESPONDING ls_header TO gs_header.
-  gs_header-bukrs = ls_header-vbukr.
+gs_header populated (project header + PR header + investment reason + optional unifier).
+gt_wbs_items populated (WBS lines).
 
-*---------------------------------------------------------------------*
-* 2. PRPS
-*---------------------------------------------------------------------*
-  DATA: lt_prps TYPE STANDARD TABLE OF prps.
 
-  SELECT pspnr posid post1 objnr
-         pbukr pkokr fkstl werks stufe zunifier_proj
-    INTO TABLE lt_prps
-    FROM prps
-    WHERE psphi = ls_header-pspnr.
+A) Source Reads (What to SELECT)
+A1) PROJ (Project Header)
+Selection:
 
-  IF lt_prps IS INITIAL.
-    RETURN.
-  ENDIF.
+Read exactly one row from PROJ where PROJ-PSPID = iv_pspid_proj.
+Fields required:
+PSPNR, POST1, ERNAM, ERDAT, VERNR, VBUKR, VKOKR, PRCTR, PLSEZ, WERKS, PROFL, KOSTL
 
-*---------------------------------------------------------------------*
-* 3. V_IVP_PR
-*---------------------------------------------------------------------*
-  DATA: lt_ivp   TYPE STANDARD TABLE OF v_ivp_pr,
-        lt_ivp_h TYPE HASHED TABLE OF v_ivp_pr WITH UNIQUE KEY posid.
+Derived:
 
-  SELECT posid prnam gjahr posnr prart
-    INTO TABLE lt_ivp
-    FROM v_ivp_pr
-    FOR ALL ENTRIES IN lt_prps
-    WHERE posid = lt_prps-posid.
+Use PROJ-PSPNR as internal project number for PRPS selection.
 
-  IF lt_ivp IS NOT INITIAL.
-    lt_ivp_h = lt_ivp.
-  ENDIF.
 
-*---------------------------------------------------------------------*
-* 4. IMPR
-*---------------------------------------------------------------------*
-  DATA: lt_posnr TYPE SORTED TABLE OF impr-posnr WITH UNIQUE KEY table_line,
-        lt_impr  TYPE STANDARD TABLE OF impr,
-        lt_impr_h TYPE HASHED TABLE OF impr WITH UNIQUE KEY posnr.
+A2) PRPS (WBS Items)
+Selection:
 
-  FIELD-SYMBOLS: <ls_ivp> TYPE v_ivp_pr.
+Read all PRPS where PRPS-PSPHI = PROJ-PSPNR (internal number from PROJ).
+Fields required:
+POSID, POST1, OBJNR, PBUKR, PKOKR, WERKS, STUFE, PKSTL, ZUNIFIER_PROJ
+(and any additional PRPS fields required by your structure)
 
-  LOOP AT lt_ivp ASSIGNING <ls_ivp>.
-    INSERT <ls_ivp>-posnr INTO TABLE lt_posnr.
-  ENDLOOP.
 
-  IF lt_posnr IS NOT INITIAL.
+A3) BPGE (Costs / Budget-like Values)
+For each PRPS-OBJNR, get:
+A3.1 KSTP → WTGES (highest ledger)
 
-    SELECT posnr izwek
-      INTO TABLE lt_impr
-      FROM impr
-      WHERE posnr IN lt_posnr.
+Filter: BPGE-OBJNR = PRPS-OBJNR AND BPGE-VORGA = 'KSTP'
+Rule: pick records where ledger is the highest for that OBJNR (e.g., MAX(LEDNR)).
+Value: aggregate WTGES at that highest ledger (use SUM(WTGES) to avoid multi-line ambiguity).
 
-    IF lt_impr IS NOT INITIAL.
-      lt_impr_h = lt_impr.
-    ENDIF.
+Result mapping: gt_wbs_items-wert2 = SUM(BPGE-wtges) at highest ledger for KSTP
+A3.2 KBUD → GEBER (highest ledger, non-initial)
 
-  ENDIF.
+Filter: BPGE-OBJNR = PRPS-OBJNR AND BPGE-VORGA = 'KBUD' AND BPGE-GEBER is not initial
+Rule: pick highest ledger for that OBJNR (e.g., MAX(LEDNR) with those filters).
+Value: take a deterministic value if multiple lines exist (e.g., MAX(GEBER)).
 
-*---------------------------------------------------------------------*
-* 5. OBJNR
-*---------------------------------------------------------------------*
-  DATA: lt_objnr TYPE SORTED TABLE OF bpge-objnr WITH UNIQUE KEY table_line.
+Result: keep in a lookup map keyed by OBJNR (assign to a target field only if you have one; otherwise keep for later use).
 
-  FIELD-SYMBOLS: <ls_prps> TYPE prps.
+A4) V_IVP_PR (PR Attributes per POSID)
+For each PRPS-POSID, select:
 
-  LOOP AT lt_prps ASSIGNING <ls_prps>.
-    INSERT <ls_prps>-objnr INTO TABLE lt_objnr.
-  ENDLOOP.
+V_IVP_PR-PRNAM, GJAHR, POSNR, PRART
+Filter:
+V_IVP_PR-POSID = PRPS-POSID
 
-*---------------------------------------------------------------------*
-* 6. BPGE KSTP
-*---------------------------------------------------------------------*
-  TYPES: BEGIN OF ty_max_led,
-           objnr TYPE bpge-objnr,
-           lednr TYPE bpge-lednr,
-         END OF ty_max_led.
+Important rule (per your request):
 
-  DATA: lt_max_kstp TYPE STANDARD TABLE OF ty_max_led,
-        lt_kstp     TYPE STANDARD TABLE OF bpge,
-        lt_wtges_h  TYPE HASHED TABLE OF bpge WITH UNIQUE KEY objnr.
+No need to compute max GJAHR.
+If multiple rows exist for same POSID, the logic “just gets it” — meaning it picks the first match you decide (common approach: sort by POSID then take first row per POSID, or simply read first found).
 
-  IF lt_objnr IS NOT INITIAL.
+Result mapping:
 
-    SELECT objnr MAX( lednr ) AS lednr
-      INTO TABLE lt_max_kstp
-      FROM bpge
-      WHERE objnr IN lt_objnr
-        AND vorga = 'KSTP'
-      GROUP BY objnr.
+gs_header-prnam, gs_header-gjahr, gs_header-posnr filled using the first available V_IVP_PR row encountered (only fill if header fields are initial to avoid overwriting).
+gt_wbs_items-gjahr, gt_wbs_items-prart filled per item POSID.
 
-    IF lt_max_kstp IS NOT INITIAL.
 
-      SELECT objnr SUM( wtges ) AS wtges
-        INTO TABLE lt_kstp
-        FROM bpge
-        FOR ALL ENTRIES IN lt_max_kstp
-        WHERE objnr = lt_max_kstp-objnr
-          AND lednr = lt_max_kstp-lednr
-          AND vorga = 'KSTP'
-        GROUP BY objnr.
+A5) IMPR (Investment Program Reason)
+Using V_IVP_PR-POSNR:
 
-      lt_wtges_h = lt_kstp.
+Select IMPR-IZWEK
+Filter:
+IMPR-POSNR = V_IVP_PR-POSNR
 
-    ENDIF.
+Result mapping:
 
-  ENDIF.
+gs_header-izwek = IMPR-izwek (fill once, only if header field is initial).
 
-*---------------------------------------------------------------------*
-* 7. BPGE KBUD
-*---------------------------------------------------------------------*
-  DATA: lt_max_kbud TYPE STANDARD TABLE OF ty_max_led,
-        lt_kbud     TYPE STANDARD TABLE OF bpge,
-        lt_geber_h  TYPE HASHED TABLE OF bpge WITH UNIQUE KEY objnr.
 
-  IF lt_objnr IS NOT INITIAL.
+B) Detailed Field Mapping
+B1) Header Mapping: PROJ → GS_HEADER
 
-    SELECT objnr MAX( lednr ) AS lednr
-      INTO TABLE lt_max_kbud
-      FROM bpge
-      WHERE objnr IN lt_objnr
-        AND vorga = 'KBUD'
-        AND geber IS NOT INITIAL
-      GROUP BY objnr.
+gs_header-mandt ← sy-mandt
+gs_header-pspnr ← proj-pspnr
+gs_header-post1 ← proj-post1
+gs_header-ernam ← proj-ernam
+gs_header-erdat ← proj-erdat
+gs_header-vernr ← proj-vernr
+gs_header-bukrs ← proj-vbukr
+gs_header-vkokr ← proj-vkokr
+gs_header-prctr ← proj-prctr
+gs_header-plsez ← proj-plsez
+gs_header-werks ← proj-werks
+gs_header-profl ← proj-profl
+gs_header-kostl ← proj-kostl
 
-    IF lt_max_kbud IS NOT INITIAL.
+B2) Header Mapping: PRPS/V_IVP_PR/IMPR → GS_HEADER
 
-      SELECT objnr MAX( geber ) AS geber
-        INTO TABLE lt_kbud
-        FROM bpge
-        FOR ALL ENTRIES IN lt_max_kbud
-        WHERE objnr = lt_max_kbud-objnr
-          AND lednr = lt_max_kbud-lednr
-          AND vorga = 'KBUD'
-          AND geber IS NOT INITIAL
-        GROUP BY objnr.
+gs_header-zunifier_proj ← first non-initial prps-zunifier_proj encountered
+gs_header-prnam ← first available v_ivp_pr-prnam (only if initial)
+gs_header-gjahr ← first available v_ivp_pr-gjahr (only if initial)
+gs_header-posnr ← first available v_ivp_pr-posnr (only if initial)
+gs_header-izwek ← impr-izwek where impr-posnr = gs_header-posnr (only if initial)
 
-      lt_geber_h = lt_kbud.
 
-    ENDIF.
+B3) Item Mapping: PRPS → GT_WBS_ITEMS
+For each PRPS row:
 
-  ENDIF.
+gt_wbs_items-mandt ← sy-mandt
+gt_wbs_items-pspid ← iv_pspid_proj
+gt_wbs_items-posid ← prps-posid
+gt_wbs_items-post1 ← prps-post1
+gt_wbs_items-bukrs ← prps-pbukr
+gt_wbs_items-vkokr ← prps-pkokr
+gt_wbs_items-stufe ← prps-stufe
+gt_wbs_items-werks ← prps-werks
 
-*---------------------------------------------------------------------*
-* 8. BUILD OUTPUT
-*---------------------------------------------------------------------*
-  DATA: ls_wbs_item TYPE ztb_a2r_wbsitem,
-        ls_wt       TYPE bpge,
-        ls_ivp      TYPE v_ivp_pr,
-        ls_impr     TYPE impr,
-        ls_gb       TYPE bpge.
+B4) Item Enrichment: BPGE → GT_WBS_ITEMS
+Per item (via prps-objnr):
 
-  LOOP AT lt_prps INTO ls_prps.
+gt_wbs_items-wert2 ← SUM(bpge-wtges) where:
 
-    CLEAR ls_wbs_item.
+bpge-objnr = prps-objnr
+bpge-vorga = 'KSTP'
+ledger = highest (e.g., max lednr) for that objnr
 
-    ls_wbs_item-mandt = sy-mandt.
-    ls_wbs_item-posid = ls_prps-posid.
-    ls_wbs_item-post1 = ls_prps-post1.
-    ls_wbs_item-bukrs = ls_prps-pbukr.
-    ls_wbs_item-vkokr = ls_prps-pkokr.
-    ls_wbs_item-stufe = ls_prps-stufe.
-    ls_wbs_item-werks = ls_prps-werks.
-    ls_wbs_item-pspid = iv_pspid_proj.
 
-    IF gs_header-zunifier_proj IS INITIAL
-       AND ls_prps-zunifier_proj IS NOT INITIAL.
-      gs_header-zunifier_proj = ls_prps-zunifier_proj.
-    ENDIF.
 
-    READ TABLE lt_wtges_h INTO ls_wt WITH KEY objnr = ls_prps-objnr.
-    IF sy-subrc = 0.
-      ls_wbs_item-wert2 = ls_wt-wtges.
-    ENDIF.
+(Optionally keep KBUD→GEBER in memory keyed by OBJNR if you need it later.)
+B5) Item Enrichment: V_IVP_PR → GT_WBS_ITEMS
+Per item (via prps-posid):
 
-    READ TABLE lt_ivp_h INTO ls_ivp WITH KEY posid = ls_prps-posid.
-    IF sy-subrc = 0.
+gt_wbs_items-gjahr ← v_ivp_pr-gjahr
+gt_wbs_items-prart ← v_ivp_pr-prart
 
-      ls_wbs_item-gjahr = ls_ivp-gjahr.
-      ls_wbs_item-prart = ls_ivp-prart.
 
-      IF gs_header-prnam IS INITIAL.
-        gs_header-prnam = ls_ivp-prnam.
-      ENDIF.
+C) Processing Order (Algorithm)
 
-      IF gs_header-gjahr IS INITIAL.
-        gs_header-gjahr = ls_ivp-gjahr.
-      ENDIF.
+Read PROJ header by PSPID.
+Read PRPS items by PSPHI = PROJ-PSPNR.
+Build unique lists:
 
-      IF gs_header-posnr IS INITIAL.
-        gs_header-posnr = ls_ivp-posnr.
-      ENDIF.
+OBJNR list from PRPS for BPGE queries
+POSID list from PRPS for V_IVP_PR queries
 
-      IF gs_header-izwek IS INITIAL.
-        READ TABLE lt_impr_h INTO ls_impr WITH KEY posnr = ls_ivp-posnr.
-        IF sy-subrc = 0.
-          gs_header-izwek = ls_impr-izwek.
-        ENDIF.
-      ENDIF.
 
-    ENDIF.
+Read BPGE aggregation:
 
-    READ TABLE lt_geber_h INTO ls_gb WITH KEY objnr = ls_prps-objnr.
-    IF sy-subrc = 0.
-      ls_wbs_item-zbudget_check = ls_gb-geber.
-    ENDIF.
+max ledger per OBJNR for KSTP → then sum WTGES at that ledger
+max ledger per OBJNR for KBUD with geber not initial → then pick geber
 
-    APPEND ls_wbs_item TO gt_wbs_items.
 
-  ENDLOOP.
+Read V_IVP_PR by POSID (no max gjahr logic).
+Read IMPR by POSNR from V_IVP_PR to get IZWEK.
+Loop PRPS:
 
-ENDFORM.
+build item row from PRPS fields
+assign wert2 from BPGE KSTP map
+assign gjahr/prart from V_IVP_PR map
+fill header PRNAM/GJAHR/POSNR/IZWEK only once (if initial)
+append item to gt_wbs_items
