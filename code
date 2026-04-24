@@ -1,100 +1,55 @@
-DATA: lt_prps TYPE SORTED TABLE OF prps
-                WITH UNIQUE KEY posid,
-      lt_bpge TYPE STANDARD TABLE OF bpge.
+*---------------------------------------------------------------------*
+* Arrange gt_wbs_items-POSID based on PRHI hierarchy sequence
+*---------------------------------------------------------------------*
 
-DATA: lr_posid TYPE RANGE OF prps-posid.
+TYPES: BEGIN OF ty_prhi,
+         posid TYPE prps-posid,
+         up    TYPE prhi-up,
+         left  TYPE prhi-left,
+         right TYPE prhi-right,
+       END OF ty_prhi.
 
-FIELD-SYMBOLS:
-  <fs_wbs_item> TYPE ztb_a2r_wbsitem.
+DATA: lt_prhi_order   TYPE STANDARD TABLE OF ty_prhi,
+      ls_prhi_order   TYPE ty_prhi,
+      lt_wbs_sorted   TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+      ls_wbs_item     TYPE ztb_a2r_wbsitem.
 
-"------------------------------------------------------------
-" Build range using POSID from GT_WBS_ITEMS
-"------------------------------------------------------------
-LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
+CLEAR: lt_prhi_order,
+       lt_wbs_sorted.
 
-  IF <fs_wbs_item>-posid IS NOT INITIAL.
-    APPEND VALUE #(
-      sign   = 'I'
-      option = 'EQ'
-      low    = <fs_wbs_item>-posid
-    ) TO lr_posid.
-  ENDIF.
+*---------------------------------------------------------------------*
+* Get hierarchy order from PRHI using current project
+* Replace gs_header-pspid with your project definition if needed
+*---------------------------------------------------------------------*
+SELECT
+    p~posid,
+    h~up,
+    h~left,
+    h~right
+  INTO TABLE @lt_prhi_order
+  FROM prhi AS h
+  INNER JOIN prps AS p
+    ON p~pspnr = h~posnr
+  WHERE h~psphi = @gs_header-pspid
+  ORDER BY h~left ASC.
 
-ENDLOOP.
+*---------------------------------------------------------------------*
+* Arrange gt_wbs_items following PRHI sequence
+*---------------------------------------------------------------------*
+LOOP AT lt_prhi_order INTO ls_prhi_order.
 
-SORT lr_posid BY low.
-DELETE ADJACENT DUPLICATES FROM lr_posid COMPARING low.
-
-"------------------------------------------------------------
-" Read PRPS for:
-" - ZUNIFIER_PROJ
-" - OBJNR (needed for BPGE)
-"------------------------------------------------------------
-IF lr_posid IS NOT INITIAL.
-
-  SELECT posid,
-         objnr,
-         zunifier_proj
-    FROM prps
-    INTO TABLE @lt_prps
-    WHERE posid IN @lr_posid.
-
-ENDIF.
-
-"------------------------------------------------------------
-" Read BPGE using OBJNR from PRPS
-" Need max LEDNR where GEBER is not initial
-"------------------------------------------------------------
-IF lt_prps IS NOT INITIAL.
-
-  SELECT objnr,
-         lednr,
-         geber
-    FROM bpge
-    INTO TABLE @lt_bpge
-    FOR ALL ENTRIES IN @lt_prps
-    WHERE objnr = @lt_prps-objnr
-      AND wrttp = '41'
-      AND geber IS NOT INITIAL.
-
-ENDIF.
-
-SORT lt_bpge BY objnr lednr DESCENDING.
-
-"------------------------------------------------------------
-" Fill GT_WBS_ITEMS
-"------------------------------------------------------------
-LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
-
-  CLEAR:
-    <fs_wbs_item>-zbudget_check,
-    <fs_wbs_item>-zunifier_proj.
-
-  "------------------------------------------
-  " Read PRPS using POSID
-  "------------------------------------------
-  READ TABLE lt_prps INTO DATA(ls_prps)
-    WITH KEY posid = <fs_wbs_item>-posid
-    BINARY SEARCH.
+  READ TABLE gt_wbs_items INTO ls_wbs_item
+    WITH KEY posid = ls_prhi_order-posid.
 
   IF sy-subrc = 0.
-
-    "Fill ZUNIFIER_PROJ
-    <fs_wbs_item>-zunifier_proj = ls_prps-zunifier_proj.
-
-    "------------------------------------------
-    " Budget Check from BPGE
-    " if max LEDNR exists with GEBER not initial
-    " then set X
-    "------------------------------------------
-    READ TABLE lt_bpge INTO DATA(ls_bpge)
-      WITH KEY objnr = ls_prps-objnr
-      BINARY SEARCH.
-
-    IF sy-subrc = 0.
-      <fs_wbs_item>-zbudget_check = 'X'.
-    ENDIF.
-
+    APPEND ls_wbs_item TO lt_wbs_sorted.
   ENDIF.
 
 ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Replace original table with arranged sequence
+*---------------------------------------------------------------------*
+IF lt_wbs_sorted IS NOT INITIAL.
+  gt_wbs_items = lt_wbs_sorted.
+ENDIF.
