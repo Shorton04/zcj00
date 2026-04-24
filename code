@@ -1,56 +1,50 @@
-"Your SAP version is older and does NOT allow
-"GROUP BY together with FOR ALL ENTRIES.
+DATA: lt_bpge TYPE SORTED TABLE OF bpge
+                WITH UNIQUE KEY objnr wrttp versn gjahr lednr.
 
-"That is why:
-"GROUP is not allowed here
+FIELD-SYMBOLS:
+  <fs_wbs_item> TYPE ztb_a2r_wbsitem.
 
-"Use this safe old-SAP approach:
-"1. Select normal records
-"2. SORT DESCENDING by LEDNR
-"3. DELETE ADJACENT DUPLICATES
-"→ first row = highest LEDNR
+"Get BPGE records only for WBS entries with OBJNR
+IF gt_wbs_items IS NOT INITIAL.
 
-"============================================================
-"REPLACE BOTH SELECTS WITH THIS
-"============================================================
+  SELECT objnr,
+         wrttp,
+         versn,
+         gjahr,
+         lednr,
+         geber
+    FROM bpge
+    INTO TABLE @lt_bpge
+    FOR ALL ENTRIES IN @gt_wbs_items
+    WHERE objnr = @gt_wbs_items-objnr
+      AND wrttp = '41'.   "budget values
 
+  IF sy-subrc = 0.
 
-"============================================================
-"4) KSTP -> Highest LEDNR
-"============================================================
-CLEAR lt_max_kstp_raw.
+    LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
 
-SELECT
-       objnr
-       lednr
-  INTO TABLE lt_max_kstp_raw
-  FROM bpge
-  FOR ALL ENTRIES IN lt_objnr
- WHERE objnr = lt_objnr-objnr
-   AND vorga = 'KSTP'.
+      CLEAR <fs_wbs_item>-zbudget_check.
 
-SORT lt_max_kstp_raw BY objnr lednr DESCENDING.
-DELETE ADJACENT DUPLICATES FROM lt_max_kstp_raw COMPARING objnr.
+      "Find max LEDNR with GEBER not initial
+      DATA(lv_max_lednr) = VALUE bpge-lednr( ).
 
-lt_max_kstp = CORRESPONDING #( lt_max_kstp_raw ).
+      LOOP AT lt_bpge INTO DATA(ls_bpge)
+        WHERE objnr = <fs_wbs_item>-objnr
+          AND geber IS NOT INITIAL.
 
+        IF lv_max_lednr IS INITIAL
+           OR ls_bpge-lednr > lv_max_lednr.
+          lv_max_lednr = ls_bpge-lednr.
+        ENDIF.
 
-"============================================================
-"5) KBUD -> Highest LEDNR
-"============================================================
-CLEAR lt_max_kbud_raw.
+      ENDLOOP.
 
-SELECT
-       objnr
-       lednr
-  INTO TABLE lt_max_kbud_raw
-  FROM bpge
-  FOR ALL ENTRIES IN lt_objnr
- WHERE objnr = lt_objnr-objnr
-   AND vorga = 'KBUD'
-   AND geber <> ''.
+      IF lv_max_lednr IS NOT INITIAL.
+        <fs_wbs_item>-zbudget_check = 'X'.
+      ENDIF.
 
-SORT lt_max_kbud_raw BY objnr lednr DESCENDING.
-DELETE ADJACENT DUPLICATES FROM lt_max_kbud_raw COMPARING objnr.
+    ENDLOOP.
 
-lt_max_kbud = CORRESPONDING #( lt_max_kbud_raw ).
+  ENDIF.
+
+ENDIF.
