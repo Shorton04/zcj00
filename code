@@ -1,31 +1,35 @@
 REPORT ztest_pm_operation_status.
 
-*--------------------------------------------------------------------
-* Input only
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* Input
+*---------------------------------------------------------------------*
 PARAMETERS:
   p_aufnr TYPE aufnr OBLIGATORY,          "Maintenance Order
   p_sts   TYPE bsvx-sttxt OBLIGATORY.     "Example: RFRA / REXE
 
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
 * Data
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
 DATA:
-  lt_methods    TYPE TABLE OF bapi_alm_order_method,
-  lt_operation  TYPE TABLE OF bapi_alm_order_operation,
-  lt_usrstatus  TYPE TABLE OF bapi_alm_order_usrstat,
-  lt_return     TYPE TABLE OF bapiret2,
+  lt_methods       TYPE TABLE OF bapi_alm_order_method,
+  lt_header        TYPE TABLE OF bapi_alm_order_headers_i,
+  lt_operation     TYPE TABLE OF bapi_alm_order_operation,
+  lt_userstatus    TYPE TABLE OF bapi_alm_order_usrstat,
+  lt_extension_in  TYPE TABLE OF bapiparex,
+  lt_return        TYPE TABLE OF bapiret2,
 
-  ls_method     TYPE bapi_alm_order_method,
-  ls_operation  TYPE bapi_alm_order_operation,
-  ls_usrstatus  TYPE bapi_alm_order_usrstat,
-  ls_return     TYPE bapiret2,
+  ls_method        TYPE bapi_alm_order_method,
+  ls_header        TYPE bapi_alm_order_headers_i,
+  ls_operation     TYPE bapi_alm_order_operation,
+  ls_userstatus    TYPE bapi_alm_order_usrstat,
+  ls_extension_in  TYPE bapiparex,
+  ls_return        TYPE bapiret2,
 
-  lv_vornr      TYPE vornr.
+  lv_vornr         TYPE vornr.
 
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
 * Get first operation automatically (test purpose)
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
 SELECT SINGLE a~vornr
   INTO @lv_vornr
   FROM afvc AS a
@@ -39,58 +43,86 @@ IF sy-subrc <> 0.
   EXIT.
 ENDIF.
 
-WRITE: / 'Testing Operation:', lv_vornr.
+WRITE: / 'Operation found:', lv_vornr.
 
-*--------------------------------------------------------------------
-* Operation reference
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* HEADER (same as standard IW32)
+*---------------------------------------------------------------------*
+CLEAR ls_header.
+ls_header-orderid = p_aufnr.
+APPEND ls_header TO lt_header.
+
+*---------------------------------------------------------------------*
+* OPERATION reference
+*---------------------------------------------------------------------*
 CLEAR ls_operation.
 ls_operation-activity = lv_vornr.
 APPEND ls_operation TO lt_operation.
 
-*--------------------------------------------------------------------
-* User status for operation
-*--------------------------------------------------------------------
-CLEAR ls_usrstatus.
-ls_usrstatus-activity   = lv_vornr.
-ls_usrstatus-user_sts   = p_sts.
-ls_usrstatus-langu      = sy-langu.
-ls_usrstatus-status_act = 'I'.   "Insert / Set status
-APPEND ls_usrstatus TO lt_usrstatus.
+*---------------------------------------------------------------------*
+* USER STATUS for operation
+*---------------------------------------------------------------------*
+CLEAR ls_userstatus.
+ls_userstatus-activity   = lv_vornr.
+ls_userstatus-user_sts   = p_sts.
+ls_userstatus-langu      = sy-langu.
+ls_userstatus-status_act = 'I'.   "Insert / Set
+APPEND ls_userstatus TO lt_userstatus.
 
-*--------------------------------------------------------------------
-* Method : USERSTATUS CHANGE
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* METHOD 1 : HEADER CHANGE  (standard pattern)
+*---------------------------------------------------------------------*
 CLEAR ls_method.
 ls_method-refnumber  = '000001'.
-ls_method-objecttype = 'USERSTATUS'.
+ls_method-objecttype = 'HEADER'.
 ls_method-method     = 'CHANGE'.
 ls_method-objectkey  = p_aufnr.
 APPEND ls_method TO lt_methods.
 
-*--------------------------------------------------------------------
-* Method : SAVE
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* METHOD 2 : DIALOG (same as standard)
+*---------------------------------------------------------------------*
+CLEAR ls_method.
+ls_method-refnumber  = '000000'.
+ls_method-method     = 'DIALOG'.
+APPEND ls_method TO lt_methods.
+
+*---------------------------------------------------------------------*
+* METHOD 3 : SAVE
+*---------------------------------------------------------------------*
 CLEAR ls_method.
 ls_method-refnumber  = '000002'.
-ls_method-objecttype = 'ORDER'.
+ls_method-objecttype = ''.
 ls_method-method     = 'SAVE'.
 ls_method-objectkey  = p_aufnr.
 APPEND ls_method TO lt_methods.
 
-*--------------------------------------------------------------------
-* Execute BAPI
-*--------------------------------------------------------------------
-CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  TABLES
-    it_methods    = lt_methods
-    it_operation  = lt_operation
-    it_userstatus = lt_usrstatus
-    return        = lt_return.
+*---------------------------------------------------------------------*
+* EXTENSION_IN (same as standard debugger)
+*---------------------------------------------------------------------*
+CLEAR ls_extension_in.
+ls_extension_in-structure  = 'SEOCPDNAME'.
+ls_extension_in-valuepart1 = 'CHECK_BEFORE_SAVE'.
+ls_extension_in-valuepart2 = 'CL_EAMS_BO_ORDER'.
+APPEND ls_extension_in TO lt_extension_in.
 
-*--------------------------------------------------------------------
-* Check result
-*--------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* Execute BAPI (same as IW32 standard style)
+*---------------------------------------------------------------------*
+CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+  EXPORTING
+    iv_mmsrv_external_maintenance = abap_true
+  TABLES
+    it_methods      = lt_methods
+    it_header       = lt_header
+    it_operation    = lt_operation
+    it_userstatus   = lt_userstatus
+    extension_in    = lt_extension_in
+    return          = lt_return.
+
+*---------------------------------------------------------------------*
+* Check Result
+*---------------------------------------------------------------------*
 READ TABLE lt_return INTO ls_return
   WITH KEY type = 'E'.
 
@@ -99,6 +131,7 @@ IF sy-subrc = 0.
   CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
   WRITE: / 'ERROR FOUND:'.
+
   LOOP AT lt_return INTO ls_return.
     WRITE: / ls_return-type, ls_return-message.
   ENDLOOP.
@@ -109,7 +142,7 @@ ELSE.
     EXPORTING
       wait = 'X'.
 
-  WRITE: / 'Operation user status updated successfully'.
+  WRITE: / 'SUCCESS'.
   WRITE: / 'Order     :', p_aufnr.
   WRITE: / 'Operation :', lv_vornr.
   WRITE: / 'Status    :', p_sts.
