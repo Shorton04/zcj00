@@ -5,203 +5,157 @@ REPORT ztest_pm_operation_status.
 *---------------------------------------------------------------------*
 PARAMETERS:
   p_aufnr TYPE aufnr OBLIGATORY,          "Maintenance Order
-  p_sts   TYPE bsvx-sttxt OBLIGATORY.     "Example: RFRA / REXE
+  p_sts   TYPE bsvx-sttxt OBLIGATORY.     "Example: RFRA / REXE / W_LA
 
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
 DATA:
-  "----- First Call : CHECK_BEFORE_SAVE
-  lt_methods_1      TYPE TABLE OF bapi_alm_order_method,
-  lt_header_1       TYPE TABLE OF bapi_alm_order_headers_i,
-  lt_operation_1    TYPE TABLE OF bapi_alm_order_operation,
-  lt_userstatus_1   TYPE TABLE OF bapi_alm_order_usrstat,
-  lt_extension_1    TYPE TABLE OF bapiparex,
-  lt_return_1       TYPE TABLE OF bapiret2,
+  "Step 1 : User Status Update
+  lt_methods      TYPE STANDARD TABLE OF bapi_alm_order_method,
+  lt_userstatus   TYPE STANDARD TABLE OF bapi_alm_order_usrstat,
+  lt_return       TYPE STANDARD TABLE OF bapiret2,
 
-  "----- Second Call : SAVE_BAPI_AND_RELEASE
-  lt_methods_2      TYPE TABLE OF bapi_alm_order_method,
-  lt_header_2       TYPE TABLE OF bapi_alm_order_headers_i,
-  lt_header_up_2    TYPE TABLE OF bapi_alm_order_headers_up,
-  lt_extension_2    TYPE TABLE OF bapiparex,
-  lt_return_2       TYPE TABLE OF bapiret2,
-  lt_numbers        TYPE TABLE OF bapi_alm_numbers,
+  "Step 2 : Dummy Save for AFVC sync
+  lt_header       TYPE STANDARD TABLE OF bapi_alm_order_headers_i,
+  lt_header_up    TYPE STANDARD TABLE OF bapi_alm_order_headers_up,
 
-  ls_method         TYPE bapi_alm_order_method,
-  ls_header         TYPE bapi_alm_order_headers_i,
-  ls_header_up      TYPE bapi_alm_order_headers_up,
-  ls_operation      TYPE bapi_alm_order_operation,
-  ls_userstatus     TYPE bapi_alm_order_usrstat,
-  ls_extension      TYPE bapiparex,
-  ls_return         TYPE bapiret2,
-
-  lv_vornr          TYPE vornr.
-
-*---------------------------------------------------------------------*
-* Get first operation automatically (test purpose)
-*---------------------------------------------------------------------*
-SELECT SINGLE a~vornr
-  INTO @lv_vornr
-  FROM afvc AS a
-  INNER JOIN afko AS k
-    ON k~aufpl = a~aufpl
- WHERE k~aufnr = @p_aufnr
- ORDER BY a~vornr.
-
-IF sy-subrc <> 0.
-  WRITE: / 'No operation found for order:', p_aufnr.
-  EXIT.
-ENDIF.
-
-WRITE: / 'Operation Found:', lv_vornr.
+  ls_method       TYPE bapi_alm_order_method,
+  ls_userstatus   TYPE bapi_alm_order_usrstat,
+  ls_header       TYPE bapi_alm_order_headers_i,
+  ls_header_up    TYPE bapi_alm_order_headers_up,
+  ls_return       TYPE bapiret2.
 
 ************************************************************************
-* FIRST CALL
-* CHECK_BEFORE_SAVE
+* STEP 1
+* USER STATUS UPDATE
 ************************************************************************
 
-*---------------------------------------------------------------------*
-* HEADER
-*---------------------------------------------------------------------*
-CLEAR ls_header.
-ls_header-orderid = p_aufnr.
-APPEND ls_header TO lt_header_1.
+CLEAR: lt_methods, lt_userstatus, lt_return.
 
 *---------------------------------------------------------------------*
-* OPERATION
+* METHOD : USERSTATUS CHANGE
 *---------------------------------------------------------------------*
-CLEAR ls_operation.
-ls_operation-activity = lv_vornr.
-APPEND ls_operation TO lt_operation_1.
+APPEND VALUE #(
+  refnumber = '000001'
+  objecttype = 'USERSTATUS'
+  method = 'CHANGE'
+  objectkey = p_aufnr
+) TO lt_methods.
+
+*---------------------------------------------------------------------*
+* METHOD : SAVE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  refnumber = '000001'
+  method = 'SAVE'
+) TO lt_methods.
 
 *---------------------------------------------------------------------*
 * USER STATUS
 *---------------------------------------------------------------------*
-CLEAR ls_userstatus.
-ls_userstatus-activity   = lv_vornr.
-ls_userstatus-user_sts   = p_sts.
-ls_userstatus-langu      = sy-langu.
-ls_userstatus-status_act = 'I'.   "Insert / Set
-APPEND ls_userstatus TO lt_userstatus_1.
+APPEND VALUE #(
+  user_st_text = p_sts
+  langu        = sy-langu
+  change_event = '01'
+) TO lt_userstatus.
 
 *---------------------------------------------------------------------*
-* METHOD : HEADER CHANGE
-*---------------------------------------------------------------------*
-CLEAR ls_method.
-ls_method-refnumber  = '000001'.
-ls_method-objecttype = 'HEADER'.
-ls_method-method     = 'CHANGE'.
-ls_method-objectkey  = p_aufnr.
-APPEND ls_method TO lt_methods_1.
-
-*---------------------------------------------------------------------*
-* METHOD : DIALOG
-*---------------------------------------------------------------------*
-CLEAR ls_method.
-ls_method-refnumber  = '000000'.
-ls_method-method     = 'DIALOG'.
-APPEND ls_method TO lt_methods_1.
-
-*---------------------------------------------------------------------*
-* EXTENSION : CHECK_BEFORE_SAVE
-*---------------------------------------------------------------------*
-CLEAR ls_extension.
-ls_extension-structure  = 'SEOCPDNAME'.
-ls_extension-valuepart1 = 'CHECK_BEFORE_SAVE'.
-ls_extension-valuepart2 = 'CL_EAMS_BO_ORDER'.
-APPEND ls_extension TO lt_extension_1.
-
-*---------------------------------------------------------------------*
-* Execute First BAPI Call
+* Execute BAPI - Status Update
 *---------------------------------------------------------------------*
 CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  EXPORTING
-    iv_mmsrv_external_maintenance = abap_true
   TABLES
-    it_methods      = lt_methods_1
-    it_header       = lt_header_1
-    it_operation    = lt_operation_1
-    it_userstatus   = lt_userstatus_1
-    extension_in    = lt_extension_1
-    return          = lt_return_1.
+    it_methods    = lt_methods
+    it_userstatus = lt_userstatus
+    return        = lt_return.
 
-READ TABLE lt_return_1 INTO ls_return
+READ TABLE lt_return INTO ls_return
   WITH KEY type = 'E'.
 
 IF sy-subrc = 0.
 
   CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
-  WRITE: / 'ERROR IN FIRST CALL (CHECK_BEFORE_SAVE):'.
+  WRITE: / 'ERROR IN STEP 1 - USER STATUS UPDATE'.
 
-  LOOP AT lt_return_1 INTO ls_return.
+  LOOP AT lt_return INTO ls_return.
     WRITE: / ls_return-type, ls_return-message.
   ENDLOOP.
 
   EXIT.
 
+ELSE.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  WRITE: / 'STEP 1 SUCCESS - USER STATUS UPDATED'.
+
 ENDIF.
 
 ************************************************************************
-* SECOND CALL
-* SAVE_BAPI_AND_RELEASE
+* STEP 2
+* DUMMY SAVE TO FORCE AFVC PHASE/SUBPHASE REFRESH
 ************************************************************************
+
+CLEAR: lt_methods, lt_return, lt_header, lt_header_up.
+
+*---------------------------------------------------------------------*
+* METHOD : HEADER CHANGE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  refnumber = '000001'
+  objecttype = 'HEADER'
+  method = 'CHANGE'
+  objectkey = p_aufnr
+) TO lt_methods.
+
+*---------------------------------------------------------------------*
+* METHOD : SAVE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  refnumber = '000001'
+  method = 'SAVE'
+) TO lt_methods.
 
 *---------------------------------------------------------------------*
 * HEADER
+* Re-pass same value or minor text change to trigger save logic
 *---------------------------------------------------------------------*
-CLEAR ls_header.
-ls_header-orderid = p_aufnr.
-APPEND ls_header TO lt_header_2.
+APPEND VALUE #(
+  orderid    = p_aufnr
+  short_text = 'REFRESH'
+) TO lt_header.
 
 *---------------------------------------------------------------------*
-* HEADER_UP (Very Important)
+* HEADER_UP
 *---------------------------------------------------------------------*
-CLEAR ls_header_up.
-ls_header_up-orderid = p_aufnr.
-APPEND ls_header_up TO lt_header_up_2.
+APPEND VALUE #(
+  orderid    = p_aufnr
+  short_text = 'X'
+) TO lt_header_up.
 
 *---------------------------------------------------------------------*
-* METHOD : SAVE ONLY
-*---------------------------------------------------------------------*
-CLEAR ls_method.
-ls_method-refnumber = '000000'.
-ls_method-method    = 'SAVE'.
-APPEND ls_method TO lt_methods_2.
-
-*---------------------------------------------------------------------*
-* EXTENSION : SAVE_BAPI_AND_RELEASE
-*---------------------------------------------------------------------*
-CLEAR ls_extension.
-ls_extension-structure  = 'SEOCPDNAME'.
-ls_extension-valuepart1 = 'SAVE_BAPI_AND_RELEASE'.
-ls_extension-valuepart2 = 'CL_EAMS_BO_ORDER'.
-APPEND ls_extension TO lt_extension_2.
-
-*---------------------------------------------------------------------*
-* Execute Second BAPI Call
+* Execute BAPI - Dummy Save
 *---------------------------------------------------------------------*
 CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  EXPORTING
-    iv_mmsrv_external_maintenance = abap_true
   TABLES
-    it_methods      = lt_methods_2
-    it_header       = lt_header_2
-    it_header_up    = lt_header_up_2
-    extension_in    = lt_extension_2
-    et_numbers      = lt_numbers
-    return          = lt_return_2.
+    it_methods   = lt_methods
+    it_header    = lt_header
+    it_header_up = lt_header_up
+    return       = lt_return.
 
-READ TABLE lt_return_2 INTO ls_return
+READ TABLE lt_return INTO ls_return
   WITH KEY type = 'E'.
 
 IF sy-subrc = 0.
 
   CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
-  WRITE: / 'ERROR IN SECOND CALL (SAVE):'.
+  WRITE: / 'ERROR IN STEP 2 - DUMMY SAVE'.
 
-  LOOP AT lt_return_2 INTO ls_return.
+  LOOP AT lt_return INTO ls_return.
     WRITE: / ls_return-type, ls_return-message.
   ENDLOOP.
 
@@ -211,9 +165,9 @@ ELSE.
     EXPORTING
       wait = 'X'.
 
-  WRITE: / 'SUCCESS'.
-  WRITE: / 'Order     :', p_aufnr.
-  WRITE: / 'Operation :', lv_vornr.
-  WRITE: / 'Status    :', p_sts.
+  WRITE: / 'STEP 2 SUCCESS - AFVC REFRESH TRIGGERED'.
+  WRITE: / 'Order  :', p_aufnr.
+  WRITE: / 'Status :', p_sts.
+  WRITE: / 'Check AFVC phase/subphase after execution.'.
 
 ENDIF.
