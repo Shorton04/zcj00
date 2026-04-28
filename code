@@ -1,105 +1,99 @@
-REPORT ztest_pm_operation_status.
+REPORT ztest_operation_status.
 
 *---------------------------------------------------------------------*
 * Input
 *---------------------------------------------------------------------*
 PARAMETERS:
-  p_aufnr TYPE aufnr OBLIGATORY,          "Maintenance Order
-  p_sts   TYPE bsvx-sttxt OBLIGATORY.     "Example: RFRA / REXE / W_LA
+  p_aufnr TYPE aufnr OBLIGATORY,   "Maintenance Order
+  p_vornr TYPE vornr OBLIGATORY,   "Operation Number (example 0010)
+  p_vrgng TYPE tj01-vrgng OBLIGATORY. "Business transaction / status activity
+
+*---------------------------------------------------------------------*
+* Example:
+* p_vrgng =
+* DSPT   -> Dispatch
+* REXE   -> Ready for Execution
+* RFRA   -> Ready for Release
+* (depends on your system config)
+*---------------------------------------------------------------------*
 
 *---------------------------------------------------------------------*
 * Data
 *---------------------------------------------------------------------*
 DATA:
-  "Step 1 : User Status Update
-  lt_methods      TYPE STANDARD TABLE OF bapi_alm_order_method,
-  lt_userstatus   TYPE STANDARD TABLE OF bapi_alm_order_usrstat,
-  lt_return       TYPE STANDARD TABLE OF bapiret2,
+  lv_aufpl       TYPE afko-aufpl,
+  lv_objnr       TYPE jest-objnr,
 
-  "Step 2 : Dummy Save for AFVC sync
-  lt_header       TYPE STANDARD TABLE OF bapi_alm_order_headers_i,
-  lt_header_up    TYPE STANDARD TABLE OF bapi_alm_order_headers_up,
+  "Dummy save BAPI
+  lt_methods     TYPE STANDARD TABLE OF bapi_alm_order_method,
+  lt_header      TYPE STANDARD TABLE OF bapi_alm_order_headers_i,
+  lt_header_up   TYPE STANDARD TABLE OF bapi_alm_order_headers_up,
+  lt_return      TYPE STANDARD TABLE OF bapiret2,
 
-  ls_method       TYPE bapi_alm_order_method,
-  ls_userstatus   TYPE bapi_alm_order_usrstat,
-  ls_header       TYPE bapi_alm_order_headers_i,
-  ls_header_up    TYPE bapi_alm_order_headers_up,
-  ls_return       TYPE bapiret2.
+  ls_return      TYPE bapiret2.
 
 ************************************************************************
 * STEP 1
-* USER STATUS UPDATE
+* Get operation OBJNR from AFVC
 ************************************************************************
 
-CLEAR: lt_methods, lt_userstatus, lt_return.
+SELECT SINGLE k~aufpl
+  INTO @lv_aufpl
+  FROM afko AS k
+ WHERE k~aufnr = @p_aufnr.
 
-*---------------------------------------------------------------------*
-* METHOD : USERSTATUS CHANGE
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  refnumber = '000001'
-  objecttype = 'USERSTATUS'
-  method = 'CHANGE'
-  objectkey = p_aufnr
-) TO lt_methods.
-
-*---------------------------------------------------------------------*
-* METHOD : SAVE
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  refnumber = '000001'
-  method = 'SAVE'
-) TO lt_methods.
-
-*---------------------------------------------------------------------*
-* USER STATUS
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  user_st_text = p_sts
-  langu        = sy-langu
-  change_event = '01'
-) TO lt_userstatus.
-
-*---------------------------------------------------------------------*
-* Execute BAPI - Status Update
-*---------------------------------------------------------------------*
-CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  TABLES
-    it_methods    = lt_methods
-    it_userstatus = lt_userstatus
-    return        = lt_return.
-
-READ TABLE lt_return INTO ls_return
-  WITH KEY type = 'E'.
-
-IF sy-subrc = 0.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-
-  WRITE: / 'ERROR IN STEP 1 - USER STATUS UPDATE'.
-
-  LOOP AT lt_return INTO ls_return.
-    WRITE: / ls_return-type, ls_return-message.
-  ENDLOOP.
-
+IF sy-subrc <> 0.
+  WRITE: / 'Order not found:', p_aufnr.
   EXIT.
-
-ELSE.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-    EXPORTING
-      wait = 'X'.
-
-  WRITE: / 'STEP 1 SUCCESS - USER STATUS UPDATED'.
-
 ENDIF.
+
+SELECT SINGLE objnr
+  INTO @lv_objnr
+  FROM afvc
+ WHERE aufpl = @lv_aufpl
+   AND vornr = @p_vornr.
+
+IF sy-subrc <> 0.
+  WRITE: / 'Operation not found:', p_vornr.
+  EXIT.
+ENDIF.
+
+WRITE: / 'OBJNR Found:', lv_objnr.
 
 ************************************************************************
 * STEP 2
-* DUMMY SAVE TO FORCE AFVC PHASE/SUBPHASE REFRESH
+* Update OPERATION STATUS
+* (Correct FM for activity / operation)
 ************************************************************************
 
-CLEAR: lt_methods, lt_return, lt_header, lt_header_up.
+CALL FUNCTION 'STATUS_CHANGE_FOR_ACTIVITY'
+  EXPORTING
+    objnr                = lv_objnr
+    vrgng                = p_vrgng
+    set_chgkz            = abap_true
+    no_authority_check   = abap_true
+    check_only           = space
+  EXCEPTIONS
+    object_not_found     = 1
+    status_inconsistent  = 2
+    status_not_allowed   = 3
+    OTHERS               = 4.
+
+IF sy-subrc <> 0.
+  WRITE: / 'STATUS_CHANGE_FOR_ACTIVITY failed. SY-SUBRC =', sy-subrc.
+  EXIT.
+ENDIF.
+
+COMMIT WORK AND WAIT.
+
+WRITE: / 'STEP 1 SUCCESS - Operation status updated'.
+
+************************************************************************
+* STEP 3
+* Dummy SAVE to force AFVC Phase/Subphase refresh
+************************************************************************
+
+CLEAR: lt_methods, lt_header, lt_header_up, lt_return.
 
 *---------------------------------------------------------------------*
 * METHOD : HEADER CHANGE
@@ -121,7 +115,7 @@ APPEND VALUE #(
 
 *---------------------------------------------------------------------*
 * HEADER
-* Re-pass same value or minor text change to trigger save logic
+* Small harmless change to trigger derivation engine
 *---------------------------------------------------------------------*
 APPEND VALUE #(
   orderid    = p_aufnr
@@ -137,7 +131,7 @@ APPEND VALUE #(
 ) TO lt_header_up.
 
 *---------------------------------------------------------------------*
-* Execute BAPI - Dummy Save
+* Execute Dummy Save
 *---------------------------------------------------------------------*
 CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
   TABLES
@@ -153,7 +147,7 @@ IF sy-subrc = 0.
 
   CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
-  WRITE: / 'ERROR IN STEP 2 - DUMMY SAVE'.
+  WRITE: / 'ERROR IN DUMMY SAVE:'.
 
   LOOP AT lt_return INTO ls_return.
     WRITE: / ls_return-type, ls_return-message.
@@ -165,9 +159,10 @@ ELSE.
     EXPORTING
       wait = 'X'.
 
-  WRITE: / 'STEP 2 SUCCESS - AFVC REFRESH TRIGGERED'.
-  WRITE: / 'Order  :', p_aufnr.
-  WRITE: / 'Status :', p_sts.
-  WRITE: / 'Check AFVC phase/subphase after execution.'.
+  WRITE: / 'STEP 2 SUCCESS - AFVC refresh triggered'.
+  WRITE: / 'Order     :', p_aufnr.
+  WRITE: / 'Operation :', p_vornr.
+  WRITE: / 'VRGNG     :', p_vrgng.
+  WRITE: / 'Check AFVC phase/subphase now.'.
 
 ENDIF.
