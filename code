@@ -1,33 +1,117 @@
-*---------------------------------------------------------------------*
-* Copy KOSTL and PRART from STUFE = 1 WBS to all lower level WBS
-*---------------------------------------------------------------------*
+REPORT ztest_pm_operation_status.
 
-DATA: ls_level1 TYPE ztb_a2r_wbsitem.
+*--------------------------------------------------------------------
+* Input only
+*--------------------------------------------------------------------
+PARAMETERS:
+  p_aufnr TYPE aufnr OBLIGATORY,          "Maintenance Order
+  p_sts   TYPE bsvx-sttxt OBLIGATORY.     "Example: RFRA / REXE
 
-CLEAR ls_level1.
+*--------------------------------------------------------------------
+* Data
+*--------------------------------------------------------------------
+DATA:
+  lt_methods    TYPE TABLE OF bapi_alm_order_method,
+  lt_operation  TYPE TABLE OF bapi_alm_order_operation,
+  lt_usrstatus  TYPE TABLE OF bapi_alm_order_usrstat,
+  lt_return     TYPE TABLE OF bapiret2,
 
-*---------------------------------------------------------------------*
-* Get Level 1 WBS (parent/root)
-*---------------------------------------------------------------------*
-READ TABLE gt_wbs_items INTO ls_level1
-  WITH KEY stufe = 1.
+  ls_method     TYPE bapi_alm_order_method,
+  ls_operation  TYPE bapi_alm_order_operation,
+  ls_usrstatus  TYPE bapi_alm_order_usrstat,
+  ls_return     TYPE bapiret2,
+
+  lv_vornr      TYPE vornr.
+
+*--------------------------------------------------------------------
+* Get first operation automatically (test purpose)
+*--------------------------------------------------------------------
+SELECT SINGLE a~vornr
+  INTO @lv_vornr
+  FROM afvc AS a
+  INNER JOIN afko AS k
+    ON k~aufpl = a~aufpl
+ WHERE k~aufnr = @p_aufnr
+ ORDER BY a~vornr.
+
+IF sy-subrc <> 0.
+  WRITE: / 'No operation found for order:', p_aufnr.
+  EXIT.
+ENDIF.
+
+WRITE: / 'Testing Operation:', lv_vornr.
+
+*--------------------------------------------------------------------
+* Operation reference
+*--------------------------------------------------------------------
+CLEAR ls_operation.
+ls_operation-activity = lv_vornr.
+APPEND ls_operation TO lt_operation.
+
+*--------------------------------------------------------------------
+* User status for operation
+*--------------------------------------------------------------------
+CLEAR ls_usrstatus.
+ls_usrstatus-activity   = lv_vornr.
+ls_usrstatus-user_sts   = p_sts.
+ls_usrstatus-langu      = sy-langu.
+ls_usrstatus-status_act = 'I'.   "Insert / Set status
+APPEND ls_usrstatus TO lt_usrstatus.
+
+*--------------------------------------------------------------------
+* Method : USERSTATUS CHANGE
+*--------------------------------------------------------------------
+CLEAR ls_method.
+ls_method-refnumber  = '000001'.
+ls_method-objecttype = 'USERSTATUS'.
+ls_method-method     = 'CHANGE'.
+ls_method-objectkey  = p_aufnr.
+APPEND ls_method TO lt_methods.
+
+*--------------------------------------------------------------------
+* Method : SAVE
+*--------------------------------------------------------------------
+CLEAR ls_method.
+ls_method-refnumber  = '000002'.
+ls_method-objecttype = 'ORDER'.
+ls_method-method     = 'SAVE'.
+ls_method-objectkey  = p_aufnr.
+APPEND ls_method TO lt_methods.
+
+*--------------------------------------------------------------------
+* Execute BAPI
+*--------------------------------------------------------------------
+CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+  TABLES
+    it_methods    = lt_methods
+    it_operation  = lt_operation
+    it_userstatus = lt_usrstatus
+    return        = lt_return.
+
+*--------------------------------------------------------------------
+* Check result
+*--------------------------------------------------------------------
+READ TABLE lt_return INTO ls_return
+  WITH KEY type = 'E'.
 
 IF sy-subrc = 0.
 
-  LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_wbs>).
+  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
-    IF <fs_wbs>-stufe > 1.
-
-      IF <fs_wbs>-kostl IS INITIAL.
-        <fs_wbs>-kostl = ls_level1-kostl.
-      ENDIF.
-
-      IF <fs_wbs>-prart IS INITIAL.
-        <fs_wbs>-prart = ls_level1-prart.
-      ENDIF.
-
-    ENDIF.
-
+  WRITE: / 'ERROR FOUND:'.
+  LOOP AT lt_return INTO ls_return.
+    WRITE: / ls_return-type, ls_return-message.
   ENDLOOP.
+
+ELSE.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+  WRITE: / 'Operation user status updated successfully'.
+  WRITE: / 'Order     :', p_aufnr.
+  WRITE: / 'Operation :', lv_vornr.
+  WRITE: / 'Status    :', p_sts.
 
 ENDIF.
