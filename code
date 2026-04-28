@@ -11,21 +11,31 @@ PARAMETERS:
 * Data
 *---------------------------------------------------------------------*
 DATA:
-  lt_methods       TYPE TABLE OF bapi_alm_order_method,
-  lt_header        TYPE TABLE OF bapi_alm_order_headers_i,
-  lt_operation     TYPE TABLE OF bapi_alm_order_operation,
-  lt_userstatus    TYPE TABLE OF bapi_alm_order_usrstat,
-  lt_extension_in  TYPE TABLE OF bapiparex,
-  lt_return        TYPE TABLE OF bapiret2,
+  "----- First Call : CHECK_BEFORE_SAVE
+  lt_methods_1      TYPE TABLE OF bapi_alm_order_method,
+  lt_header_1       TYPE TABLE OF bapi_alm_order_headers_i,
+  lt_operation_1    TYPE TABLE OF bapi_alm_order_operation,
+  lt_userstatus_1   TYPE TABLE OF bapi_alm_order_usrstat,
+  lt_extension_1    TYPE TABLE OF bapiparex,
+  lt_return_1       TYPE TABLE OF bapiret2,
 
-  ls_method        TYPE bapi_alm_order_method,
-  ls_header        TYPE bapi_alm_order_headers_i,
-  ls_operation     TYPE bapi_alm_order_operation,
-  ls_userstatus    TYPE bapi_alm_order_usrstat,
-  ls_extension_in  TYPE bapiparex,
-  ls_return        TYPE bapiret2,
+  "----- Second Call : SAVE_BAPI_AND_RELEASE
+  lt_methods_2      TYPE TABLE OF bapi_alm_order_method,
+  lt_header_2       TYPE TABLE OF bapi_alm_order_headers_i,
+  lt_header_up_2    TYPE TABLE OF bapi_alm_order_headers_up,
+  lt_extension_2    TYPE TABLE OF bapiparex,
+  lt_return_2       TYPE TABLE OF bapiret2,
+  lt_numbers        TYPE TABLE OF bapi_alm_numbers,
 
-  lv_vornr         TYPE vornr.
+  ls_method         TYPE bapi_alm_order_method,
+  ls_header         TYPE bapi_alm_order_headers_i,
+  ls_header_up      TYPE bapi_alm_order_headers_up,
+  ls_operation      TYPE bapi_alm_order_operation,
+  ls_userstatus     TYPE bapi_alm_order_usrstat,
+  ls_extension      TYPE bapiparex,
+  ls_return         TYPE bapiret2,
+
+  lv_vornr          TYPE vornr.
 
 *---------------------------------------------------------------------*
 * Get first operation automatically (test purpose)
@@ -43,96 +53,155 @@ IF sy-subrc <> 0.
   EXIT.
 ENDIF.
 
-WRITE: / 'Operation found:', lv_vornr.
+WRITE: / 'Operation Found:', lv_vornr.
+
+************************************************************************
+* FIRST CALL
+* CHECK_BEFORE_SAVE
+************************************************************************
 
 *---------------------------------------------------------------------*
-* HEADER (same as standard IW32)
+* HEADER
 *---------------------------------------------------------------------*
 CLEAR ls_header.
 ls_header-orderid = p_aufnr.
-APPEND ls_header TO lt_header.
+APPEND ls_header TO lt_header_1.
 
 *---------------------------------------------------------------------*
-* OPERATION reference
+* OPERATION
 *---------------------------------------------------------------------*
 CLEAR ls_operation.
 ls_operation-activity = lv_vornr.
-APPEND ls_operation TO lt_operation.
+APPEND ls_operation TO lt_operation_1.
 
 *---------------------------------------------------------------------*
-* USER STATUS for operation
+* USER STATUS
 *---------------------------------------------------------------------*
 CLEAR ls_userstatus.
 ls_userstatus-activity   = lv_vornr.
 ls_userstatus-user_sts   = p_sts.
 ls_userstatus-langu      = sy-langu.
 ls_userstatus-status_act = 'I'.   "Insert / Set
-APPEND ls_userstatus TO lt_userstatus.
+APPEND ls_userstatus TO lt_userstatus_1.
 
 *---------------------------------------------------------------------*
-* METHOD 1 : HEADER CHANGE  (standard pattern)
+* METHOD : HEADER CHANGE
 *---------------------------------------------------------------------*
 CLEAR ls_method.
 ls_method-refnumber  = '000001'.
 ls_method-objecttype = 'HEADER'.
 ls_method-method     = 'CHANGE'.
 ls_method-objectkey  = p_aufnr.
-APPEND ls_method TO lt_methods.
+APPEND ls_method TO lt_methods_1.
 
 *---------------------------------------------------------------------*
-* METHOD 2 : DIALOG (same as standard)
+* METHOD : DIALOG
 *---------------------------------------------------------------------*
 CLEAR ls_method.
 ls_method-refnumber  = '000000'.
 ls_method-method     = 'DIALOG'.
-APPEND ls_method TO lt_methods.
+APPEND ls_method TO lt_methods_1.
 
 *---------------------------------------------------------------------*
-* METHOD 3 : SAVE
+* EXTENSION : CHECK_BEFORE_SAVE
 *---------------------------------------------------------------------*
-CLEAR ls_method.
-ls_method-refnumber  = '000002'.
-ls_method-objecttype = ''.
-ls_method-method     = 'SAVE'.
-ls_method-objectkey  = p_aufnr.
-APPEND ls_method TO lt_methods.
+CLEAR ls_extension.
+ls_extension-structure  = 'SEOCPDNAME'.
+ls_extension-valuepart1 = 'CHECK_BEFORE_SAVE'.
+ls_extension-valuepart2 = 'CL_EAMS_BO_ORDER'.
+APPEND ls_extension TO lt_extension_1.
 
 *---------------------------------------------------------------------*
-* EXTENSION_IN (same as standard debugger)
-*---------------------------------------------------------------------*
-CLEAR ls_extension_in.
-ls_extension_in-structure  = 'SEOCPDNAME'.
-ls_extension_in-valuepart1 = 'CHECK_BEFORE_SAVE'.
-ls_extension_in-valuepart2 = 'CL_EAMS_BO_ORDER'.
-APPEND ls_extension_in TO lt_extension_in.
-
-*---------------------------------------------------------------------*
-* Execute BAPI (same as IW32 standard style)
+* Execute First BAPI Call
 *---------------------------------------------------------------------*
 CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
   EXPORTING
     iv_mmsrv_external_maintenance = abap_true
   TABLES
-    it_methods      = lt_methods
-    it_header       = lt_header
-    it_operation    = lt_operation
-    it_userstatus   = lt_userstatus
-    extension_in    = lt_extension_in
-    return          = lt_return.
+    it_methods      = lt_methods_1
+    it_header       = lt_header_1
+    it_operation    = lt_operation_1
+    it_userstatus   = lt_userstatus_1
+    extension_in    = lt_extension_1
+    return          = lt_return_1.
 
-*---------------------------------------------------------------------*
-* Check Result
-*---------------------------------------------------------------------*
-READ TABLE lt_return INTO ls_return
+READ TABLE lt_return_1 INTO ls_return
   WITH KEY type = 'E'.
 
 IF sy-subrc = 0.
 
   CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
 
-  WRITE: / 'ERROR FOUND:'.
+  WRITE: / 'ERROR IN FIRST CALL (CHECK_BEFORE_SAVE):'.
 
-  LOOP AT lt_return INTO ls_return.
+  LOOP AT lt_return_1 INTO ls_return.
+    WRITE: / ls_return-type, ls_return-message.
+  ENDLOOP.
+
+  EXIT.
+
+ENDIF.
+
+************************************************************************
+* SECOND CALL
+* SAVE_BAPI_AND_RELEASE
+************************************************************************
+
+*---------------------------------------------------------------------*
+* HEADER
+*---------------------------------------------------------------------*
+CLEAR ls_header.
+ls_header-orderid = p_aufnr.
+APPEND ls_header TO lt_header_2.
+
+*---------------------------------------------------------------------*
+* HEADER_UP (Very Important)
+*---------------------------------------------------------------------*
+CLEAR ls_header_up.
+ls_header_up-orderid = p_aufnr.
+APPEND ls_header_up TO lt_header_up_2.
+
+*---------------------------------------------------------------------*
+* METHOD : SAVE ONLY
+*---------------------------------------------------------------------*
+CLEAR ls_method.
+ls_method-refnumber = '000000'.
+ls_method-method    = 'SAVE'.
+APPEND ls_method TO lt_methods_2.
+
+*---------------------------------------------------------------------*
+* EXTENSION : SAVE_BAPI_AND_RELEASE
+*---------------------------------------------------------------------*
+CLEAR ls_extension.
+ls_extension-structure  = 'SEOCPDNAME'.
+ls_extension-valuepart1 = 'SAVE_BAPI_AND_RELEASE'.
+ls_extension-valuepart2 = 'CL_EAMS_BO_ORDER'.
+APPEND ls_extension TO lt_extension_2.
+
+*---------------------------------------------------------------------*
+* Execute Second BAPI Call
+*---------------------------------------------------------------------*
+CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+  EXPORTING
+    iv_mmsrv_external_maintenance = abap_true
+  TABLES
+    it_methods      = lt_methods_2
+    it_header       = lt_header_2
+    it_header_up    = lt_header_up_2
+    extension_in    = lt_extension_2
+    et_numbers      = lt_numbers
+    return          = lt_return_2.
+
+READ TABLE lt_return_2 INTO ls_return
+  WITH KEY type = 'E'.
+
+IF sy-subrc = 0.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+  WRITE: / 'ERROR IN SECOND CALL (SAVE):'.
+
+  LOOP AT lt_return_2 INTO ls_return.
     WRITE: / ls_return-type, ls_return-message.
   ENDLOOP.
 
