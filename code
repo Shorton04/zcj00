@@ -1,130 +1,46 @@
-  METHOD get_error_handler.
-    DATA lv_objid TYPE char8.
-    DATA: lt_agent  TYPE STANDARD TABLE OF ty_agent,
-          ls_agent  TYPE ty_agent,
-          lv_reqnum TYPE zde_a2r_reqnum.
+FORM get_budgetchk.
 
-    SELECT SINGLE zerror_handling
-      FROM ztb_a2r_conftab2
-      INTO lv_objid
-      WHERE z_reqtype = is_header-z_reqtype
-      AND bukrs = is_header-bukrs
-      AND profl = is_header-profl.
+  DATA: lt_wbs_db TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
+        lt_wbs_map TYPE HASHED TABLE OF ztb_a2r_wbsitem
+                     WITH UNIQUE KEY posid.
 
-    IF sy-subrc <> 0.
-      RETURN.
-    ENDIF.
+  "-------------------------------------------------------
+  " Validate input
+  "-------------------------------------------------------
+  IF gv_pspnr IS INITIAL.
+    RETURN. " no project -> nothing to fetch
+  ENDIF.
 
-    SELECT sobid
-      FROM hrp1001
-      INTO TABLE lt_agent
-      WHERE objid = lv_objid
-      AND   sclas = 'US'.
+  "-------------------------------------------------------
+  " Get all WBS items for the project
+  "-------------------------------------------------------
+  SELECT posid,
+         zbudget_check
+    FROM ztb_a2r_wbsitem
+    INTO TABLE @lt_wbs_db
+    WHERE pspnr = @gv_pspnr.
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  "-------------------------------------------------------
+  " Convert to hashed table for fast lookup
+  "-------------------------------------------------------
+  lt_wbs_map = lt_wbs_db.
+
+  "-------------------------------------------------------
+  " Update gt_wbs_items
+  "-------------------------------------------------------
+  LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_wbs>).
+
+    READ TABLE lt_wbs_map ASSIGNING FIELD-SYMBOL(<fs_db>)
+      WITH TABLE KEY posid = <fs_wbs>-posid.
+
     IF sy-subrc = 0.
-      LOOP AT lt_agent INTO ls_agent.
-
-        send_email_to_agent(
-        iv_agent = ls_agent-agent
-        iv_reqnum = is_header-zreq_num
-        it_messages = it_msg
-        ).
-      ENDLOOP.
+      <fs_wbs>-zbudget_check = <fs_db>-zbudget_check.
     ENDIF.
 
-  ENDMETHOD.
+  ENDLOOP.
 
-
-
-  METHOD send_email_to_agent.
-
-    DATA: lv_email     TYPE adr6-smtp_addr,
-          lv_subject   TYPE so_obj_des,
-          lt_text      TYPE bcsy_text,
-          lv_line      TYPE string,
-          lv_msgtyp    TYPE char8,
-          lv_process   TYPE char20,
-          lo_send_req  TYPE REF TO cl_bcs,
-          lo_document  TYPE REF TO cl_document_bcs,
-          lo_recipient TYPE REF TO if_recipient_bcs,
-          lt_agent     TYPE STANDARD TABLE OF ty_agent.
-
-    lv_subject = |Workflow Notification for Request { iv_reqnum }|.
-
-*---------------------------------------------------------------------*
-* 1. Get Email from SYUNAME
-*---------------------------------------------------------------------*
-
-    SELECT SINGLE a~smtp_addr
-      INTO @lv_email
-      FROM usr21 AS u
-      INNER JOIN adr6 AS a
-        ON u~addrnumber = a~addrnumber
-       AND u~persnumber = a~persnumber
-     WHERE u~bname = @iv_agent.
-
-    IF lv_email IS INITIAL.
-      RETURN.
-    ENDIF.
-
-*---------------------------------------------------------------------*
-* 2. Convert IT_MESSAGES to email body
-*---------------------------------------------------------------------*
-    CLEAR lv_line.
-    lv_line = |Request Number : { iv_reqnum }|.
-    APPEND lv_line TO lt_text.
-
-    LOOP AT it_messages INTO DATA(ls_msg).
-      IF ls_msg-type = 'W'.
-        lv_msgtyp = 'Warning'.
-      ELSEIF ls_msg-type = 'E'.
-        lv_msgtyp = 'Error'.
-      ENDIF.
-      lv_line = |{ lv_msgtyp } - { ls_msg-message }|.
-      lv_process = |{ ls_msg-process } :|.
-      APPEND lv_process TO lt_text.
-      APPEND lv_line TO lt_text.
-    ENDLOOP.
-
-    CLEAR lv_line.
-    lv_line = ''.
-    APPEND lv_line TO lt_text.
-    lv_line = 'Please review the details and take the necessary action.'.
-    APPEND lv_line TO lt_text.
-    CLEAR lv_line.
-    lv_line = 'This is a system-generated message.'.
-    APPEND lv_line TO lt_text.
-
-*---------------------------------------------------------------------*
-* 3–5. Create & Send Email (WITH EXCEPTION HANDLING)
-*---------------------------------------------------------------------*
-    TRY.
-        lo_send_req = cl_bcs=>create_persistent( ).
-
-        lo_document = cl_document_bcs=>create_document(
-                        i_type    = 'RAW'
-                        i_text    = lt_text
-                        i_subject = lv_subject ).
-
-        lo_send_req->set_document( lo_document ).
-
-        lo_recipient =
-          cl_cam_address_bcs=>create_internet_address( lv_email ).
-
-        lo_send_req->add_recipient(
-          EXPORTING
-            i_recipient = lo_recipient
-            i_express   = abap_true ).
-
-        lo_send_req->send( i_with_error_screen = abap_true ).
-
-        COMMIT WORK.
-
-      CATCH cx_send_req_bcs
-            cx_document_bcs
-            cx_address_bcs INTO DATA(lx_bcs).
-
-        MESSAGE lx_bcs->get_text( ) TYPE 'E'.
-
-    ENDTRY.
-
-  ENDMETHOD.
+ENDFORM.
