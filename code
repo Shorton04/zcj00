@@ -1,18 +1,26 @@
 FORM get_budgetchk.
 
-  DATA: lt_wbs_db TYPE STANDARD TABLE OF ztb_a2r_wbsitem,
-        lt_wbs_map TYPE HASHED TABLE OF ztb_a2r_wbsitem
+  "-------------------------------------------------------
+  " Local types (only needed fields)
+  "-------------------------------------------------------
+  TYPES: BEGIN OF ty_wbs_budget,
+           posid          TYPE prps-posid,
+           zbudget_check  TYPE ztb_a2r_wbsitem-zbudget_check,
+         END OF ty_wbs_budget.
+
+  DATA: lt_wbs_db  TYPE STANDARD TABLE OF ty_wbs_budget,
+        lt_wbs_map TYPE HASHED TABLE OF ty_wbs_budget
                      WITH UNIQUE KEY posid.
 
   "-------------------------------------------------------
   " Validate input
   "-------------------------------------------------------
   IF gv_pspnr IS INITIAL.
-    RETURN. " no project -> nothing to fetch
+    RETURN.
   ENDIF.
 
   "-------------------------------------------------------
-  " Get all WBS items for the project
+  " Get data from DB
   "-------------------------------------------------------
   SELECT posid,
          zbudget_check
