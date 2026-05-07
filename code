@@ -1,1045 +1,264 @@
-  METHOD save_bapi_and_release.
-
-* Call the Order save BAPI for an order
-* Check release flag and release order as well.
-* When the release fails, try again to save the order
-* without releasing it
-*
-    DATA lt_method                TYPE bapi_alm_order_method_t.
-    DATA lt_return                TYPE bapirettab.
-    DATA lt_message               TYPE /plmb/t_spi_msg.
-    DATA lv_failed                TYPE xfeld.
-    DATA lv_message               TYPE c LENGTH 1.          "#EC NEEDED
-    DATA lo_requirements_api      TYPE REF TO cl_eamws_requirements_api.
-    DATA ls_caufvd                TYPE caufvd. " EAMS4 note 2084700
-
-    DATA lv_counter               TYPE i.                                           " note  2156528
-
-    FIELD-SYMBOLS <ls_method>     TYPE bapi_alm_order_method.                                         "MFLE CHECKED
-    FIELD-SYMBOLS <ls_node_id>    LIKE LINE OF it_node_id.
-
-* init:
-    CLEAR: et_message, et_saved_ord, et_saved_ntf.
-
-    cl_eam_usage=>set_fiori_state( iv_active = abap_true ).                         "n3561841
-
-    IF iv_release NE space.
-      LOOP AT it_node_id ASSIGNING <ls_node_id>.
-* EAMS4 note 2084700
-        CALL FUNCTION 'CO_BT_CAUFV_READ_WITH_KEY'
-          EXPORTING
-            aufnr_act      = <ls_node_id>-eams_aufnr
-            no_dialog_info = space
-            flg_stat       = 'X'
-          IMPORTING
-            caufvd_exp     = ls_caufvd
-          EXCEPTIONS
-            not_found      = 1
-            OTHERS         = 2.
-        IF sy-subrc EQ 0.
-          CALL FUNCTION 'STATUS_CHECK'
-            EXPORTING
-              objnr             = ls_caufvd-objnr
-              status            = 'I0045'
-            EXCEPTIONS
-              object_not_found  = 1
-              status_not_active = 2
-              OTHERS            = 3.
-
-          IF sy-subrc EQ 0.
-            " Order has status technically completed
-*<note 2156528>
-            READ TABLE mt_add_teco_data_before_save INTO ms_teco_data_before_save
-            WITH KEY aufnr = ls_caufvd-aufnr.
-            IF sy-subrc EQ 0.
-              DELETE TABLE mt_add_teco_data_before_save FROM ms_teco_data_before_save.
-            ENDIF.
-*</note 2156528>
-            CONTINUE.
-          ENDIF.
-
-          CALL FUNCTION 'STATUS_CHECK'
-            EXPORTING
-              objnr             = ls_caufvd-objnr
-              status            = 'I0002'
-            EXCEPTIONS
-              object_not_found  = 1
-              status_not_active = 2
-              OTHERS            = 3.
-
-          IF sy-subrc EQ 0.
-            " Order has status released
-            CONTINUE.
-          ENDIF.
-
-        ENDIF.
-* /EAMS4 note 2084700
-        APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-        <ls_method>-method     = if_eams_bo_const=>gc_bapi_ord_method-release.
-        <ls_method>-objecttype = if_eams_bo_const=>gc_bapi_ord_obj_type-header.
-        <ls_method>-objectkey  = <ls_node_id>-eams_aufnr.
-      ENDLOOP.
-    ENDIF.
-
-*<note 2156528>
-*    IF mt_add_teco_data_before_save IS NOT INITIAL.
-*      LOOP AT it_node_id ASSIGNING <ls_node_id>.
-*
-*        CLEAR ms_teco_data_before_save.
-*        READ TABLE mt_add_teco_data_before_save INTO ms_teco_data_before_save
-*          WITH KEY aufnr = <ls_node_id>-eams_aufnr.
-*        IF sy-subrc EQ 0.
-*          CALL FUNCTION 'CO_BT_CAUFV_READ_WITH_KEY'
-*            EXPORTING
-*              aufnr_act      = <ls_node_id>-eams_aufnr
-*              no_dialog_info = space
-*              flg_stat       = 'X'
-*            IMPORTING
-*              caufvd_exp     = ls_caufvd
-*            EXCEPTIONS
-*              not_found      = 1
-*              OTHERS         = 2.
-*          IF sy-subrc EQ 0.
-*            CALL FUNCTION 'STATUS_CHECK'
-*              EXPORTING
-*                objnr             = ls_caufvd-objnr
-*                status            = 'I0045'
-*              EXCEPTIONS
-*                object_not_found  = 1
-*                status_not_active = 2
-*                OTHERS            = 3.
-*            IF sy-subrc EQ 0.
-*              " Order has status technically completed
-*              DELETE TABLE mt_add_teco_data_before_save FROM ms_teco_data_before_save.
-*              CONTINUE.
-*            ENDIF.
-**<note 2299689>
-** check if object is not release on DB => unplanned confirmation
-*            CALL FUNCTION 'STATUS_CHECK'
-*              EXPORTING
-*                bypass_buffer     = abap_true
-*                objnr             = ls_caufvd-objnr
-*                status            = 'I0002'
-*              EXCEPTIONS
-*                object_not_found  = 1
-*                status_not_active = 2
-*                OTHERS            = 3.
-*            IF sy-subrc <> 0.
-** Order is not released on DB -> unplanned confirmation
-** now we check if a technical completion is possible by status handling
-*              CALL FUNCTION 'STATUS_CHANGE_FOR_ACTIVITY'
-*                EXPORTING
-*                  check_only = abap_true
-*                  objnr      = ls_caufvd-objnr
-*                  vrgng      = 'BTAB'
-*                EXCEPTIONS
-*                  OTHERS     = 1.
-*              IF sy-subrc <> 0.
-*                DELETE TABLE mt_add_teco_data_before_save FROM ms_teco_data_before_save.
-*                APPEND INITIAL LINE TO et_message ASSIGNING FIELD-SYMBOL(<fs_message>).
-*                "Order &1 could not be technically completed
-*                MESSAGE w166(iwo_bapi) WITH space INTO <fs_message>-msgv1.
-*                <fs_message>-msgty = sy-msgty.
-*                <fs_message>-msgid = sy-msgid.
-*                <fs_message>-msgno = sy-msgno.
-*                <fs_message>-msgv1 = sy-msgv1.
-*                CONTINUE.
-*              ENDIF.
-*            ENDIF.
-**</note 2299689>
-*          ENDIF.
-*
-*          APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-*          <ls_method>-method     = ms_teco_data_before_save-method.
-*          <ls_method>-objecttype = ms_teco_data_before_save-objecttype.
-*          <ls_method>-objectkey  = ms_teco_data_before_save-objectkey.
-*
-*          IF ms_teco_data_before_save-ref_date IS NOT INITIAL
-*          OR ms_teco_data_before_save-ref_time IS NOT INITIAL.
-*            ADD 1 TO lv_counter.
-*            <ls_method>-refnumber  = lv_counter.
-*            APPEND INITIAL LINE TO lt_header ASSIGNING <ls_header>.
-*            <ls_header>-teco_ref_date = ms_teco_data_before_save-ref_date.
-*            <ls_header>-teco_ref_time = ms_teco_data_before_save-ref_time.
-*            <ls_header>-orderid = ms_teco_data_before_save-aufnr.
-*
-*            DELETE TABLE mt_add_teco_data_before_save FROM ms_teco_data_before_save.
-*          ENDIF.
-*        ENDIF.
-*      ENDLOOP.
-*    ENDIF.
-*</note 2156528>
-
-
-    APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-    <ls_method>-method = if_eams_bo_const=>gc_bapi_ord_method-save.
-
-    DATA(lt_extension_in) = VALUE bapiparextab( ( structure  = if_eams_bo_order=>ext_in_save_structure
-                                                  valuepart1 = if_eams_bo_order=>ext_in_save_save
-                                                  valuepart2 = if_eams_bo_order=>ext_in_save_class ) ).
-
-    DATA lt_header    TYPE STANDARD TABLE OF  bapi_alm_order_headers_i.
-    DATA lt_header_up TYPE STANDARD TABLE OF  bapi_alm_order_headers_up.
-
-    LOOP AT it_node_id ASSIGNING <ls_node_id>.
-      APPEND INITIAL LINE TO lt_header REFERENCE INTO DATA(header).
-      header->orderid = <ls_node_id>-eams_aufnr.
-      APPEND INITIAL LINE TO lt_header_up REFERENCE INTO DATA(header_update).
-      header_update->orderid = <ls_node_id>-eams_aufnr.
-    ENDLOOP.
-
-* Save the order
-    CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-      EXPORTING
-        iv_mmsrv_external_maintenace = abap_true "changes LE for MMSRV
-      TABLES
-        it_methods                   = lt_method
-        it_header                    = lt_header
-        it_header_up                 = lt_header_up
-        extension_in                 = lt_extension_in
-        et_numbers                   = et_saved_ord
-        et_notification_numbers      = et_saved_ntf
-        return                       = lt_return.
-*>>> Start of note 3279402
-* Do not ignore budget check warning message BP 614 (see customizing V_TBPFD_P)
-    DATA lt_msgprot TYPE STANDARD TABLE OF cmfmsg.
-    DATA ls_message LIKE LINE OF et_message.
-    FIELD-SYMBOLS <ls_msgprot>    LIKE LINE OF lt_msgprot.
-    CALL FUNCTION 'CM_F_MESSAGES_GET'
-      TABLES
-        e_msgprot  = lt_msgprot
-      EXCEPTIONS
-        not_active = 1
-        OTHERS     = 2.
-    IF sy-subrc EQ 0.
-* Get the budget check message unless it is a hard error (MSGTY = 'E').
-* Hard errors are always handled by the lower API, they can be ignored here.
-      LOOP AT lt_msgprot ASSIGNING <ls_msgprot> WHERE arbgb EQ 'BP'
-                                                  AND msgnr BETWEEN '600' AND '650' "n3319874
-*                                                 AND msgnr EQ '614'                "rem3319874
-                                                  AND msgty NE 'E'.
-        MOVE-CORRESPONDING <ls_msgprot> TO ls_message.
-        MOVE <ls_msgprot>-arbgb TO ls_message-msgid.
-        MOVE <ls_msgprot>-msgnr TO ls_message-msgno.
-        APPEND ls_message TO lt_message.
-*       EXIT.                                                                       "rem3319874
-      ENDLOOP.
-    ENDIF.
-*<<< End of note 3279402
-    IF lt_return IS NOT INITIAL.
-      me->clean_bapiret_order_maintain(
-        CHANGING
-          ct_return = lt_return ).
-      cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_bapiret2_message(
-        EXPORTING it_bapiret = lt_return
-                  iv_msg_index = 0
-        CHANGING  ct_message = lt_message ). " save does not need ID -> index 0
-      cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-        EXPORTING
-          it_message       = lt_message
-        IMPORTING
-          ev_has_abort_msg = lv_failed ).
-
-      IF lv_failed EQ abap_true.
-* Special case 'Release rejected'
-        READ TABLE lt_return TRANSPORTING NO FIELDS
-        WITH KEY number = '009'
-                 id     = 'C2'
-                 type   = 'E'.
-        IF sy-subrc NE 0.
-          APPEND LINES OF lt_message TO et_message.
-          RETURN.
-        ELSE.
-* Release rejected->Try to save again without release
-          DELETE lt_method
-            WHERE method = if_eams_bo_const=>gc_bapi_ord_method-release.
-          CLEAR lt_return.
-          CLEAR et_saved_ord.
-          CLEAR et_saved_ntf.
-          CLEAR lt_message.
-          CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-            TABLES
-              it_methods              = lt_method
-              et_numbers              = et_saved_ord
-              et_notification_numbers = et_saved_ntf
-              return                  = lt_return.
-          IF lt_return IS NOT INITIAL.
-            me->clean_bapiret_order_maintain(
-              CHANGING
-                ct_return = lt_return ).
-            cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_bapiret2_message(
-              EXPORTING it_bapiret = lt_return
-                        iv_msg_index = 0
-              CHANGING  ct_message = lt_message ). " save does not need ID -> index 0
-            cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-              EXPORTING
-                it_message       = lt_message
-              IMPORTING
-                ev_has_abort_msg = lv_failed ).
-            IF lv_failed EQ abap_true.
-* Special case 'Release rejected'
-              APPEND LINES OF lt_message TO et_message.
-              RETURN.
-            ENDIF.
-          ENDIF. "Second try has messages
-* Order was saved successful without release. Add warning for one of the orders
-          IF lines( it_node_id ) = 1.
-            MESSAGE w129(eams_bo) WITH <ls_node_id>-eams_aufnr INTO lv_message.
-          ELSE.
-            MESSAGE w129(eams_bo) WITH space INTO lv_message.
-          ENDIF.
-          cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_message(
-            EXPORTING
-              iv_msg_index = 0
-            CHANGING
-              ct_message   = et_message ).
-        ENDIF. "Release rejected detected
-      ENDIF. "BAPI save failed
-    ENDIF. "BAPI save has return messages
-
-    IF et_message IS INITIAL AND lt_message IS NOT INITIAL.  " EAMS4 note 2084700
-      et_message = lt_message.                               " EAMS4 note 2084700
-    ENDIF.                                                   " EAMS4 note 2084700
-
-* Save requirements. Call save API without OBJNR -> Save all data
-    lo_requirements_api = cl_eamws_requirements_api=>s_get_instance( ).
-    lo_requirements_api->save(
-      IMPORTING
-        et_return = lt_return ).
-
-* Messages handling
-    IF lt_return IS NOT INITIAL.
-      cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_bapiret2_message(
-        EXPORTING
-          it_bapiret = lt_return
-        CHANGING
-          ct_message = et_message ).
-    ENDIF.
-
-* Note 2203440 *******************************************************
-    LOOP AT et_saved_ord ASSIGNING FIELD-SYMBOL(<_fs_saved_ord>).
-      CHECK <_fs_saved_ord>-aufnr_in <> <_fs_saved_ord>-aufnr_new.
-
-      CALL FUNCTION 'CO_BT_CAUFV_READ_WITH_KEY'
-        EXPORTING
-          aufnr_act  = <_fs_saved_ord>-aufnr_new
-        IMPORTING
-          caufvd_exp = ls_caufvd
-        EXCEPTIONS
-          OTHERS     = 9.
-
-      CHECK ls_caufvd-adrnra IS NOT INITIAL.
-
-      cl_eams_bo_misc_factory=>get_eams_bo_address_class( )->update_reference(
-        EXPORTING
-          is_addr_id      = VALUE #( eams_adrnr = ls_caufvd-adrnra )
-          is_old_addr_ref = VALUE #( appl_table = 'AUFK' appl_field = 'ADRNR' appl_key = sy-mandt && <_fs_saved_ord>-aufnr_in  addr_group = 'PM01' )
-          is_new_addr_ref = VALUE #( appl_table = 'AUFK' appl_field = 'ADRNR' appl_key = sy-mandt && <_fs_saved_ord>-aufnr_new addr_group = 'PM01' )
-      ).
-    ENDLOOP.
-*/Note 2203440 *******************************************************
-
-
-  ENDMETHOD.
-
-
-  METHOD check_before_save.
-* Dummy modify of Order to check data consistency:
-* Do an order change header BAPI call before save to make
-* sure the header data are transferred to the backend and
-* are checked when no field has beed changed by the user on
-* the screen.
-
-    DATA lt_return          TYPE bapirettab.
-    DATA lt_message         LIKE et_message.
-    DATA lt_method          TYPE bapi_alm_order_method_t.    "MFLE CHECKED
-    DATA lt_order_headers   TYPE bapi_alm_order_headers_i_t. "MFLE CHECKED
-    DATA lt_operations      TYPE bapi_alm_order_operation_t. "MFLE CHECKED
-    DATA lv_failed          TYPE abap_bool.
-    DATA lv_ntf_header_chg  TYPE abap_bool.
-    DATA lt_node_id         TYPE eams_t_bo_ord_id.
-    DATA lt_node_data       TYPE eams_t_bo_ord_header.
-    DATA lt_node_id_ntf     TYPE eams_t_bo_ntf_id.
-    DATA lt_node_data_ntf   TYPE eams_t_bo_ntf_header.
-    DATA lv_onw_handle      TYPE cl_eams_bo_interop=>ty_onw_handle. " handle for Order Network processing
-    DATA lv_onw_id          TYPE cl_eams_bo_interop=>ty_onw_id. " ID of an Order Network
-    DATA lv_objnr           TYPE j_objnr.
-    DATA ls_caufvd          TYPE caufvd.                   "note 2753103
-    DATA lv_refnr           TYPE ifrefnum.                 "note 2753103
-    DATA ls_t350            TYPE t350.                      "3293406
-    DATA continue           TYPE xfeld.                     "3293406
-    DATA lv_trtyp           TYPE tc10-trtyp.                "3293406
-    DATA lv_continue_saving TYPE abap_bool.
-    DATA lv_is_modifiable   TYPE abap_bool.
-    DATA lt_msg             TYPE tsmesg.                    "3554286
-
-* variables for MES check
-    DATA lr_mes           TYPE REF TO cl_im_co_mes_integrat_pm.
-    DATA ls_header        TYPE cobai_s_header_dialog.
-
-    DATA: lt_caufvdg TYPE STANDARD TABLE OF caufvdget,
-          lt_caufvbo TYPE STANDARD TABLE OF caufvdb.
-
-    FIELD-SYMBOLS <ls_method>        LIKE LINE OF lt_method.
-    FIELD-SYMBOLS <ls_order_headers> LIKE LINE OF lt_order_headers. "MFLE CHECKED
-    FIELD-SYMBOLS <ls_node_id>       LIKE LINE OF lt_node_id.
-    FIELD-SYMBOLS <ls_node_data>     LIKE LINE OF lt_node_data.
-    FIELD-SYMBOLS <ls_node_id_ntf>   LIKE LINE OF lt_node_id_ntf.
-    FIELD-SYMBOLS <ls_node_data_ntf> LIKE LINE OF lt_node_data_ntf.
-    FIELD-SYMBOLS <ls_message>       TYPE /plmb/s_spi_msg. "note 2753103
-    FIELD-SYMBOLS <ls_msg>           TYPE mesg.                "3554286
-
-
-    CLEAR lt_return.
-    CLEAR et_node_data.
-
-* Add the order header change with detail table
-    lv_onw_handle = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_handle( ). " get handle for Order Network processing
-
-* process all networks with modified Order:
-    WHILE cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_next_onw_w_modified_order( lv_onw_handle ) IS NOT INITIAL.
-
-      TEST-SEAM temp_check_before_save01.
-        lv_onw_id = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_current_onw( lv_onw_handle ). " get current network of handle
-
-*   check whether current Order can be modified:
-        lv_is_modifiable = abap_true.
-        cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_order_attr(
-          EXPORTING iv_order_id = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_order_id( lv_onw_id )
-          IMPORTING ev_objnr    = lv_objnr
-        ).
-        IF
-            has_object_status( iv_objnr  = lv_objnr iv_status = if_eams_bo_const=>gc_status-lkd ) = abap_true OR " Order is locked * EAMS3 NOTE 2010961
-          has_object_status( iv_objnr  = lv_objnr iv_status = if_eams_bo_const=>gc_status-teco ) = abap_true OR " Order is technically completed
-            has_object_status( iv_objnr  = lv_objnr iv_status = if_eams_bo_const=>gc_status-clsd ) = abap_true OR   " Order is business completed
-            has_object_status( iv_objnr  = lv_objnr iv_status = if_eams_bo_const=>gc_status-dlt ) = abap_true.  " Order has set deletion indicator * EAMS3 NOTE 2010961
-*     if the Order is completed or Locked, it can not be modified any longer:
-          lv_is_modifiable = abap_false.
-        ENDIF.
-      END-TEST-SEAM.
-*   if the Order is not modifiable, it has not to be checked, because it was already checked during completion:
-      IF lv_is_modifiable = abap_true.
-        TEST-SEAM temp_check_before_save02.
-*     set up BAPI data to modify Order Header:
-          APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-          <ls_method>-method     = if_eams_bo_const=>gc_bapi_ord_method-change.
-          <ls_method>-objecttype = if_eams_bo_const=>gc_bapi_ord_obj_type-header.
-          <ls_method>-objectkey  = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_order_id( lv_onw_id ).
-          APPEND INITIAL LINE TO lt_order_headers ASSIGNING <ls_order_headers>.
-          <ls_method>-refnumber  = sy-tabix.
-          <ls_method>-objecttype = if_eams_bo_const=>gc_bapi_ord_obj_type-header.
-          <ls_order_headers>-orderid = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_order_id( lv_onw_id ).
-*     save new order in node table:
-          APPEND INITIAL LINE TO lt_node_id ASSIGNING <ls_node_id>.
-          <ls_node_id>-eams_aufnr = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_order_id( lv_onw_id ).
-
-* start note 2753103 ********************
-          "Get header data to check, if WBS-Element is filled
-          CALL FUNCTION 'CO_BT_CAUFV_READ_WITH_KEY'
-            EXPORTING
-              aufnr_act  = <ls_order_headers>-orderid
-            IMPORTING
-              caufvd_exp = ls_caufvd
-            EXCEPTIONS
-              not_found  = 1
-              OTHERS     = 2.
-
-          IF  sy-subrc IS INITIAL
-          AND ls_caufvd-pspel IS NOT INITIAL
-          AND ls_caufvd-autyp EQ if_eams_bo_const=>gc_order_category. "'30'
-            "Insert method for calculation as a prerequisition for the budget check
-            lv_refnr = <ls_method>-refnumber.
-            APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-            <ls_method>-method     = if_eams_bo_const=>gc_bapi_ord_method-calculate.
-            <ls_method>-objecttype = if_eams_bo_const=>gc_bapi_ord_obj_type-header.
-            <ls_method>-objectkey  = cl_eams_bo_misc_factory=>get_eams_bo_interop_class( )->get_onw_order_id( lv_onw_id ).
-            <ls_method>-refnumber  = lv_refnr + 1.
-          ENDIF.
-* end note 2753103 **********************
-        END-TEST-SEAM.
-        "Start: Check if relationships with cycles exist (existing check during save in CO_ZF_ORDER_SCHEDULE is too late)
-        IF sy-subrc IS INITIAL.
-          DATA: caufvd_exp TYPE  caufvd,
-                tcx00      TYPE tcx00.
-
-          TEST-SEAM temp_check_before_save03.
-
-            CALL FUNCTION 'TCX00_READ'
-              EXPORTING
-                i_werks           = ls_caufvd-werks
-                i_autyp           = ls_caufvd-autyp
-                i_aufta           = ls_caufvd-auart
-                i_vagrp           = ls_caufvd-fevor
-              IMPORTING
-                tcx00_exp         = tcx00
-              EXCEPTIONS
-                no_entry          = 01
-                missing_parameter = 2
-                OTHERS            = 3.
-
-* Validate requirement date change for components which has an existive delivery document
-            IF ls_caufvd-autyp EQ if_eams_bo_const=>gc_order_category.
-              CALL METHOD cl_eam_ewm_integration_util=>validate_requirement_date
-                EXPORTING
-                  is_caufvd              = ls_caufvd
-                  iv_skip_check_for_date = abap_true
-                IMPORTING
-                  ev_rspos               = DATA(lv_rspos)
-                EXCEPTIONS
-                  update_reject          = 1
-                  OTHERS                 = 2.
-              IF sy-subrc NE 0.
-                CALL FUNCTION 'CO_BH_GET_ORDERS'
-                  EXPORTING
-                    no_dialog_info = 'X'
-                    get_old        = 'X'
-                    flg_rueck      = ' '                              "915964
-                    aufnr          = ls_caufvd-aufnr
-                  TABLES
-                    caufvb_old     = lt_caufvbo
-                    caufvd_get     = lt_caufvdg.
-                DO 1 TIMES.
-                  READ TABLE lt_caufvbo INDEX sy-index INTO DATA(ls_caufvbo) .
-                ENDDO.
-                MESSAGE e001(eam_ewm_integ) WITH lv_rspos ls_caufvbo-gstrp ls_caufvbo-gltrp
-                INTO DATA(lv_msg).
-                et_message = VALUE #( BASE et_message
-                                      ( msgid = sy-msgid
-                                        msgty = sy-msgty
-                                        msgno = sy-msgno
-                                        msgv1 = sy-msgv1
-                                        msgv2 = sy-msgv2
-                                        msgv3 = sy-msgv3
-                                        msgv4 = sy-msgv4 ) ).
-                RETURN.
-              ENDIF.
-            ENDIF.
-          END-TEST-SEAM.
-
-          CALL FUNCTION 'NW_BT_AFAB_CHECK_VBKZ'
-            EXCEPTIONS
-              vbkz_changed = 1.
-          IF sy-subrc = 1 AND ls_caufvd-auterm = abap_true.
-            CALL FUNCTION 'CX_ORDER_SCHEDULE'
-              EXPORTING
-                caufvd_imp            = ls_caufvd
-                tcx00_imp             = tcx00
-                i_flg_capacities_det  = 'X'
-                i_flg_dates_det       = 'X'
-                i_flg_overall_network = space
-                i_flg_protocol        = 'X'
-                i_autyp_to_schedule   = ls_caufvd-autyp
-                i_no_log_init         = space
-              IMPORTING
-                caufvd_exp            = caufvd_exp
-              EXCEPTIONS
-                cycle_found           = 01
-                no_operations         = 02
-                no_start_date         = 03
-                no_end_date           = 04
-                no_sched_parameters   = 05.
-
-            IF sy-subrc = 01.
-              sy-msgty = 'E'.  "message CN 611 is raised as info message in CX_ORDER_SCHEDULE,
-              "but we need an error message here to stop save processing
-              /plmb/cl_spi_appl_access_utils=>add_syst_message(
-                CHANGING
-                  ct_message = lt_message ).
-              APPEND LINES OF lt_message TO et_message.
-            ELSEIF sy-subrc EQ 5.
-              et_message = VALUE #( BASE et_message
-                                    ( msgid = sy-msgid
-                                      msgty = sy-msgty
-                                      msgno = sy-msgno
-                                      msgv1 = sy-msgv1 ) ).
-            ENDIF.
-          ENDIF.
-        ENDIF.
-        "End: Check if relationships with cycles exist
-
-
-        IF ls_caufvd-is_billable IS NOT INITIAL AND cl_crms4_srv_mno_util=>get_cust_driven_srv_active( ) = abap_false "Check for 3A scenario with billable flag
-        AND cl_eam_util_mcso_integration=>is_maint_active( ) = abap_true. " Dark Shipment Check.
-
-          DATA(lo_proc_srv_order) = cl_eam_proc_service_order=>get_instance( ).
-          lo_proc_srv_order->process_mcso( EXPORTING is_caufvdg = ls_caufvd IMPORTING et_message = DATA(lt_messages) ).
-
-          LOOP AT lt_messages REFERENCE INTO DATA(message).
-            APPEND INITIAL LINE TO et_message REFERENCE INTO DATA(ls_message).
-          ls_message->msgty = message->type.
-          ls_message->msgno = message->number.
-          ls_message->msgid = message->id.
-          ls_message->msgv1 = message->message_v1.
-          ls_message->msgv2 = message->message_v2.
-          ls_message->msgv3 = message->message_v3.
-          ls_message->msgv4 = message->message_v4.
-          ENDLOOP.
-          cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level( EXPORTING it_message = et_message IMPORTING ev_has_abort_msg = lv_failed ).
-          IF lv_failed = abap_true.
-            RETURN.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-
-    ENDWHILE.
-    TEST-SEAM temp_check_before_save04.
-    END-TEST-SEAM.
-* Check if anything has to be done
-    IF lt_order_headers IS NOT INITIAL.
-      " check for service operations
-      check_service_opers_before_sav( EXPORTING it_order_headers = lt_order_headers
-                                      IMPORTING et_message       = lt_message ).
-      APPEND LINES OF lt_message TO et_message.
-      cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-        EXPORTING
-          it_message       = et_message
-        IMPORTING
-          ev_has_abort_msg = lv_failed ).
-      IF lv_failed = abap_true.
-        RETURN.
-      ENDIF.
-* Add the dialog method to the BAPI method
-      APPEND INITIAL LINE TO lt_method ASSIGNING <ls_method>.
-      <ls_method>-method = if_eams_bo_const=>gc_bapi_ord_method-dialog.
-
-      DATA(lt_extension_in) = VALUE bapiparextab( ( structure  = if_eams_bo_order=>ext_in_save_structure
-                                                    valuepart1 = if_eams_bo_order=>ext_in_save_check_before_save
-                                                    valuepart2 = if_eams_bo_order=>ext_in_save_class ) ).
-
-* perform a dummy modification of the Order to have the BAPI check the data:
-* (Note: as the Order is already known as modified, BO Interop has not to be informed about the modification)
-      CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-        EXPORTING
-          iv_mmsrv_external_maintenace = abap_true " LE MMSRV
-        TABLES
-          it_methods                   = lt_method
-          it_header                    = lt_order_headers
-          it_operation                 = lt_operations
-          extension_in                 = lt_extension_in
-          return                       = lt_return.
-*
-      IF lt_return IS NOT INITIAL.
-        me->clean_bapiret_order_maintain(
-          CHANGING
-            ct_return = lt_return ).
-*   delete the success messages from BAPI. They are not allowed in CHECK_BEFORE_SAVE
-        DELETE lt_return WHERE type = 'S'.
-        cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_bapiret2_message(
-          EXPORTING it_bapiret    = lt_return
-          CHANGING  ct_message    = et_message ).
-        cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-          EXPORTING
-            it_message       = et_message
-          IMPORTING
-            ev_has_abort_msg = lv_failed ).
-        IF lv_failed = abap_true.
-          RETURN.
-        ENDIF.
-      ENDIF.
-
-* start note 2753103 ********************
-      " Check budget and show an error message, if budget is exceeded
-      " This budget check is also done in SAVE-method (FM CO_ZV_ORDER_POST),
-      " but it is to late there to throw the error message and avoid saving
-      IF  ls_caufvd-pspel IS NOT INITIAL
-      AND ls_caufvd-autyp EQ if_eams_bo_const=>gc_order_category. "'30'
-        CALL FUNCTION 'CO_ZF_PROJECT_BUDGET_CHECK'
-          EXCEPTIONS
-            error_occured   = 01
-            warning_occured = 02.
-        CASE sy-subrc.
-          WHEN 1.
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: sy-msgid TO <ls_message>-msgid,
-                  sy-msgty TO <ls_message>-msgty,
-                  sy-msgno TO <ls_message>-msgno,
-                  sy-msgv1 TO <ls_message>-msgv1, "n3486549
-                  sy-msgv2 TO <ls_message>-msgv2, "n3486549
-                  sy-msgv3 TO <ls_message>-msgv3, "n3486549
-                  sy-msgv4 TO <ls_message>-msgv4. "n3486549
-            MESSAGE i472(iw).
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: sy-msgid TO <ls_message>-msgid,
-                  'E'      TO <ls_message>-msgty,
-                  sy-msgno TO <ls_message>-msgno.
-          WHEN 2.
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: sy-msgid TO <ls_message>-msgid,
-                  sy-msgty TO <ls_message>-msgty,
-                  sy-msgno TO <ls_message>-msgno,
-                  sy-msgv1 TO <ls_message>-msgv1, "n3486549
-                  sy-msgv2 TO <ls_message>-msgv2, "n3486549
-                  sy-msgv3 TO <ls_message>-msgv3, "n3486549
-                  sy-msgv4 TO <ls_message>-msgv4. "n3486549
-            MESSAGE w472(iw).
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: sy-msgid TO <ls_message>-msgid,
-                  'W'      TO <ls_message>-msgty,
-                  sy-msgno TO <ls_message>-msgno.
-        ENDCASE.
-        IF lt_message IS NOT INITIAL.
-          cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->set_message(
-            EXPORTING
-              iv_msg_index = 0
-            CHANGING
-              ct_message   = lt_message ).
-          APPEND LINES OF lt_message TO et_message.
-          CLEAR lt_message.
-        ENDIF.
-      ENDIF.
-* end note 2753103 **********************
-
-* start of note 3293406
-* regarding saving of order settlement rule of OLC should taken into account
-* BAPI check is to late -> order saving aborts and leaving Web UI
-      IF ls_caufvd-autyp EQ if_eams_bo_const=>gc_order_category AND
-         cl_erp_co_olc_tools=>is_olc_relevant( ls_caufvd-netzkont ) = abap_true AND
-         lv_is_modifiable = abap_true.
-* read t350
-        CALL FUNCTION 'T350_READ'
-          EXPORTING
-            auart         = ls_caufvd-auart
-            language      = sy-langu
-            mtype         = 'E'
-          IMPORTING
-            t350_wa       = ls_t350
-          EXCEPTIONS
-            no_t350_entry = 1
-            OTHERS        = 2.
-        IF sy-subrc <> 0.
-          APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-          MOVE: 'I0'            TO <ls_message>-msgid,
-                'E'             TO <ls_message>-msgty,
-                '505'           TO <ls_message>-msgno,
-                ls_caufvd-auart TO <ls_message>-msgv1.
-        ENDIF.
-* check trtyp, akknz
-        CALL FUNCTION 'CO_IH_SET_TC10_ON_BAPICALL'
-          EXPORTING
-            iv_aufnr      = ls_caufvd-aufnr
-            iv_akknz      = ls_caufvd-akknz
-          IMPORTING
-            ev_trtyp      = lv_trtyp
-          EXCEPTIONS
-            not_supported = 1.
-        IF ls_caufvd-iphas = 2 AND ls_t350-avzp = 1.
-          PERFORM abrv_arch_frei_opr IN PROGRAM saplcoi1 USING    ls_caufvd
-                                                                  lv_trtyp
-                                                                  'BU'
-                                                         CHANGING continue.
-          IF continue IS INITIAL.
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: sy-msgid TO <ls_message>-msgid,
-                  sy-msgty TO <ls_message>-msgty,
-                  sy-msgno TO <ls_message>-msgno,
-                  sy-msgv1 TO <ls_message>-msgv1,
-                  sy-msgv2 TO <ls_message>-msgv2,
-                  sy-msgv3 TO <ls_message>-msgv3,
-                  sy-msgv4 TO <ls_message>-msgv4.
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: 'ERP_CO_OLC_E' TO <ls_message>-msgid,
-                  'E'            TO <ls_message>-msgty,
-                  '048'          TO <ls_message>-msgno.
-          ELSEIF continue = 'Y'.
-*     ..continue = 'Y' is set in FORM abrv_arch_frei_opr of
-*       program LCOI1F16 to avoid sending of 2 messages
-*       ->erp_co_olc_e041 followed by erp_co_olc_e048
-            CLEAR continue.
-          ENDIF.
-        ENDIF.
-        IF lt_message[] IS NOT INITIAL.
-          mo_srv->get_severity_level(
-            EXPORTING
-              it_message       = lt_message
-            IMPORTING
-              ev_has_abort_msg = lv_failed ).
-          APPEND LINES OF lt_message TO et_message.
-          IF lv_failed = abap_true.
-            RETURN.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-* end of note 3293406
-
-* start of note 3554286
-* Settlement rule must be checked before saving is triggered because it's to late
-* during saving. At save order processing cannot handle error only abort process.
-* SAP GUI settlement rule check is triggered by leaving dynpro
-* K_SETTLEMENT_RULE_CHECK excutes FORM GESAMTVERPROBUNG	& later FORM PROZENTVERPROBUNG
-      IF ls_caufvd-autyp EQ if_eams_bo_const=>gc_order_category AND lv_is_modifiable = abap_true
-        AND  me->gv_srule_modify = 'X' AND ls_caufvd-netzkont NE '2'.                               "3587667 3608891
-        CALL FUNCTION 'MESSAGES_INITIALIZE'.
-        CALL FUNCTION 'MESSAGES_ACTIVE'.
-        CALL FUNCTION 'K_SETTLEMENT_RULE_CHECK'
-          EXPORTING
-            objnr                  = ls_caufvd-objnr
-         EXCEPTIONS
-           ERROR_OCCURRED          = 1
-           NO_RULE_FOR_OBJNR       = 2
-           WARNING_OCCURRED        = 3
-           INTERNAL_PROBLEMS       = 4
-           OTHERS                  = 5.
-        IF sy-subrc <> 0.
-          CALL FUNCTION 'MESSAGES_GIVE'
-            TABLES
-               T_MESG = lt_msg.
-          IF NOT lt_msg[] IS INITIAL.
-            LOOP AT lt_msg ASSIGNING <ls_msg>.
-              APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-              MOVE:  <ls_msg>-arbgb   TO <ls_message>-msgid,
-                     <ls_msg>-msgty   TO <ls_message>-msgty,
-                     <ls_msg>-txtnr   TO <ls_message>-msgno,
-                     <ls_msg>-msgv1   TO <ls_message>-msgv1,
-                     <ls_msg>-msgv2   TO <ls_message>-msgv2,
-                     <ls_msg>-msgv3   TO <ls_message>-msgv3,
-                     <ls_msg>-msgv4   TO <ls_message>-msgv4.
-            ENDLOOP.
-            APPEND INITIAL LINE TO lt_message ASSIGNING <ls_message>.
-            MOVE: 'KD' TO <ls_message>-msgid,
-                  'E'            TO <ls_message>-msgty,
-                  '027'          TO <ls_message>-msgno.
-            IF lt_message[] IS NOT INITIAL.
-              mo_srv->get_severity_level(
-                EXPORTING
-                  it_message       = lt_message
-                IMPORTING
-                  ev_has_abort_msg = lv_failed ).
-              APPEND LINES OF lt_message TO et_message.
-              IF lv_failed = abap_true.
-                RETURN.
-              ENDIF.
-            ENDIF.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-* end of note 3554286
-
-* Synchronize data to notification
-* Currently this is only the reference object
-      me->get_order_header(
-        EXPORTING
-          it_node_id   = lt_node_id
-        IMPORTING
-          et_node_data = lt_node_data
-          et_messages  = lt_message ).
-      cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-        EXPORTING
-          it_message       = lt_message
-        IMPORTING
-          ev_has_abort_msg = lv_failed ).
-      APPEND LINES OF lt_message TO et_message.
-      IF lv_failed = abap_true.
-        RETURN.
-      ENDIF.
-      MOVE lt_node_data[] TO et_node_data[].
-      MOVE lt_node_id[] TO et_node_id[].
-
-* Note 1956628: loop over et_node_data instead of just processing its first line.
-
-      LOOP AT lt_node_data ASSIGNING <ls_node_data>.                              "Note 1956628
-
-* do a check for the MES integration. Order operations may only have specific
-* control keys if the order was already distributed to MES
-        CREATE OBJECT lr_mes.
-
-        "    READ TABLE lt_node_data INDEX 1 ASSIGNING <ls_node_data>.            "Note 1956628
-        "    IF sy-subrc = 0.                                                     "Note 1956628
-
-        ls_header-aufnr = <ls_node_data>-eams_aufnr.
-        ls_header-objnr = <ls_node_data>-object_no.
-        ls_header-autyp = '30'. " PM Order
-
-        CALL METHOD lr_mes->if_ex_workorder_update~at_save
-          EXPORTING
-            is_header_dialog   = ls_header
-          EXCEPTIONS
-            error_with_message = 1
-            OTHERS             = 2.
-
-        IF sy-subrc <> 0.
-          /plmb/cl_spi_appl_access_utils=>add_syst_message(
-            CHANGING
-              ct_message = lt_message ).
-          APPEND LINES OF lt_message TO et_message.
-        ENDIF.
-        "    ENDIF.                                                               "Note 1956628
-
-        "    READ TABLE lt_node_data ASSIGNING <ls_node_data> INDEX 1.            "Note 1956628
-        "    IF sy-subrc EQ 0.                                                    "Note 1956628
-        "Notification assigned: check if TechnObject and/or Short Text has to be synchronized
-        IF <ls_node_data>-notif_no <> space "AND ...                              "Note 1956628
-          .                                                                       "Note 1956628
-
-          "attempt to read the associated notification
-          APPEND INITIAL LINE TO lt_node_id_ntf ASSIGNING <ls_node_id_ntf>.
-          <ls_node_id_ntf>-eams_qmnum = <ls_node_data>-notif_no.
-
-          cl_eams_bo_misc_factory=>get_eams_bo_notif_class(  )->get_notif_header(
-            EXPORTING
-              it_node_id   = lt_node_id_ntf
-            IMPORTING
-              et_node_data = lt_node_data_ntf
-              et_message   = lt_message ).
-          cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-            EXPORTING
-              it_message       = lt_message
-            IMPORTING
-              ev_has_abort_msg = lv_failed ).
-          APPEND LINES OF lt_message TO et_message.
-          IF lv_failed = abap_true.
-            RETURN.
-          ENDIF.
-
-          "Read notification header data
-          READ TABLE lt_node_data_ntf ASSIGNING <ls_node_data_ntf> INDEX 1.       "Note 1956628
-          IF sy-subrc EQ 0.                                                       "Note 1956628
-
-            IF <ls_node_data>-eams_tec_obj_type <> space OR <ls_node_data>-short_text <> space .        "Note 1956628
-
-              "Technical object: defined in order but not in notification
-              IF <ls_node_data_ntf>-eams_tec_obj_type = space AND <ls_node_data>-eams_tec_obj_type <> space.
-                "copy values from order
-                <ls_node_data_ntf>-eams_tec_obj_type = <ls_node_data>-eams_tec_obj_type.
-                "Internal representation needed
-                IF <ls_node_data_ntf>-eams_tec_obj_type = if_eams_bo_const=>gc_otype_name-floc.
-                  <ls_node_data_ntf>-eams_tec_obj_no   = <ls_node_data>-funct_loc.
-                ELSEIF <ls_node_data_ntf>-eams_tec_obj_type = if_eams_bo_const=>gc_otype_name-equi.
-                  <ls_node_data_ntf>-eams_tec_obj_no   = <ls_node_data>-eams_tec_obj_no.
-                ENDIF.
-                lv_ntf_header_chg = abap_true.
-              ENDIF. " No technical object set in notification
-
-              "Description: defined in order but not in notification
-              IF <ls_node_data_ntf>-short_text = space AND <ls_node_data>-short_text <> space.
-                <ls_node_data_ntf>-short_text = <ls_node_data>-short_text.
-                lv_ntf_header_chg = abap_true.
-              ENDIF.
-
-* StartNote 2826411
-              "Priority: defined in order but not in notification
-              IF <ls_node_data_ntf>-priority = space AND <ls_node_data>-priority <> space.
-                <ls_node_data_ntf>-priority = <ls_node_data>-priority.
-                lv_ntf_header_chg = abap_true.
-              ENDIF.
-* EndNote 2826411
-
-              "notification data changed: update notification header
-              IF lv_ntf_header_chg = abap_true.
-                cl_eams_bo_misc_factory=>get_eams_bo_notif_class(  )->set_notif_header(
-                  EXPORTING
-                    it_node_data = lt_node_data_ntf
-                  IMPORTING
-                    et_message   = lt_message ).
-                cl_eams_bo_misc_factory=>get_eams_bo_srv_class( )->get_severity_level(
-                  EXPORTING
-                    it_message       = lt_message
-                  IMPORTING
-                    ev_has_abort_msg = lv_failed ).
-                APPEND LINES OF lt_message TO et_message.
-                IF lv_failed = abap_true.
-                  RETURN.
-                ENDIF.
-              ENDIF.
-              "          ENDIF. "Notification added to order
-              "      ENDIF. "Order read successfully      "Note 1956628
-
-            ENDIF. "Order has technical object and notification assigned
-          ENDIF.                                                                  "Note 1956628
-        ENDIF.                                                                    "Note 1956628
-
-        check_mandatory_partner_data( EXPORTING it_node_data = lt_node_data
-                                      IMPORTING et_message   = lt_message ).
-        APPEND LINES OF lt_message TO et_message.
-
-        " Check pmactivity type                                                   "EAMS 7 Note: 2434920 start
-        me->check_pmacttype(
-          EXPORTING
-            iv_order_type = <ls_node_data>-order_type
-            iv_pmacttype  = <ls_node_data>-pmacttype
-            iv_fieldname  = 'PMACTTYPE'
-          IMPORTING
-            et_message    = lt_message
-        ).
-        APPEND LINES OF lt_message TO et_message.                                 "EAMS 7 Note: 2434920 end
-      ENDLOOP.                                                                    "Note 1956628
-
-    ENDIF. "Order needs to be saved
-    cl_logsord_procmt_integ=>get_instance( )->check_before_save(
-      IMPORTING
-        et_ex_messages  = DATA(lt_ex_messages)
-      RECEIVING
-        continue_saving = lv_continue_saving
-    ).
-    IF lv_continue_saving EQ abap_false.
-      et_message = CORRESPONDING #( BASE ( et_message ) lt_ex_messages ).
-    ENDIF.
-
-    "Call BAdI to evaluate order details and to prevent further processing of order
-    "Begin
-    DATA:
-*      lr_evaluate_order TYPE REF TO eams_eval_order_details,
-      ls_order_header TYPE i_maintenanceordertp,
-      lt_return_msg   TYPE bapiret2_t.
-    IF ls_caufvd-objnr IS NOT INITIAL.
-      "check if phase model is active
-      IF cl_eam_check_ime_scenario=>get_instance( )->is_active_for_order_type( iv_order_type = ls_caufvd-auart ) EQ abap_true.
-        IF ls_caufvd-autyp = '30'.
-          "get new subphase
-         TRY.
-          cl_eam_overall_status_factory=>get_session_instance( iv_statusobject = ls_caufvd-objnr
-                                                                  )->get_process_phase_subphase(
-                EXPORTING
-                  is_objparams        = VALUE #( auart = ls_caufvd-auart )
-                IMPORTING
-                  ev_process_phase    =  DATA(lv_phasecode_after)                  " Process Phase after input
-                  ev_process_subphase =  DATA(lv_subphasecode_after)               " Process Subphase after input
-              ).
-          CATCH cx_eam_overall_status_session.
-                  "silent catch of overall status exception because of various reasons (no customizing, phase model not active ...)
-          ENDTRY.
-          "check if subphase is changed
-          IF ls_caufvd-maintordovrlprocsubphase <> lv_subphasecode_after.
-            cl_eams_bo_misc_factory=>get_badi_eval_order_details(
-              EXPORTING
-                iv_order_type      = ls_caufvd-auart                 " Order Type
-                iv_plant           = ls_caufvd-iwerk                 " Maintenance Planning Plant
-                iv_subphase_before = ls_caufvd-maintordovrlprocsubphase    " Process Subphase
-                iv_subphase_after  = lv_subphasecode_after                 " Process Subphase
-              RECEIVING
-                badis              = DATA(lt_eval_order_details)
-            ).
-*            IF lr_evaluate_order IS BOUND.
-            LOOP AT lt_eval_order_details ASSIGNING FIELD-SYMBOL(<lr_evaluate_order>).
-              DATA(ls_order_header_mapped) = CORRESPONDING r_maintenanceordertp( ls_caufvd MAPPING TO ENTITY ).
-              ls_order_header = CORRESPONDING i_maintenanceordertp( ls_order_header_mapped ).
-
-              TRY.
-                 <lr_evaluate_order>->eval_order_details(
-                   EXPORTING
-                     order_header = ls_order_header
-                   CHANGING
-                     messages     = lt_return_msg
-                 ).
-                  "Add messages from BAdI to log
-                  et_message = CORRESPONDING #( BASE ( et_message ) lt_return_msg MAPPING msgid = id
-                                                                                          msgno = number
-                                                                                          msgty = type
-                                                                                          msgv1 = message_v1
-                                                                                          msgv2 = message_v2
-                                                                                          msgv3 = message_v3
-                                                                                          msgv4 = message_v4 ).
-                  "Skip further processing if BAdI returns error messages
-                  IF line_exists( lt_return_msg[ type = 'E' ] ) OR line_exists( lt_return_msg[ type = 'A' ] ).
-                    et_message = VALUE #( BASE et_message ( msgty = 'E' msgid = 'IW' msgno = '046' ) ).
-                  ENDIF..
-                  CLEAR: lt_return_msg.
-                CATCH cx_ble_runtime_error.
-              ENDTRY.
-             ENDLOOP.
-*            ENDIF.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-    ENDIF.
-    "End
-  ENDMETHOD.
+*&---------------------------------------------------------------------*
+*& Report ZTEST_SUBP
+*&---------------------------------------------------------------------*
+REPORT ztest_subp.
+
+*---------------------------------------------------------------------*
+* PARAMETERS
+*---------------------------------------------------------------------*
+PARAMETERS:
+  p_aufnr TYPE aufnr       OBLIGATORY, "Order
+  p_sts   TYPE bsvx-sttxt OBLIGATORY, "RFRA / REXE
+  p_stchg TYPE jest-stat  OBLIGATORY. "E000X
+
+*---------------------------------------------------------------------*
+* DATA
+*---------------------------------------------------------------------*
+DATA:
+  lv_objnr    TYPE jest-objnr,
+  lv_vornr    TYPE vornr,
+
+  lt_methods  TYPE TABLE OF bapi_alm_order_method,
+  lt_header   TYPE TABLE OF bapi_alm_order_headers_i,
+  lt_header_up TYPE TABLE OF bapi_alm_order_headers_up,
+  lt_extension TYPE TABLE OF bapiparex,
+  lt_return   TYPE TABLE OF bapiret2,
+
+  ls_return   TYPE bapiret2.
+
+*---------------------------------------------------------------------*
+* GET FIRST OPERATION
+*---------------------------------------------------------------------*
+SELECT SINGLE a~vornr
+  INTO @lv_vornr
+  FROM afvc AS a
+  INNER JOIN afko AS k
+    ON k~aufpl = a~aufpl
+ WHERE k~aufnr = @p_aufnr.
+
+IF sy-subrc <> 0.
+  WRITE: / 'No operation found.'.
+  EXIT.
+ENDIF.
+
+WRITE: / 'Operation:', lv_vornr.
+
+*---------------------------------------------------------------------*
+* GET OBJNR
+*---------------------------------------------------------------------*
+SELECT SINGLE a~objnr
+  INTO @lv_objnr
+  FROM afvc AS a
+  INNER JOIN afko AS k
+    ON k~aufpl = a~aufpl
+ WHERE k~aufnr = @p_aufnr
+   AND a~vornr = @lv_vornr.
+
+IF sy-subrc <> 0.
+  WRITE: / 'OBJNR not found.'.
+  EXIT.
+ENDIF.
+
+WRITE: / 'OBJNR:', lv_objnr.
+
+************************************************************************
+* STEP 1 : SET USER STATUS
+************************************************************************
+CALL FUNCTION 'STATUS_CHANGE_EXTERN'
+  EXPORTING
+    objnr       = lv_objnr
+    user_status = p_stchg
+    set_inact   = space
+  EXCEPTIONS
+    object_not_found    = 1
+    status_inconsistent = 2
+    status_not_allowed  = 3
+    OTHERS              = 4.
+
+IF sy-subrc <> 0.
+  WRITE: / 'STATUS_CHANGE_EXTERN FAILED:', sy-subrc.
+  ROLLBACK WORK.
+  EXIT.
+ENDIF.
+
+WRITE: / 'STATUS_CHANGE_EXTERN SUCCESS'.
+
+************************************************************************
+* STEP 2 : CHECK_BEFORE_SAVE
+************************************************************************
+CLEAR:
+  lt_methods,
+  lt_header,
+  lt_extension,
+  lt_return.
+
+*---------------------------------------------------------------------*
+* METHOD : CHANGE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  refnumber  = '000001'
+  objecttype = 'HEADER'
+  method     = 'CHANGE'
+  objectkey  = p_aufnr
+) TO lt_methods.
+
+*---------------------------------------------------------------------*
+* METHOD : DIALOG
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  method = 'DIALOG'
+) TO lt_methods.
+
+*---------------------------------------------------------------------*
+* HEADER
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  orderid = p_aufnr
+) TO lt_header.
+
+*---------------------------------------------------------------------*
+* EXTENSION
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  structure  = 'SEOCPDNAME'
+  valuepart1 = 'CHECK_BEFORE_SAVE'
+  valuepart2 = 'CL_EAMS_BO_ORDER'
+) TO lt_extension.
+
+*---------------------------------------------------------------------*
+* RUN BAPI
+*---------------------------------------------------------------------*
+CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+  EXPORTING
+    iv_mmsrv_external_maintenace = abap_true
+  TABLES
+    it_methods   = lt_methods
+    it_header    = lt_header
+    extension_in = lt_extension
+    return       = lt_return.
+
+LOOP AT lt_return INTO ls_return.
+  WRITE: / ls_return-type,
+           ls_return-id,
+           ls_return-number,
+           ls_return-message.
+ENDLOOP.
+
+READ TABLE lt_return INTO ls_return
+  WITH KEY type = 'E'.
+
+IF sy-subrc = 0.
+  WRITE: / 'CHECK_BEFORE_SAVE FAILED'.
+  ROLLBACK WORK.
+  EXIT.
+ENDIF.
+
+WRITE: / 'CHECK_BEFORE_SAVE SUCCESS'.
+
+************************************************************************
+* STEP 3 : SAVE_BAPI_AND_RELEASE
+************************************************************************
+CLEAR:
+  lt_methods,
+  lt_header,
+  lt_header_up,
+  lt_extension,
+  lt_return.
+
+*---------------------------------------------------------------------*
+* METHOD : SAVE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  method = 'SAVE'
+) TO lt_methods.
+
+*---------------------------------------------------------------------*
+* HEADER
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  orderid = p_aufnr
+) TO lt_header.
+
+*---------------------------------------------------------------------*
+* HEADER UPDATE
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  orderid = p_aufnr
+) TO lt_header_up.
+
+*---------------------------------------------------------------------*
+* EXTENSION
+*---------------------------------------------------------------------*
+APPEND VALUE #(
+  structure  = 'SEOCPDNAME'
+  valuepart1 = 'SAVE_BAPI_AND_RELEASE'
+  valuepart2 = 'CL_EAMS_BO_ORDER'
+) TO lt_extension.
+
+*---------------------------------------------------------------------*
+* RUN SAVE BAPI
+*---------------------------------------------------------------------*
+CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+  EXPORTING
+    iv_mmsrv_external_maintenace = abap_true
+  TABLES
+    it_methods   = lt_methods
+    it_header    = lt_header
+    it_header_up = lt_header_up
+    extension_in = lt_extension
+    return       = lt_return.
+
+LOOP AT lt_return INTO ls_return.
+  WRITE: / ls_return-type,
+           ls_return-id,
+           ls_return-number,
+           ls_return-message.
+ENDLOOP.
+
+READ TABLE lt_return INTO ls_return
+  WITH KEY type = 'E'.
+
+IF sy-subrc = 0.
+
+  WRITE: / 'SAVE FAILED'.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+  EXIT.
+
+ENDIF.
+
+************************************************************************
+* COMMIT
+************************************************************************
+CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+  EXPORTING
+    wait = 'X'.
+
+WRITE: / 'SUCCESS'.
+WRITE: / 'ORDER      :', p_aufnr.
+WRITE: / 'OPERATION  :', lv_vornr.
+WRITE: / 'USERSTATUS :', p_stchg.
+WRITE: / 'PHASE TEST :', p_sts.
+
+************************************************************************
+* VERIFY RESULT
+************************************************************************
+DATA:
+  lv_phase    TYPE char10,
+  lv_subphase TYPE char10.
+
+SELECT SINGLE
+       maintordopprocessphasecode,
+       maintordopprocesssubphasecode
+  INTO (@lv_phase, @lv_subphase)
+  FROM afvc AS a
+  INNER JOIN afko AS k
+    ON k~aufpl = a~aufpl
+ WHERE k~aufnr = @p_aufnr
+   AND a~vornr = @lv_vornr.
+
+WRITE: / '----------------------------------'.
+WRITE: / 'AFVC PHASE    :', lv_phase.
+WRITE: / 'AFVC SUBPHASE :', lv_subphase.
+WRITE: / '----------------------------------'.
