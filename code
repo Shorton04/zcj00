@@ -1,264 +1,128 @@
 *&---------------------------------------------------------------------*
-*& Report ZTEST_SUBP
+*& Report ZRE_A2R_WORKORDER_TIME
 *&---------------------------------------------------------------------*
-REPORT ztest_subp.
+*&
+*&---------------------------------------------------------------------*
+REPORT ZRE_A2R_WORKORDER_TIME.
 
-*---------------------------------------------------------------------*
-* PARAMETERS
-*---------------------------------------------------------------------*
-PARAMETERS:
-  p_aufnr TYPE aufnr       OBLIGATORY, "Order
-  p_sts   TYPE bsvx-sttxt OBLIGATORY, "RFRA / REXE
-  p_stchg TYPE jest-stat  OBLIGATORY. "E000X
+*------------------------------------------------------------------*
+*                      Global Work Areas                           *
+*------------------------------------------------------------------*
+TABLES:aufk, afih, iloa, mhio, mhis, afko, jest, rihea.
+*------------------------------------------------------------------*
+*                    Global Definitions                            *
+*------------------------------------------------------------------*
+DATA: go_controller TYPE REF TO zcl_a2d_controller,
+      go_model_view TYPE REF TO zcl_a2r_mvi0123,
+      gs_parameter  TYPE        zcl_a2r_mvi0123=>ts_parameter.
 
-*---------------------------------------------------------------------*
-* DATA
-*---------------------------------------------------------------------*
-DATA:
-  lv_objnr    TYPE jest-objnr,
-  lv_vornr    TYPE vornr,
+SELECTION-SCREEN BEGIN OF SCREEN 0100 AS SUBSCREEN.
+SELECTION-SCREEN BEGIN OF  BLOCK c WITH FRAME TITLE text-003.
+PARAMETERS:v_pmo  TYPE flag RADIOBUTTON GROUP rb1 USER-COMMAND ordr,
+           v_npmo TYPE flag RADIOBUTTON GROUP rb1.
+SELECTION-SCREEN END OF BLOCK c.
 
-  lt_methods  TYPE TABLE OF bapi_alm_order_method,
-  lt_header   TYPE TABLE OF bapi_alm_order_headers_i,
-  lt_header_up TYPE TABLE OF bapi_alm_order_headers_up,
-  lt_extension TYPE TABLE OF bapiparex,
-  lt_return   TYPE TABLE OF bapiret2,
+SELECTION-SCREEN BEGIN OF  BLOCK a WITH FRAME TITLE text-001.
+SELECT-OPTIONS:  r_aufnr FOR  aufk-aufnr,
+                 r_stati FOR  rihea-i_vstatin MATCHCODE OBJECT i_status, " Status Include
+                 r_state FOR  rihea-i_vstatin MATCHCODE OBJECT i_status, " Status Exclude
+                 r_auart FOR  aufk-auart,
+                 r_erdat FOR  aufk-erdat,
+                 r_idat2 FOR  aufk-idat2,
+                 r_gstri FOR  afko-gstri,
+                 r_getri FOR  afko-getri,
+                 r_iwerk FOR  afih-iwerk,
+                 r_ingpr FOR  afih-ingpr,
+                 r_priok FOR  afih-priok,
+                 r_ilart FOR  afih-ilart,
+                 r_vaplz FOR  aufk-vaplz,
+                 r_kostl FOR  aufk-kostl,
+                 r_tplnr FOR  iloa-tplnr,
+                 r_warpl FOR  mhio-warpl MODIF ID sc1,
+                 r_nplda FOR  mhis-nplda MODIF ID sc1.
+SELECTION-SCREEN END OF  BLOCK a.
+SELECTION-SCREEN: BEGIN OF BLOCK b WITH FRAME TITLE text-002.
+PARAMETERS: v_var TYPE slis_vari.
+SELECTION-SCREEN END OF BLOCK b.
+SELECTION-SCREEN END OF SCREEN 0100.
+*------------------------------------------------------------------*
+*                 INITIALIZATION Event                             *
+*------------------------------------------------------------------*
+INITIALIZATION.
 
-  ls_return   TYPE bapiret2.
+  sy-cprog = 'RIAFVC20'.
 
-*---------------------------------------------------------------------*
-* GET FIRST OPERATION
-*---------------------------------------------------------------------*
-SELECT SINGLE a~vornr
-  INTO @lv_vornr
-  FROM afvc AS a
-  INNER JOIN afko AS k
-    ON k~aufpl = a~aufpl
- WHERE k~aufnr = @p_aufnr.
+  zcl_a2r_mvi0123=>gv_program = sy-cprog.
 
-IF sy-subrc <> 0.
-  WRITE: / 'No operation found.'.
-  EXIT.
-ENDIF.
+  GET PARAMETER ID 'WRK' FIELD r_iwerk-low .
+  r_iwerk-option = 'EQ'. r_iwerk-sign = 'I'.
+  APPEND r_iwerk.
 
-WRITE: / 'Operation:', lv_vornr.
+  r_nplda-low = sy-datum - 7. r_nplda-high = sy-datum.
+  r_nplda-option = 'BT'. r_nplda-sign = 'I'.
+  APPEND r_nplda.
 
-*---------------------------------------------------------------------*
-* GET OBJNR
-*---------------------------------------------------------------------*
-SELECT SINGLE a~objnr
-  INTO @lv_objnr
-  FROM afvc AS a
-  INNER JOIN afko AS k
-    ON k~aufpl = a~aufpl
- WHERE k~aufnr = @p_aufnr
-   AND a~vornr = @lv_vornr.
 
-IF sy-subrc <> 0.
-  WRITE: / 'OBJNR not found.'.
-  EXIT.
-ENDIF.
+  CREATE OBJECT go_model_view.
 
-WRITE: / 'OBJNR:', lv_objnr.
+  CALL FUNCTION 'ZFM_A2D_CONTROLLER_M01_V01_L02'
+    EXPORTING
+      iv_parameter_struct_name = 'zcl_a2r_mvi0123=>TS_PARAMETER'
+      iv_result_struct_name    = 'zcl_a2r_mvi0123=>TS_RESULT'
+      io_view_report           = go_model_view
+      io_view_alv              = go_model_view
+      io_model_selection       = go_model_view
+      iv_report_id             = sy-repid
+      iv_parameter_subscr_id   = '0100'
+    IMPORTING
+      eo_controller            = go_controller.
 
-************************************************************************
-* STEP 1 : SET USER STATUS
-************************************************************************
-CALL FUNCTION 'STATUS_CHANGE_EXTERN'
-  EXPORTING
-    objnr       = lv_objnr
-    user_status = p_stchg
-    set_inact   = space
-  EXCEPTIONS
-    object_not_found    = 1
-    status_inconsistent = 2
-    status_not_allowed  = 3
-    OTHERS              = 4.
+  ASSERT go_controller IS BOUND.
 
-IF sy-subrc <> 0.
-  WRITE: / 'STATUS_CHANGE_EXTERN FAILED:', sy-subrc.
-  ROLLBACK WORK.
-  EXIT.
-ENDIF.
+* dynpro call backs
+AT SELECTION-SCREEN OUTPUT.
+  IF go_controller IS BOUND.
+    go_controller->copy_option_to_parameter(   CHANGING  cs_parameter  = gs_parameter  ).
+    go_controller->on_selection_screen_output( CHANGING  cs_parameter  = gs_parameter  ).
+    go_controller->copy_parameter_to_option(   EXPORTING is_parameter  = gs_parameter  ).
+  ENDIF.
 
-WRITE: / 'STATUS_CHANGE_EXTERN SUCCESS'.
+AT SELECTION-SCREEN.
+  IF go_controller IS BOUND.
+    go_controller->copy_option_to_parameter( CHANGING  cs_parameter  = gs_parameter  ).
+    go_controller->on_selection_screen(      CHANGING  cs_parameter  = gs_parameter  ).
+    go_controller->copy_parameter_to_option( EXPORTING is_parameter  = gs_parameter  ).
+  ENDIF.
 
-************************************************************************
-* STEP 2 : CHECK_BEFORE_SAVE
-************************************************************************
-CLEAR:
-  lt_methods,
-  lt_header,
-  lt_extension,
-  lt_return.
+  sy-cprog = 'RIAFVC20'.
 
-*---------------------------------------------------------------------*
-* METHOD : CHANGE
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  refnumber  = '000001'
-  objecttype = 'HEADER'
-  method     = 'CHANGE'
-  objectkey  = p_aufnr
-) TO lt_methods.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR v_var.
+  PERFORM manage_variant CHANGING v_var.
+*&---------------------------------------------------------------------*
+*&      Form  MANAGE_VARIANT
+*&---------------------------------------------------------------------*
+FORM manage_variant  CHANGING cv_variant TYPE disvariant-variant.
+  DATA: ls_variant TYPE disvariant,
+        l_exit     TYPE char1.
 
-*---------------------------------------------------------------------*
-* METHOD : DIALOG
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  method = 'DIALOG'
-) TO lt_methods.
+  ls_variant-report = sy-repid.
 
-*---------------------------------------------------------------------*
-* HEADER
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  orderid = p_aufnr
-) TO lt_header.
+  CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
+    EXPORTING
+      is_variant = ls_variant
+      i_save     = 'A'
+    IMPORTING
+      e_exit     = l_exit
+      es_variant = ls_variant
+    EXCEPTIONS
+      not_found  = 2.
 
-*---------------------------------------------------------------------*
-* EXTENSION
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  structure  = 'SEOCPDNAME'
-  valuepart1 = 'CHECK_BEFORE_SAVE'
-  valuepart2 = 'CL_EAMS_BO_ORDER'
-) TO lt_extension.
-
-*---------------------------------------------------------------------*
-* RUN BAPI
-*---------------------------------------------------------------------*
-CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  EXPORTING
-    iv_mmsrv_external_maintenace = abap_true
-  TABLES
-    it_methods   = lt_methods
-    it_header    = lt_header
-    extension_in = lt_extension
-    return       = lt_return.
-
-LOOP AT lt_return INTO ls_return.
-  WRITE: / ls_return-type,
-           ls_return-id,
-           ls_return-number,
-           ls_return-message.
-ENDLOOP.
-
-READ TABLE lt_return INTO ls_return
-  WITH KEY type = 'E'.
-
-IF sy-subrc = 0.
-  WRITE: / 'CHECK_BEFORE_SAVE FAILED'.
-  ROLLBACK WORK.
-  EXIT.
-ENDIF.
-
-WRITE: / 'CHECK_BEFORE_SAVE SUCCESS'.
-
-************************************************************************
-* STEP 3 : SAVE_BAPI_AND_RELEASE
-************************************************************************
-CLEAR:
-  lt_methods,
-  lt_header,
-  lt_header_up,
-  lt_extension,
-  lt_return.
-
-*---------------------------------------------------------------------*
-* METHOD : SAVE
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  method = 'SAVE'
-) TO lt_methods.
-
-*---------------------------------------------------------------------*
-* HEADER
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  orderid = p_aufnr
-) TO lt_header.
-
-*---------------------------------------------------------------------*
-* HEADER UPDATE
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  orderid = p_aufnr
-) TO lt_header_up.
-
-*---------------------------------------------------------------------*
-* EXTENSION
-*---------------------------------------------------------------------*
-APPEND VALUE #(
-  structure  = 'SEOCPDNAME'
-  valuepart1 = 'SAVE_BAPI_AND_RELEASE'
-  valuepart2 = 'CL_EAMS_BO_ORDER'
-) TO lt_extension.
-
-*---------------------------------------------------------------------*
-* RUN SAVE BAPI
-*---------------------------------------------------------------------*
-CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-  EXPORTING
-    iv_mmsrv_external_maintenace = abap_true
-  TABLES
-    it_methods   = lt_methods
-    it_header    = lt_header
-    it_header_up = lt_header_up
-    extension_in = lt_extension
-    return       = lt_return.
-
-LOOP AT lt_return INTO ls_return.
-  WRITE: / ls_return-type,
-           ls_return-id,
-           ls_return-number,
-           ls_return-message.
-ENDLOOP.
-
-READ TABLE lt_return INTO ls_return
-  WITH KEY type = 'E'.
-
-IF sy-subrc = 0.
-
-  WRITE: / 'SAVE FAILED'.
-
-  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-
-  EXIT.
-
-ENDIF.
-
-************************************************************************
-* COMMIT
-************************************************************************
-CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-  EXPORTING
-    wait = 'X'.
-
-WRITE: / 'SUCCESS'.
-WRITE: / 'ORDER      :', p_aufnr.
-WRITE: / 'OPERATION  :', lv_vornr.
-WRITE: / 'USERSTATUS :', p_stchg.
-WRITE: / 'PHASE TEST :', p_sts.
-
-************************************************************************
-* VERIFY RESULT
-************************************************************************
-DATA:
-  lv_phase    TYPE char10,
-  lv_subphase TYPE char10.
-
-SELECT SINGLE
-       maintordopprocessphasecode,
-       maintordopprocesssubphasecode
-  INTO (@lv_phase, @lv_subphase)
-  FROM afvc AS a
-  INNER JOIN afko AS k
-    ON k~aufpl = a~aufpl
- WHERE k~aufnr = @p_aufnr
-   AND a~vornr = @lv_vornr.
-
-WRITE: / '----------------------------------'.
-WRITE: / 'AFVC PHASE    :', lv_phase.
-WRITE: / 'AFVC SUBPHASE :', lv_subphase.
-WRITE: / '----------------------------------'.
+  IF sy-subrc = 2.
+    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    IF l_exit EQ space.
+      cv_variant = ls_variant-variant.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " MANAGE_VARIANT
