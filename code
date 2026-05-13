@@ -1,357 +1,558 @@
-REPORT zmvi0123.
-*------------------------------------------------------------------*
-*                      Global Work Areas                           *
-*------------------------------------------------------------------*
-TABLES:aufk, afih, iloa, mhio, mhis, afko, jest, rihea.
-*------------------------------------------------------------------*
-*                    Global Definitions                            *
-*------------------------------------------------------------------*
-DATA: go_controller TYPE REF TO zcl_rfw_controller,
-      go_model_view TYPE REF TO zcl_mvi0123,
-      gs_parameter  TYPE        zcl_mvi0123=>ts_parameter.
+class ZCL_A2R_MVI0123 definition
+  public
+  INHERITING FROM zcl_a2d_cbc_controller_m01_v01
+  FINAL
+  CREATE PUBLIC .
 
-SELECTION-SCREEN BEGIN OF SCREEN 0100 AS SUBSCREEN.
-SELECTION-SCREEN BEGIN OF  BLOCK c WITH FRAME TITLE text-003.
-PARAMETERS:v_pmo  TYPE flag RADIOBUTTON GROUP rb1 USER-COMMAND ordr,
-           v_npmo TYPE flag RADIOBUTTON GROUP rb1.
-SELECTION-SCREEN END OF BLOCK c.
+  PUBLIC SECTION.
 
-SELECTION-SCREEN BEGIN OF  BLOCK a WITH FRAME TITLE text-001.
-SELECT-OPTIONS:  r_aufnr FOR  aufk-aufnr,
-                 r_stati FOR  rihea-i_vstatin MATCHCODE OBJECT i_status, " Status Include
-                 r_state FOR  rihea-i_vstatin MATCHCODE OBJECT i_status, " Status Exclude
-                 r_auart FOR  aufk-auart,
-                 r_erdat FOR  aufk-erdat,
-                 r_idat2 FOR  aufk-idat2,
-                 r_gstri FOR  afko-gstri,
-                 r_getri FOR  afko-getri,
-                 r_iwerk FOR  afih-iwerk,
-                 r_ingpr FOR  afih-ingpr,
-                 r_priok FOR  afih-priok,
-                 r_ilart FOR  afih-ilart,
-                 r_vaplz FOR  aufk-vaplz,
-                 r_kostl FOR  aufk-kostl,
-                 r_tplnr FOR  iloa-tplnr,
-                 r_warpl FOR  mhio-warpl MODIF ID sc1,
-                 r_nplda FOR  mhis-nplda MODIF ID sc1.
-SELECTION-SCREEN END OF  BLOCK a.
-SELECTION-SCREEN: BEGIN OF BLOCK b WITH FRAME TITLE text-002.
-PARAMETERS: v_var TYPE slis_vari.
-SELECTION-SCREEN END OF BLOCK b.
-SELECTION-SCREEN END OF SCREEN 0100.
-*------------------------------------------------------------------*
-*                 INITIALIZATION Event                             *
-*------------------------------------------------------------------*
-INITIALIZATION.
+    TYPES:
+      BEGIN OF ts_viaufkst,
+        aufnr TYPE afih-aufnr,
 
-  sy-cprog = 'RIAFVC20'.
+      END OF ts_viaufkst .
+    TYPES:
+      BEGIN OF ts_result,
+        aufnr_wo         TYPE aufk-aufnr,
+        ktext            TYPE aufk-ktext,
+        werks            TYPE aufk-werks,
+        werks_dec        TYPE t001w-name1,
+        ernam_entered_by TYPE aufk-ernam,
+        erdat_created_on TYPE aufk-erdat,
+        auart            TYPE aufk-auart,
+        txt04            TYPE char80,
+        priok            TYPE afih-priok,
+        gstrs            TYPE afko-gstrs,
+        gltrs            TYPE afko-gltrs,
+        gstri            TYPE afko-gstri,
+        getri            TYPE afko-getri,
+        udate            TYPE jcds-udate,
+        usnam            TYPE jcds-usnam,
+        budat            TYPE afru-budat,
+        ernam            TYPE afru-ernam,
+        addat            TYPE afih-addat,
+        idat2            TYPE aufk-idat2,
+        zzlate_date       TYPE afih-lacd_date,
+*        zz_ext_late_date TYPE mhio-zz_ext_late_date,
+        usnam_rel_by     TYPE jcds-usnam,
+        ingpr            TYPE afih-ingpr,
+        ilart            TYPE afih-ilart,
+        vaplz            TYPE aufk-vaplz,
+        kostl_wo         TYPE aufk-kostl,
+        tplnr            TYPE iloa-tplnr,
+        nplda            TYPE mhis-nplda,
+        warpl            TYPE mhio-warpl,
+        abnum            TYPE mhis-abnum,
+        zaehl	           TYPE mhis-zaehl,
+      END OF ts_result .
+    TYPES:
+      BEGIN OF ts_parameter,
+        r_aufnr TYPE RANGE OF aufk-aufnr,
+        r_stati TYPE RANGE OF jest-stat,
+        r_state TYPE RANGE OF jest-stat,
+        r_auart TYPE RANGE OF aufk-auart,
+        r_erdat TYPE RANGE OF aufk-erdat,
+        r_idat2 TYPE RANGE OF aufk-idat2,
+        r_gstri TYPE RANGE OF afko-gstri,
+        r_getri TYPE RANGE OF afko-getri,
+        r_iwerk TYPE RANGE OF afih-iwerk,
+        r_ingpr TYPE RANGE OF afih-ingpr,
+        r_priok TYPE RANGE OF afih-priok,
+        r_ilart TYPE RANGE OF afih-ilart,
+        r_vaplz TYPE RANGE OF aufk-vaplz,
+        r_kostl TYPE RANGE OF aufk-kostl,
+        r_tplnr TYPE RANGE OF iloa-tplnr,
+        r_warpl TYPE RANGE OF mhio-warpl,
+        r_nplda TYPE RANGE OF mhis-nplda,
+        v_var   TYPE slis_vari,
+        v_pmo   TYPE flag,
+        v_npmo  TYPE flag,
+      END OF ts_parameter .
+    TYPES:
+      BEGIN OF ts_aufk,
+        aufnr TYPE aufk-aufnr,
+        auart TYPE aufk-auart,
+        erdat TYPE aufk-erdat,
+        idat2 TYPE aufk-idat2,
+        vaplz TYPE aufk-vaplz,
+        kostl TYPE aufk-kostl,
+        objnr TYPE aufk-objnr,
+        werks TYPE aufk-werks,
+        ktext TYPE aufk-ktext,
+        ernam TYPE aufk-ernam,
+        del   TYPE flag,
+      END OF ts_aufk .
+    TYPES:
+      BEGIN OF ts_afih,
+        aufnr TYPE afih-aufnr,
+        iwerk TYPE afih-iwerk,
+        ingpr TYPE afih-ingpr,
+        priok TYPE afih-priok,
+        iloan TYPE afih-iloan,
+        ilart TYPE afih-ilart,
+        addat TYPE afih-addat,
+        warpl TYPE  afih-warpl,
+        abnum TYPE  afih-abnum,
+        wapos TYPE  afih-wapos,
+        lacd_date TYPE afih-lacd_date,
+      END OF ts_afih .
+    TYPES:
+      BEGIN OF ts_afko,
+        aufnr TYPE afko-aufnr,
+        gstri TYPE afko-gstri,
+        getri TYPE afko-getri,
+        rueck TYPE afko-rueck,
+        rmzhl TYPE afko-rmzhl,
+        gstrs TYPE afko-gstrs,
+        gltrs TYPE afko-gltrs,
+      END OF ts_afko .
+    TYPES:
+      BEGIN OF ts_afru,
+        rueck TYPE afru-rueck,
+        rmzhl TYPE afru-rmzhl,
+        budat TYPE afru-budat,
+        ernam TYPE afru-ernam,
+        aufnr TYPE afru-aufnr,
+        aueru TYPE afru-aueru,
+        learr TYPE afru-learr,
+      END OF ts_afru .
+    TYPES:
+      BEGIN OF ts_mhio,
+        warpl            TYPE mhio-warpl,
+        abnum            TYPE mhio-abnum,
+        wppos            TYPE mhio-wppos,
+        aufnr            TYPE mhio-aufnr,
+        zzlate_date       TYPE afih-lacd_date,
+*        zz_ext_late_date TYPE mhio-zz_ext_late_date,
+        del              TYPE flag,
+      END OF ts_mhio .
+    TYPES:
+      BEGIN OF ts_mhis,
+        warpl TYPE mhis-warpl,
+        abnum TYPE mhis-abnum,
+        zaehl TYPE mhis-zaehl,
+        nplda TYPE mhis-nplda,
+        del   TYPE flag,
+      END OF ts_mhis .
+    TYPES:
+      BEGIN OF ts_iloa,
+        iloan TYPE iloa-iloan,
+        tplnr TYPE iloa-tplnr,
+      END OF ts_iloa .
+    TYPES:
+      BEGIN OF ts_t001w,
+        werks TYPE t001w-werks,
+        name1 TYPE t001w-name1,
+      END OF ts_t001w .
 
-  zcl_mvi0123=>gv_program = sy-cprog.
+*  types:
+*    BEGIN OF ts_t001w,
+*         werks TYPE t001w-werks,
+*         name1 TYPE t001w-name1,
+*       END OF ts_t001w .
+*  types:
+*    BEGIN OF ts_t001w,
+*         werks TYPE t001w-werks,
+*         name1 TYPE t001w-name1,
+*       END OF ts_t001w .
+    CLASS-DATA gs_variant TYPE disvariant .
+    CLASS-DATA gv_program TYPE sy-cprog .
 
-  GET PARAMETER ID 'WRK' FIELD r_iwerk-low .
-  r_iwerk-option = 'EQ'. r_iwerk-sign = 'I'.
-  APPEND r_iwerk.
+    METHODS get_data_pmo
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+      EXPORTING
+        !et_aufk      TYPE STANDARD TABLE
+        !et_afih      TYPE STANDARD TABLE
+        !et_afko      TYPE STANDARD TABLE
+        !et_afru      TYPE STANDARD TABLE
+        !et_jcds      TYPE STANDARD TABLE
+        !et_mhio      TYPE STANDARD TABLE
+        !et_mhis      TYPE STANDARD TABLE
+        !et_jest      TYPE STANDARD TABLE
+        !et_tj02t     TYPE STANDARD TABLE
+        !et_iloa      TYPE STANDARD TABLE
+        !et_t001w     TYPE STANDARD TABLE
+        !et_jcds_rel  TYPE STANDARD TABLE
+        !et_jcds_teco TYPE STANDARD TABLE .
+    METHODS build_data_pmo
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+        !it_aufk      TYPE STANDARD TABLE
+        !it_afih      TYPE STANDARD TABLE
+        !it_afko      TYPE STANDARD TABLE
+        !it_afru      TYPE STANDARD TABLE
+        !it_jcds      TYPE STANDARD TABLE
+        !it_mhio      TYPE STANDARD TABLE
+        !it_mhis      TYPE STANDARD TABLE
+        !it_jest      TYPE STANDARD TABLE
+        !it_tj02t     TYPE STANDARD TABLE
+        !it_iloa      TYPE STANDARD TABLE
+        !it_t001w     TYPE STANDARD TABLE
+        !it_jcds_rel  TYPE STANDARD TABLE
+        !it_jcds_teco TYPE STANDARD TABLE
+      EXPORTING
+        !et_result    TYPE STANDARD TABLE .
+    METHODS refresh_golbals .
+    METHODS get_data_npmo
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+      EXPORTING
+        !et_aufk      TYPE STANDARD TABLE
+        !et_afih      TYPE STANDARD TABLE
+        !et_afko      TYPE STANDARD TABLE
+        !et_afru      TYPE STANDARD TABLE
+        !et_jcds      TYPE STANDARD TABLE
+        !et_mhio      TYPE STANDARD TABLE
+        !et_mhis      TYPE STANDARD TABLE
+        !et_jest      TYPE STANDARD TABLE
+        !et_tj02t     TYPE STANDARD TABLE
+        !et_iloa      TYPE STANDARD TABLE
+        !et_t001w     TYPE STANDARD TABLE
+        !et_jcds_rel  TYPE STANDARD TABLE
+        !et_jcds_teco TYPE STANDARD TABLE .
+    METHODS build_data_npmo
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+        !it_aufk      TYPE STANDARD TABLE
+        !it_afih      TYPE STANDARD TABLE
+        !it_afko      TYPE STANDARD TABLE
+        !it_afru      TYPE STANDARD TABLE
+        !it_jcds      TYPE STANDARD TABLE
+        !it_jest      TYPE STANDARD TABLE
+        !it_tj02t     TYPE STANDARD TABLE
+        !it_iloa      TYPE STANDARD TABLE
+        !it_t001w     TYPE STANDARD TABLE
+        !it_jcds_rel  TYPE STANDARD TABLE
+        !it_jcds_teco TYPE STANDARD TABLE
+      EXPORTING
+        !et_result    TYPE STANDARD TABLE .
+    METHODS validations
+      IMPORTING
+        !is_paramater TYPE ts_parameter
+      EXPORTING
+        !ev_success   TYPE flag .
 
-  r_nplda-low = sy-datum - 7. r_nplda-high = sy-datum.
-  r_nplda-option = 'BT'. r_nplda-sign = 'I'.
-  APPEND r_nplda.
+    METHODS zif_a2d_model_selection~select_result
+         REDEFINITION .
+    METHODS zif_a2d_view_alv~get_alv_column_attribute
+         REDEFINITION .
+    METHODS zif_a2d_view_alv~get_alv_layout_attribute
+         REDEFINITION .
+    METHODS zif_a2d_view_alv~handle_hotspot_click
+         REDEFINITION .
+    METHODS zif_a2d_view_report~get_report_attribute
+         REDEFINITION .
+    METHODS zif_a2d_view_report~modify_selection_screen
+         REDEFINITION .
+protected section.
+private section.
+class-data GV_MISSING_AUTH type FLAG .
+ENDCLASS.
 
 
-  CREATE OBJECT go_model_view.
 
-  CALL FUNCTION 'ZRFW_CONTROLLER_M01_V01_L02'
-    EXPORTING
-      iv_parameter_struct_name = 'ZCL_MVI0123=>TS_PARAMETER'
-      iv_result_struct_name    = 'ZCL_MVI0123=>TS_RESULT'
-      io_view_report           = go_model_view
-      io_view_alv              = go_model_view
-      io_model_selection       = go_model_view
-      iv_report_id             = sy-repid
-      iv_parameter_subscr_id   = '0100'
-    IMPORTING
-      eo_controller            = go_controller.
+CLASS ZCL_A2R_MVI0123 IMPLEMENTATION.
 
-  ASSERT go_controller IS BOUND.
 
-* dynpro call backs
-AT SELECTION-SCREEN OUTPUT.
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter(   CHANGING  cs_parameter  = gs_parameter  ).
-    go_controller->on_selection_screen_output( CHANGING  cs_parameter  = gs_parameter  ).
-    go_controller->copy_parameter_to_option(   EXPORTING is_parameter  = gs_parameter  ).
-  ENDIF.
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->BUILD_DATA_NPMO
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_PARAMETER                   TYPE        TS_PARAMETER
+* | [--->] IT_AUFK                        TYPE        STANDARD TABLE
+* | [--->] IT_AFIH                        TYPE        STANDARD TABLE
+* | [--->] IT_AFKO                        TYPE        STANDARD TABLE
+* | [--->] IT_AFRU                        TYPE        STANDARD TABLE
+* | [--->] IT_JCDS                        TYPE        STANDARD TABLE
+* | [--->] IT_JEST                        TYPE        STANDARD TABLE
+* | [--->] IT_TJ02T                       TYPE        STANDARD TABLE
+* | [--->] IT_ILOA                        TYPE        STANDARD TABLE
+* | [--->] IT_T001W                       TYPE        STANDARD TABLE
+* | [--->] IT_JCDS_REL                    TYPE        STANDARD TABLE
+* | [--->] IT_JCDS_TECO                   TYPE        STANDARD TABLE
+* | [<---] ET_RESULT                      TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD build_data_npmo.
+    DATA:lt_aufk        TYPE STANDARD TABLE OF ts_aufk,
+         lt_afih        TYPE STANDARD TABLE OF ts_afih,
+         lt_afko        TYPE STANDARD TABLE OF ts_afko,
+         lt_afru        TYPE STANDARD TABLE OF ts_afru,
+         lt_jcds        TYPE STANDARD TABLE OF jcds,
+         lt_jcds_rel    TYPE STANDARD TABLE OF jcds,
+         lt_jcds_teco   TYPE STANDARD TABLE OF jcds,
+         lt_jcds_tmp    TYPE STANDARD TABLE OF jcds,
+         lt_jest        TYPE STANDARD TABLE OF jest,
+         lt_tj02t       TYPE STANDARD TABLE OF tj02t,
+         ls_tj02t       TYPE tj02t,
+         ls_afih        TYPE ts_afih,
+         lt_status_tmp  TYPE STANDARD TABLE OF jstat,
+         lv_objnr       TYPE jsto-objnr,
+         lt_status      TYPE STANDARD TABLE OF jstat,
+         ls_status      TYPE jstat,
+         ls_status_tmp  TYPE jstat,
+         lv_incl_status TYPE flag,
+         lv_excl_status TYPE flag,
+         ls_afko        TYPE ts_afko,
+         lt_tj02t_i     TYPE STANDARD TABLE OF tj02t,
+         lt_tj02t_e     TYPE STANDARD TABLE OF tj02t,
+         rt_tj02t       TYPE RANGE OF tj02t-istat,
+         lrs_tj02t      LIKE LINE OF  rt_tj02t,
+         ls_aufk        TYPE ts_aufk,
+         ls_afru        TYPE ts_afru,
+         ls_jcds        TYPE jcds,
+         ls_jcds_tmp    TYPE jcds,
+         ls_jest        TYPE jest,
+         ls_iloa        TYPE ts_iloa,
+         lt_iloa        TYPE STANDARD TABLE OF ts_iloa,
+         lt_result      TYPE STANDARD TABLE OF ts_result,
+         lt_t001w       TYPE STANDARD TABLE OF ts_t001w,
+         ls_t001w       TYPE ts_t001w,
+         lt_tj02        TYPE STANDARD TABLE OF tj02,
+         ls_result      TYPE ts_result.
 
-AT SELECTION-SCREEN.
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter( CHANGING  cs_parameter  = gs_parameter  ).
-    go_controller->on_selection_screen(      CHANGING  cs_parameter  = gs_parameter  ).
-    go_controller->copy_parameter_to_option( EXPORTING is_parameter  = gs_parameter  ).
-  ENDIF.
+    CLEAR et_result.
 
-  sy-cprog = 'RIAFVC20'.
+    lt_aufk  = it_aufk.
+    lt_afih  = it_afih.
+    lt_afko  = it_afko.
+    lt_afru  = it_afru.
+    lt_jcds  = it_jcds.
+    lt_jest  = it_jest.
+    lt_iloa  = it_iloa.
+    lt_tj02t = it_tj02t.
+    lt_t001w = it_t001w.
+    lt_jcds_rel = it_jcds_rel.
+    lt_jcds_teco = it_jcds_teco.
 
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR v_var.
-  PERFORM manage_variant CHANGING v_var.
-*&---------------------------------------------------------------------*
-*&      Form  MANAGE_VARIANT
-*&---------------------------------------------------------------------*
-FORM manage_variant  CHANGING cv_variant TYPE disvariant-variant.
-  DATA: ls_variant TYPE disvariant,
-        l_exit     TYPE char1.
 
-  ls_variant-report = sy-repid.
+    SORT: lt_aufk BY aufnr,
+          lt_afih BY aufnr,
+          lt_afko BY aufnr,
+          lt_afru BY aufnr,
+          lt_jest BY objnr,
+          lt_iloa BY iloan,
+          lt_t001w BY werks,
+          lt_tj02t BY spras istat.
 
-  CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
-    EXPORTING
-      is_variant = ls_variant
-      i_save     = 'A'
-    IMPORTING
-      e_exit     = l_exit
-      es_variant = ls_variant
-    EXCEPTIONS
-      not_found  = 2.
 
-  IF sy-subrc = 2.
-    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
-            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
-  ELSE.
-    IF l_exit EQ space.
-      cv_variant = ls_variant-variant.
+    IF is_parameter-r_stati IS NOT INITIAL.
+      SELECT * FROM tj02t INTO TABLE lt_tj02t_i
+              WHERE txt04 IN is_parameter-r_stati
+               AND  spras = 'E'.
     ENDIF.
-  ENDIF.
-ENDFORM.                    " MANAGE_VARIANT
 
-
-METHOD get_data_pmo.
-    DATA:lt_aufk      TYPE STANDARD TABLE OF ts_aufk,
-         lt_t001w     TYPE STANDARD TABLE OF ts_t001w,
-         lt_aufk_tmp  TYPE STANDARD TABLE OF ts_aufk,
-         lt_afih      TYPE STANDARD TABLE OF ts_afih,
-         lt_afih_tmp  TYPE STANDARD TABLE OF ts_afih,
-         lt_afko      TYPE STANDARD TABLE OF ts_afko,
-         lt_afru      TYPE STANDARD TABLE OF ts_afru,
-         lt_stat_r    TYPE RANGE OF jcds-stat,
-         ls_stat_r    LIKE LINE OF lt_stat_r,
-         lt_jcds      TYPE STANDARD TABLE OF jcds,
-         lt_jcds_rel  TYPE STANDARD TABLE OF jcds,
-         lt_jcds_teco TYPE STANDARD TABLE OF jcds,
-         lt_jcds_tmp  TYPE STANDARD TABLE OF jcds,
-         lt_jest      TYPE STANDARD TABLE OF jest,
-         lt_mhio      TYPE STANDARD TABLE OF ts_mhio,
-         lt_mhio_tmp  TYPE STANDARD TABLE OF ts_mhio,
-         lt_mhis      TYPE STANDARD TABLE OF ts_mhis,
-         lt_mhis_tmp  TYPE STANDARD TABLE OF ts_mhis,
-         lt_aufnr     TYPE STANDARD TABLE OF afko-aufnr,
-         lt_tj02t     TYPE STANDARD TABLE OF tj02t,
-         lt_iloa      TYPE STANDARD TABLE OF ts_iloa,
-         ls_aufnr     LIKE LINE OF lt_aufnr.
-
-    CLEAR: et_aufk,  et_afih, et_afko,    et_afru,
-           et_jcds,  et_mhio, et_mhis,    et_jest,
-           et_tj02t, et_iloa, gv_missing_auth,
-           et_t001w, et_jcds_rel, et_jcds_teco.
-
-    SELECT warpl
-           abnum
-           zaehl
-           nplda FROM mhis
-      INTO CORRESPONDING FIELDS OF TABLE lt_mhis
-        WHERE warpl IN is_parameter-r_warpl
-         AND  nplda IN is_parameter-r_nplda.
-
-    CHECK lt_mhis IS NOT INITIAL.
-
-    SELECT warpl
-           abnum
-           wppos
-           aufnr
-           zzlate_date
-           zz_ext_late_date FROM mhio
-    INTO CORRESPONDING FIELDS OF TABLE lt_mhio
-      FOR ALL ENTRIES IN lt_mhis
-        WHERE warpl = lt_mhis-warpl
-         AND  abnum = lt_mhis-abnum
-         AND  aufnr IN is_parameter-r_aufnr.
-
-    IF lt_mhio IS NOT INITIAL.
-      SELECT aufnr
-             auart
-             erdat
-             idat2
-             vaplz
-             kostl
-             objnr
-             werks
-             ktext
-             ernam
-             FROM aufk
-        INTO CORRESPONDING FIELDS OF TABLE lt_aufk
-         FOR ALL ENTRIES IN lt_mhio
-            WHERE aufnr  = lt_mhio-aufnr
-             AND  auart IN is_parameter-r_auart
-             AND  erdat IN is_parameter-r_erdat.
+    IF is_parameter-r_state IS NOT INITIAL.
+      SELECT * FROM tj02t INTO TABLE lt_tj02t_e
+              WHERE txt04 IN is_parameter-r_state
+               AND  spras = 'E'.
     ENDIF.
-* Filter Invalid data
-    LOOP AT lt_aufk ASSIGNING FIELD-SYMBOL(<fs_aufk>).
-      AUTHORITY-CHECK OBJECT 'I_IWERK'
-               ID 'TCD'   FIELD 'ZIW123'
-               ID 'IWERK' FIELD <fs_aufk>-werks.
+
+    LOOP AT lt_tj02t_i INTO DATA(ls_tj02t_tmp).
+      lrs_tj02t-sign = 'I'.
+      lrs_tj02t-option = 'EQ'.
+      TRANSLATE ls_tj02t_tmp-istat TO UPPER CASE.
+      lrs_tj02t-low = ls_tj02t_tmp-istat.
+      APPEND lrs_tj02t TO rt_tj02t.
+    ENDLOOP.
+
+    LOOP AT lt_afko INTO ls_afko.
+      CLEAR:lt_jcds_tmp, ls_result, ls_afih,
+            ls_tj02t,    ls_afru,   ls_jcds,
+            ls_iloa,     ls_jest,   ls_aufk,
+            ls_t001w,    lt_jcds_tmp.
+
+* GETRI / GSTRI / GSTRS / GLTRS
+      ls_result-getri = ls_afko-getri.
+      ls_result-gstri = ls_afko-gstri.
+      ls_result-gstrs = ls_afko-gstrs.
+      ls_result-gltrs = ls_afko-gltrs.
+
+* Fill PRIOK / ADDAT / INGPR / ILART
+      READ TABLE lt_afih INTO ls_afih
+          WITH KEY aufnr = ls_afko-aufnr BINARY SEARCH.
+
+      CHECK sy-subrc = 0.
+
+      ls_result-priok = ls_afih-priok.
+      ls_result-addat = ls_afih-addat.
+      ls_result-ingpr = ls_afih-ingpr.
+      ls_result-ilart = ls_afih-ilart.
+
+* TPLNR
+      READ TABLE lt_iloa INTO ls_iloa
+          WITH KEY iloan = ls_afih-iloan   BINARY SEARCH.
+
+      CHECK sy-subrc = 0.
+
+      CALL FUNCTION 'CONVERSION_EXIT_TPLNR_OUTPUT'
+        EXPORTING
+          input  = ls_iloa-tplnr
+        IMPORTING
+          output = ls_result-tplnr.
+
+* AUFNR / AUART / IDAT2 / VAPLZ / KOSTL
+      READ TABLE lt_aufk INTO ls_aufk
+            WITH KEY aufnr = ls_afko-aufnr BINARY SEARCH.
+
+      CHECK sy-subrc = 0.
+
+      ls_result-aufnr_wo  = ls_aufk-aufnr.
+      ls_result-auart     = ls_aufk-auart.
+      ls_result-idat2     = ls_aufk-idat2.
+      ls_result-vaplz     = ls_aufk-vaplz.
+      ls_result-kostl_wo  = ls_aufk-kostl.
+      ls_result-ktext     = ls_aufk-ktext.
+      ls_result-werks     = ls_aufk-werks.
+      ls_result-ernam_entered_by = ls_aufk-ernam.
+      ls_result-erdat_created_on = ls_aufk-erdat.
+
+
+      READ TABLE lt_t001w INTO ls_t001w
+              WITH KEY werks = ls_aufk-werks BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_result-werks_dec     = ls_t001w-name1.
+      ENDIF.
+
+      SELECT COUNT(*) FROM jcds
+          WHERE objnr = ls_aufk-objnr
+           AND  stat IN rt_tj02t.
+
+      CHECK sy-dbcnt > 0.
+* System status( Validation + Result List )
+      CLEAR:lt_status,    lv_objnr, lt_jcds_tmp, lt_tj02,
+            lt_status_tmp.
+      lv_objnr = ls_aufk-objnr.
+      CALL FUNCTION 'STATUS_READ'
+        EXPORTING
+          client           = sy-mandt
+          objnr            = lv_objnr
+          only_active      = abap_true
+        TABLES
+          status           = lt_status_tmp
+        EXCEPTIONS
+          object_not_found = 1
+          OTHERS           = 2.
       IF sy-subrc <> 0.
-        <fs_aufk>-del = abap_true.
+* Implement suitable error handling here
       ELSE.
-* Now filter MHIS & MHIO tables
-        LOOP AT lt_mhio INTO DATA(ls_mhio)
-                      WHERE aufnr = <fs_aufk>-aufnr.
-          APPEND ls_mhio TO  lt_mhio_tmp.
+        LOOP AT lt_status_tmp INTO ls_status.
+          IF ls_status-stat+0(1) = 'I'. " Only System status
+            APPEND ls_status TO lt_status.
+          ENDIF.
         ENDLOOP.
+        IF lt_status IS NOT INITIAL.
+          SELECT * FROM tj02 INTO TABLE lt_tj02
+               FOR ALL ENTRIES IN lt_status
+                    WHERE istat = lt_status-stat
+                     AND  nodis = abap_false.
+* Table LT_STATUS would have System status alone
+          CLEAR:lv_incl_status, lv_excl_status.
+
+          LOOP AT lt_status INTO ls_status.
+
+            CLEAR:ls_status_tmp, ls_tj02t.
+
+            READ TABLE lt_tj02 WITH KEY istat = ls_status-stat
+                      TRANSPORTING NO FIELDS.
+
+            CHECK sy-subrc = 0.
+            IF is_parameter-r_stati IS NOT INITIAL.
+              READ TABLE lt_tj02t_i WITH KEY istat = ls_status-stat
+                                      TRANSPORTING NO FIELDS.
+              IF sy-subrc = 0.
+                lv_incl_status = abap_true.
+              ENDIF.
+            ELSE.
+              lv_incl_status = abap_true.
+            ENDIF.
+            IF is_parameter-r_state IS NOT INITIAL.
+              READ TABLE lt_tj02t_e WITH KEY istat = ls_status-stat
+                                      TRANSPORTING NO FIELDS.
+              IF sy-subrc = 0.
+                lv_excl_status = abap_true.
+                EXIT.
+              ENDIF.
+            ENDIF.
+
+            READ TABLE lt_tj02t INTO ls_tj02t
+             WITH KEY spras = sy-langu
+                      istat = ls_status-stat BINARY SEARCH.
+            IF sy-subrc <> 0.
+              READ TABLE lt_tj02t INTO ls_tj02t
+                       WITH KEY spras = 'E'
+                                istat = ls_status-stat BINARY SEARCH.
+            ENDIF.
+* System status text
+            CHECK ls_tj02t-txt04 IS NOT INITIAL.
+
+            CONCATENATE  ls_tj02t-txt04
+                         ls_result-txt04 INTO ls_result-txt04
+                                 SEPARATED BY '/'.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
-    ENDLOOP.
+      CHECK lv_incl_status = abap_true AND lv_excl_status = abap_false.
+* Fill BUDAT / ERNAM
+      READ TABLE lt_afru INTO ls_afru
+        WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_result-budat = ls_afru-budat.
+        ls_result-ernam = ls_afru-ernam.
+      ENDIF.
 
-    DELETE lt_aufk WHERE del = abap_true.
-    IF sy-subrc = 0.
-      gv_missing_auth = abap_true.
-    ENDIF.
-
-    IF lt_mhio_tmp IS NOT INITIAL.
-      CLEAR lt_mhio.
-      lt_mhio = lt_mhio_tmp.
-      CLEAR lt_mhio_tmp.
-    ENDIF.
-
-    LOOP AT lt_aufk ASSIGNING <fs_aufk>.
-      LOOP AT lt_mhio INTO ls_mhio
-                WHERE aufnr = <fs_aufk>-aufnr.
-        LOOP AT lt_mhis INTO DATA(ls_mhis)
-            WHERE warpl = ls_mhio-warpl
-             AND  abnum = ls_mhio-abnum.
-          APPEND ls_mhis TO  lt_mhis_tmp.
-        ENDLOOP.
+      CLEAR lt_jcds_tmp.
+      LOOP AT lt_jcds_teco INTO ls_jcds
+               WHERE objnr = ls_aufk-objnr
+                AND  stat  = 'I0045'.
+        APPEND ls_jcds TO lt_jcds_tmp.
       ENDLOOP.
-    ENDLOOP.
-
-    IF lt_mhis_tmp IS NOT INITIAL.
-      CLEAR lt_mhis.
-      lt_mhis = lt_mhis_tmp.
-      CLEAR lt_mhis_tmp.
-    ENDIF.
-
-    CHECK lt_aufk IS NOT INITIAL.
-* Delete on IDAT2/VAPLZ/KOSTL is written separately as this
-* field is 28 fields are far away from primary key and has
-* no secondary index on them. Including these in 'Where' caluse
-* would be a performance deterrant!! and hence this approach.
-    IF is_parameter-r_idat2 IS NOT INITIAL.
-      DELETE lt_aufk WHERE idat2 NOT IN is_parameter-r_idat2.
-    ENDIF.
-    IF is_parameter-r_vaplz IS NOT INITIAL.
-      DELETE lt_aufk WHERE vaplz NOT IN is_parameter-r_vaplz.
-    ENDIF.
-    IF is_parameter-r_kostl IS NOT INITIAL.
-      DELETE lt_aufk WHERE kostl NOT IN is_parameter-r_kostl.
-    ENDIF.
-
-    SELECT werks name1 FROM t001w INTO TABLE lt_t001w
-        FOR ALL ENTRIES IN lt_aufk
-          WHERE werks = lt_aufk-werks.
-
-
-    SELECT * FROM jcds INTO TABLE lt_jcds
-            FOR ALL ENTRIES IN lt_aufk
-             WHERE objnr = lt_aufk-objnr.
-
-    IF sy-subrc = 0.
-      DELETE lt_jcds WHERE inact = abap_true.
-    ENDIF.
-
-    LOOP AT lt_jcds INTO DATA(ls_jcds).
-      IF ls_jcds-stat = 'I0045'.  " TECO(Techniaclly Completed)
-        APPEND ls_jcds TO lt_jcds_teco.
-      ELSEIF ls_jcds-stat = 'I0002'.  " REL(released)
-        APPEND ls_jcds TO lt_jcds_rel.
+* Fill USNAM - Pick the record with latest date & time
+      SORT lt_jcds_tmp BY udate DESCENDING
+                          utime DESCENDING.
+      READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+      IF sy-subrc = 0.
+        ls_result-usnam = ls_jcds-usnam.
       ENDIF.
+* USNAM_REL_BY(Released By) / UDATE( Released On)
+      CLEAR:lt_jcds_tmp,ls_jcds.
+      LOOP AT lt_jcds_rel INTO ls_jcds
+               WHERE objnr = ls_aufk-objnr.
+        APPEND ls_jcds TO lt_jcds_tmp.
+      ENDLOOP.
+      SORT lt_jcds_tmp BY udate DESCENDING
+                          utime DESCENDING.
+      READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+      IF sy-subrc = 0.
+*   Released By
+        ls_result-usnam_rel_by = ls_jcds-usnam.
+*   Released On
+        ls_result-udate        = ls_jcds-udate.
+      ENDIF.
+      APPEND ls_result TO et_result.
     ENDLOOP.
-
-
-    IF lt_jcds IS NOT INITIAL.
-      SELECT * FROM tj02t INTO TABLE lt_tj02t
-          FOR ALL ENTRIES IN lt_jcds
-             WHERE istat = lt_jcds-stat
-              AND  spras IN ( sy-langu, 'E' ).
-    ENDIF.
-
-    CLEAR lt_jcds.
-
-    SELECT aufnr
-           iwerk
-           ingpr
-           priok
-           iloan
-           ilart
-           addat
-           warpl
-           abnum
-           wapos FROM afih
-        INTO TABLE lt_afih
-          FOR ALL ENTRIES IN lt_aufk
-            WHERE aufnr = lt_aufk-aufnr
-             AND  priok IN is_parameter-r_priok
-             AND  iwerk IN is_parameter-r_iwerk
-             AND  ingpr IN is_parameter-r_ingpr.
-
-* Delete on ILART is written separately as this
-* field is many fields are far away from primary key and has
-* no secondary index on it. Including this in 'Where' caluse
-* would be a performance deterrant!! and hence this approach.
-    IF is_parameter-r_ilart IS NOT INITIAL.
-      DELETE lt_afih WHERE ilart NOT IN is_parameter-r_ilart.
-    ENDIF.
-
-    IF lt_afih IS NOT INITIAL.
-      SELECT iloan tplnr FROM iloa INTO TABLE lt_iloa
-        FOR ALL ENTRIES IN lt_afih
-          WHERE iloan = lt_afih-iloan
-           AND  tplnr IN is_parameter-r_tplnr.
-
-      SELECT aufnr gstri getri rueck rmzhl gstrs gltrs FROM afko
-           INTO TABLE lt_afko
-             FOR ALL ENTRIES IN lt_afih
-                WHERE aufnr = lt_afih-aufnr
-                 AND  getri IN is_parameter-r_getri
-                 AND  gstri IN is_parameter-r_gstri.
-
-      SELECT rueck
-             rmzhl
-             budat
-             ernam
-             aufnr
-             aueru
-             learr
-         FROM afru INTO TABLE lt_afru
-              FOR ALL ENTRIES IN lt_afih
-               WHERE aufnr = lt_afih-aufnr
-                AND  aueru = abap_true
-                AND  skostl = ' '.
-*                AND  pernr = 00000000.
-      " AUERU --> Final Confirmation
-    ENDIF.
-
-    et_aufk  = lt_aufk.
-    et_afih  = lt_afih.
-    et_afko  = lt_afko.
-    et_afru  = lt_afru.
-    et_jcds  = lt_jcds.
-    et_jcds_rel  = lt_jcds_rel.
-    et_jcds_teco  = lt_jcds_teco.
-    et_mhio  = lt_mhio.
-    et_mhis  = lt_mhis.
-    et_jest  = lt_jest.
-    et_iloa  = lt_iloa.
-    et_tj02t = lt_tj02t.
-    et_t001w = lt_t001w.
   ENDMETHOD.
 
 
-  METHOD build_data_pmo.
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->BUILD_DATA_PMO
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_PARAMETER                   TYPE        TS_PARAMETER
+* | [--->] IT_AUFK                        TYPE        STANDARD TABLE
+* | [--->] IT_AFIH                        TYPE        STANDARD TABLE
+* | [--->] IT_AFKO                        TYPE        STANDARD TABLE
+* | [--->] IT_AFRU                        TYPE        STANDARD TABLE
+* | [--->] IT_JCDS                        TYPE        STANDARD TABLE
+* | [--->] IT_MHIO                        TYPE        STANDARD TABLE
+* | [--->] IT_MHIS                        TYPE        STANDARD TABLE
+* | [--->] IT_JEST                        TYPE        STANDARD TABLE
+* | [--->] IT_TJ02T                       TYPE        STANDARD TABLE
+* | [--->] IT_ILOA                        TYPE        STANDARD TABLE
+* | [--->] IT_T001W                       TYPE        STANDARD TABLE
+* | [--->] IT_JCDS_REL                    TYPE        STANDARD TABLE
+* | [--->] IT_JCDS_TECO                   TYPE        STANDARD TABLE
+* | [<---] ET_RESULT                      TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD build_data_pmo.
     DATA:lt_aufk            TYPE STANDARD TABLE OF ts_aufk,
          lt_afih            TYPE STANDARD TABLE OF ts_afih,
          lt_afko            TYPE STANDARD TABLE OF ts_afko,
@@ -456,8 +657,8 @@ METHOD get_data_pmo.
         ls_result-warpl            = ls_mhio-warpl.
         ls_result-abnum            = ls_mhis-abnum.
         ls_result-zaehl            = ls_mhis-zaehl.
-        ls_result-zzlate_date	     = ls_mhio-zzlate_date.
-        ls_result-zz_ext_late_date = ls_mhio-zz_ext_late_date.
+        ls_result-zzlate_date       = ls_afih-lacd_date.
+*        ls_result-zz_ext_late_date = ls_mhio-zz_ext_late_date.
         ls_result-nplda            = ls_mhis-nplda.
 * Fill AUFNR / IDAT2 / VAPLZ / KOSTL
         READ TABLE lt_aufk INTO ls_aufk
@@ -639,4 +840,890 @@ METHOD get_data_pmo.
   ENDMETHOD.
 
 
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->GET_DATA_NPMO
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_PARAMETER                   TYPE        TS_PARAMETER
+* | [<---] ET_AUFK                        TYPE        STANDARD TABLE
+* | [<---] ET_AFIH                        TYPE        STANDARD TABLE
+* | [<---] ET_AFKO                        TYPE        STANDARD TABLE
+* | [<---] ET_AFRU                        TYPE        STANDARD TABLE
+* | [<---] ET_JCDS                        TYPE        STANDARD TABLE
+* | [<---] ET_MHIO                        TYPE        STANDARD TABLE
+* | [<---] ET_MHIS                        TYPE        STANDARD TABLE
+* | [<---] ET_JEST                        TYPE        STANDARD TABLE
+* | [<---] ET_TJ02T                       TYPE        STANDARD TABLE
+* | [<---] ET_ILOA                        TYPE        STANDARD TABLE
+* | [<---] ET_T001W                       TYPE        STANDARD TABLE
+* | [<---] ET_JCDS_REL                    TYPE        STANDARD TABLE
+* | [<---] ET_JCDS_TECO                   TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD get_data_npmo.
+    DATA:lt_aufk      TYPE STANDARD TABLE OF ts_aufk,
+         lt_aufk_tmp  TYPE STANDARD TABLE OF ts_aufk,
+         lt_afih      TYPE STANDARD TABLE OF ts_afih,
+         lt_afih_tmp  TYPE STANDARD TABLE OF ts_afih,
+         lt_afko      TYPE STANDARD TABLE OF ts_afko,
+         lt_afru      TYPE STANDARD TABLE OF ts_afru,
+         lt_jcds      TYPE STANDARD TABLE OF jcds,
+         lt_jcds_rel  TYPE STANDARD TABLE OF jcds,
+         lt_jcds_teco TYPE STANDARD TABLE OF jcds,
+         lt_jest      TYPE STANDARD TABLE OF jest,
+         lt_mhio      TYPE STANDARD TABLE OF ts_mhio,
+         lt_mhis      TYPE STANDARD TABLE OF ts_mhis,
+         lt_aufnr     TYPE STANDARD TABLE OF afko-aufnr,
+         lt_tj02t     TYPE STANDARD TABLE OF tj02t,
+         lt_t001w     TYPE STANDARD TABLE OF ts_t001w,
+         lt_iloa      TYPE STANDARD TABLE OF ts_iloa,
+         ls_aufnr     LIKE LINE OF lt_aufnr.
 
+    CLEAR: et_aufk,  et_afih, et_afko,    et_afru,
+           et_jcds,  et_mhio, et_mhis,    et_jest,
+           et_tj02t, et_iloa, gv_missing_auth, et_t001w,
+           et_jcds_rel.
+
+    SELECT aufnr
+           gstri
+           getri
+           rueck
+           rmzhl
+           gstrs
+           gltrs
+           FROM afko
+        INTO TABLE lt_afko
+          WHERE aufnr IN is_parameter-r_aufnr
+           AND  getri IN is_parameter-r_getri
+           AND  gstri IN is_parameter-r_gstri.
+
+    CHECK lt_afko IS NOT INITIAL.
+
+    SELECT aufnr
+           iwerk
+           ingpr
+           priok
+           iloan
+           ilart
+           addat
+           warpl
+           abnum
+           wapos FROM afih
+         INTO TABLE lt_afih
+           FOR ALL ENTRIES IN lt_afko
+             WHERE aufnr = lt_afko-aufnr
+              AND  priok IN is_parameter-r_priok
+              AND  iwerk IN is_parameter-r_iwerk
+              AND  ingpr IN is_parameter-r_ingpr.
+* Delete on ILART is written separately as this
+* field is many fields are far away from primary key and has
+* no secondary index on it. Including this in 'Where' caluse
+* would be a performance deterrant!! and hence this approach.
+    IF is_parameter-r_ilart IS NOT INITIAL.
+      DELETE lt_afih WHERE ilart NOT IN is_parameter-r_ilart.
+    ENDIF.
+
+    LOOP AT lt_afih INTO DATA(ls_afih).
+      AUTHORITY-CHECK OBJECT 'I_IWERK'
+               ID 'TCD'   FIELD 'ZIW123'
+               ID 'IWERK' FIELD ls_afih-iwerk.
+      IF sy-subrc <> 0.
+        CONTINUE.
+        gv_missing_auth = abap_true.
+      ELSE.
+        APPEND ls_afih TO lt_afih_tmp.
+      ENDIF.
+    ENDLOOP.
+
+    CLEAR lt_afih.
+    lt_afih = lt_afih_tmp.
+    CLEAR lt_afih_tmp.
+
+    IF lt_afih IS NOT INITIAL.
+
+      SELECT iloan tplnr FROM iloa INTO TABLE lt_iloa
+            FOR ALL ENTRIES IN lt_afih
+             WHERE iloan = lt_afih-iloan
+              AND  tplnr IN is_parameter-r_tplnr.
+
+      SELECT aufnr
+             auart
+             erdat
+             idat2
+             vaplz
+             kostl
+             objnr
+             werks
+             ktext
+             ernam
+        FROM aufk
+        INTO TABLE lt_aufk
+         FOR ALL ENTRIES IN lt_afih
+           WHERE aufnr = lt_afih-aufnr
+            AND  auart IN is_parameter-r_auart
+            AND  erdat IN is_parameter-r_erdat.
+
+* Delete on IDAT2/VAPLZ/KOSTL is written separately as this
+* field is 28 fields are far away from primary key and has
+* no secondary index on them. Including these in 'Where' caluse
+* would be a performance deterrant!! and hence this approach.
+      IF is_parameter-r_idat2 IS NOT INITIAL.
+        DELETE lt_aufk WHERE idat2 NOT IN is_parameter-r_idat2.
+      ENDIF.
+      IF is_parameter-r_vaplz IS NOT INITIAL.
+        DELETE lt_aufk WHERE vaplz NOT IN is_parameter-r_vaplz.
+      ENDIF.
+      IF is_parameter-r_kostl IS NOT INITIAL.
+        DELETE lt_aufk WHERE kostl NOT IN is_parameter-r_kostl.
+      ENDIF.
+
+      IF lt_aufk IS NOT INITIAL.
+        SELECT * FROM jcds INTO TABLE lt_jcds
+              FOR ALL ENTRIES IN lt_aufk
+               WHERE objnr = lt_aufk-objnr.
+
+        IF sy-subrc = 0.
+          DELETE lt_jcds WHERE inact = abap_true.
+        ENDIF.
+
+        LOOP AT lt_jcds INTO DATA(ls_jcds).
+          IF ls_jcds-stat = 'I0045'.  " TECO(Techniaclly Completed)
+            APPEND ls_jcds TO lt_jcds_teco.
+          ELSEIF ls_jcds-stat = 'I0002'.  " REL(released)
+            APPEND ls_jcds TO lt_jcds_rel.
+          ENDIF.
+        ENDLOOP.
+
+        IF lt_jcds IS NOT INITIAL.
+          SELECT * FROM tj02t INTO TABLE lt_tj02t
+              FOR ALL ENTRIES IN lt_jcds
+                 WHERE istat = lt_jcds-stat
+                  AND  spras IN ( sy-langu, 'E' ).
+        ENDIF.
+        CLEAR lt_jcds.
+
+        SELECT rueck
+               rmzhl
+               budat
+               ernam
+               aufnr
+               aueru
+               learr
+       FROM afru INTO TABLE lt_afru
+            FOR ALL ENTRIES IN lt_afih
+             WHERE aufnr = lt_afih-aufnr
+              AND  aueru = abap_true
+              AND  skostl = ' '.
+*                AND  pernr = 00000000.
+
+
+
+        SELECT werks name1 FROM t001w INTO TABLE lt_t001w
+           FOR ALL ENTRIES IN lt_aufk
+             WHERE werks = lt_aufk-werks.
+
+
+      ENDIF.
+    ENDIF.
+    et_aufk  = lt_aufk.
+    et_afih  = lt_afih.
+    et_afko  = lt_afko.
+    et_afru  = lt_afru.
+    et_jcds  = lt_jcds.
+    et_jcds_rel  = lt_jcds_rel.
+    et_jcds_teco  = lt_jcds_teco.
+    et_mhio  = lt_mhio.
+    et_mhis  = lt_mhis.
+    et_jest  = lt_jest.
+    et_iloa  = lt_iloa.
+    et_tj02t = lt_tj02t.
+    et_t001w = lt_t001w.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->GET_DATA_PMO
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_PARAMETER                   TYPE        TS_PARAMETER
+* | [<---] ET_AUFK                        TYPE        STANDARD TABLE
+* | [<---] ET_AFIH                        TYPE        STANDARD TABLE
+* | [<---] ET_AFKO                        TYPE        STANDARD TABLE
+* | [<---] ET_AFRU                        TYPE        STANDARD TABLE
+* | [<---] ET_JCDS                        TYPE        STANDARD TABLE
+* | [<---] ET_MHIO                        TYPE        STANDARD TABLE
+* | [<---] ET_MHIS                        TYPE        STANDARD TABLE
+* | [<---] ET_JEST                        TYPE        STANDARD TABLE
+* | [<---] ET_TJ02T                       TYPE        STANDARD TABLE
+* | [<---] ET_ILOA                        TYPE        STANDARD TABLE
+* | [<---] ET_T001W                       TYPE        STANDARD TABLE
+* | [<---] ET_JCDS_REL                    TYPE        STANDARD TABLE
+* | [<---] ET_JCDS_TECO                   TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD get_data_pmo.
+    DATA:lt_aufk      TYPE STANDARD TABLE OF ts_aufk,
+         lt_t001w     TYPE STANDARD TABLE OF ts_t001w,
+         lt_aufk_tmp  TYPE STANDARD TABLE OF ts_aufk,
+         lt_afih      TYPE STANDARD TABLE OF ts_afih,
+         lt_afih_tmp  TYPE STANDARD TABLE OF ts_afih,
+         lt_afko      TYPE STANDARD TABLE OF ts_afko,
+         lt_afru      TYPE STANDARD TABLE OF ts_afru,
+         lt_stat_r    TYPE RANGE OF jcds-stat,
+         ls_stat_r    LIKE LINE OF lt_stat_r,
+         lt_jcds      TYPE STANDARD TABLE OF jcds,
+         lt_jcds_rel  TYPE STANDARD TABLE OF jcds,
+         lt_jcds_teco TYPE STANDARD TABLE OF jcds,
+         lt_jcds_tmp  TYPE STANDARD TABLE OF jcds,
+         lt_jest      TYPE STANDARD TABLE OF jest,
+         lt_mhio      TYPE STANDARD TABLE OF ts_mhio,
+         lt_mhio_tmp  TYPE STANDARD TABLE OF ts_mhio,
+         lt_mhis      TYPE STANDARD TABLE OF ts_mhis,
+         lt_mhis_tmp  TYPE STANDARD TABLE OF ts_mhis,
+         lt_aufnr     TYPE STANDARD TABLE OF afko-aufnr,
+         lt_tj02t     TYPE STANDARD TABLE OF tj02t,
+         lt_iloa      TYPE STANDARD TABLE OF ts_iloa,
+         ls_aufnr     LIKE LINE OF lt_aufnr.
+
+    CLEAR: et_aufk,  et_afih, et_afko,    et_afru,
+           et_jcds,  et_mhio, et_mhis,    et_jest,
+           et_tj02t, et_iloa, gv_missing_auth,
+           et_t001w, et_jcds_rel, et_jcds_teco.
+
+    SELECT warpl
+           abnum
+           zaehl
+           nplda FROM mhis
+      INTO CORRESPONDING FIELDS OF TABLE lt_mhis
+        WHERE warpl IN is_parameter-r_warpl
+         AND  nplda IN is_parameter-r_nplda.
+
+    CHECK lt_mhis IS NOT INITIAL.
+
+    SELECT warpl
+           abnum
+           wppos
+           aufnr
+*           zzlate_date
+*           zz_ext_late_date
+      FROM mhio
+    INTO CORRESPONDING FIELDS OF TABLE lt_mhio
+      FOR ALL ENTRIES IN lt_mhis
+        WHERE warpl = lt_mhis-warpl
+         AND  abnum = lt_mhis-abnum
+         AND  aufnr IN is_parameter-r_aufnr.
+
+      SELECT lacd_date
+        FROM afih
+        INTO @DATA(lv_zzlate_date)
+        WHERE aufnr IN @is_parameter-r_aufnr.
+        ENDSELECT.
+
+    IF lt_mhio IS NOT INITIAL.
+      SELECT aufnr
+             auart
+             erdat
+             idat2
+             vaplz
+             kostl
+             objnr
+             werks
+             ktext
+             ernam
+             FROM aufk
+        INTO CORRESPONDING FIELDS OF TABLE lt_aufk
+         FOR ALL ENTRIES IN lt_mhio
+            WHERE aufnr  = lt_mhio-aufnr
+             AND  auart IN is_parameter-r_auart
+             AND  erdat IN is_parameter-r_erdat.
+    ENDIF.
+* Filter Invalid data
+    LOOP AT lt_aufk ASSIGNING FIELD-SYMBOL(<fs_aufk>).
+      AUTHORITY-CHECK OBJECT 'I_IWERK'
+               ID 'TCD'   FIELD 'ZIW123'
+               ID 'IWERK' FIELD <fs_aufk>-werks.
+      IF sy-subrc <> 0.
+        <fs_aufk>-del = abap_true.
+      ELSE.
+* Now filter MHIS & MHIO tables
+        LOOP AT lt_mhio INTO DATA(ls_mhio)
+                      WHERE aufnr = <fs_aufk>-aufnr.
+          APPEND ls_mhio TO  lt_mhio_tmp.
+        ENDLOOP.
+      ENDIF.
+    ENDLOOP.
+
+    DELETE lt_aufk WHERE del = abap_true.
+    IF sy-subrc = 0.
+      gv_missing_auth = abap_true.
+    ENDIF.
+
+    IF lt_mhio_tmp IS NOT INITIAL.
+      CLEAR lt_mhio.
+      lt_mhio = lt_mhio_tmp.
+      CLEAR lt_mhio_tmp.
+    ENDIF.
+
+    LOOP AT lt_aufk ASSIGNING <fs_aufk>.
+      LOOP AT lt_mhio INTO ls_mhio
+                WHERE aufnr = <fs_aufk>-aufnr.
+        LOOP AT lt_mhis INTO DATA(ls_mhis)
+            WHERE warpl = ls_mhio-warpl
+             AND  abnum = ls_mhio-abnum.
+          APPEND ls_mhis TO  lt_mhis_tmp.
+        ENDLOOP.
+      ENDLOOP.
+    ENDLOOP.
+
+    IF lt_mhis_tmp IS NOT INITIAL.
+      CLEAR lt_mhis.
+      lt_mhis = lt_mhis_tmp.
+      CLEAR lt_mhis_tmp.
+    ENDIF.
+
+    CHECK lt_aufk IS NOT INITIAL.
+* Delete on IDAT2/VAPLZ/KOSTL is written separately as this
+* field is 28 fields are far away from primary key and has
+* no secondary index on them. Including these in 'Where' caluse
+* would be a performance deterrant!! and hence this approach.
+    IF is_parameter-r_idat2 IS NOT INITIAL.
+      DELETE lt_aufk WHERE idat2 NOT IN is_parameter-r_idat2.
+    ENDIF.
+    IF is_parameter-r_vaplz IS NOT INITIAL.
+      DELETE lt_aufk WHERE vaplz NOT IN is_parameter-r_vaplz.
+    ENDIF.
+    IF is_parameter-r_kostl IS NOT INITIAL.
+      DELETE lt_aufk WHERE kostl NOT IN is_parameter-r_kostl.
+    ENDIF.
+
+    SELECT werks name1 FROM t001w INTO TABLE lt_t001w
+        FOR ALL ENTRIES IN lt_aufk
+          WHERE werks = lt_aufk-werks.
+
+
+    SELECT * FROM jcds INTO TABLE lt_jcds
+            FOR ALL ENTRIES IN lt_aufk
+             WHERE objnr = lt_aufk-objnr.
+
+    IF sy-subrc = 0.
+      DELETE lt_jcds WHERE inact = abap_true.
+    ENDIF.
+
+    LOOP AT lt_jcds INTO DATA(ls_jcds).
+      IF ls_jcds-stat = 'I0045'.  " TECO(Techniaclly Completed)
+        APPEND ls_jcds TO lt_jcds_teco.
+      ELSEIF ls_jcds-stat = 'I0002'.  " REL(released)
+        APPEND ls_jcds TO lt_jcds_rel.
+      ENDIF.
+    ENDLOOP.
+
+
+    IF lt_jcds IS NOT INITIAL.
+      SELECT * FROM tj02t INTO TABLE lt_tj02t
+          FOR ALL ENTRIES IN lt_jcds
+             WHERE istat = lt_jcds-stat
+              AND  spras IN ( sy-langu, 'E' ).
+    ENDIF.
+
+    CLEAR lt_jcds.
+
+    SELECT aufnr
+           iwerk
+           ingpr
+           priok
+           iloan
+           ilart
+           addat
+           warpl
+           abnum
+           wapos FROM afih
+        INTO TABLE lt_afih
+          FOR ALL ENTRIES IN lt_aufk
+            WHERE aufnr = lt_aufk-aufnr
+             AND  priok IN is_parameter-r_priok
+             AND  iwerk IN is_parameter-r_iwerk
+             AND  ingpr IN is_parameter-r_ingpr.
+
+* Delete on ILART is written separately as this
+* field is many fields are far away from primary key and has
+* no secondary index on it. Including this in 'Where' caluse
+* would be a performance deterrant!! and hence this approach.
+    IF is_parameter-r_ilart IS NOT INITIAL.
+      DELETE lt_afih WHERE ilart NOT IN is_parameter-r_ilart.
+    ENDIF.
+
+    IF lt_afih IS NOT INITIAL.
+      SELECT iloan tplnr FROM iloa INTO TABLE lt_iloa
+        FOR ALL ENTRIES IN lt_afih
+          WHERE iloan = lt_afih-iloan
+           AND  tplnr IN is_parameter-r_tplnr.
+
+      SELECT aufnr gstri getri rueck rmzhl gstrs gltrs FROM afko
+           INTO TABLE lt_afko
+             FOR ALL ENTRIES IN lt_afih
+                WHERE aufnr = lt_afih-aufnr
+                 AND  getri IN is_parameter-r_getri
+                 AND  gstri IN is_parameter-r_gstri.
+
+      SELECT rueck
+             rmzhl
+             budat
+             ernam
+             aufnr
+             aueru
+             learr
+         FROM afru INTO TABLE lt_afru
+              FOR ALL ENTRIES IN lt_afih
+               WHERE aufnr = lt_afih-aufnr
+                AND  aueru = abap_true
+                AND  skostl = ' '.
+*                AND  pernr = 00000000.
+      " AUERU --> Final Confirmation
+    ENDIF.
+
+    et_aufk  = lt_aufk.
+    et_afih  = lt_afih.
+    et_afko  = lt_afko.
+    et_afru  = lt_afru.
+    et_jcds  = lt_jcds.
+    et_jcds_rel  = lt_jcds_rel.
+    et_jcds_teco  = lt_jcds_teco.
+    et_mhio  = lt_mhio.
+    et_mhis  = lt_mhis.
+    et_jest  = lt_jest.
+    et_iloa  = lt_iloa.
+    et_tj02t = lt_tj02t.
+    et_t001w = lt_t001w.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->REFRESH_GOLBALS
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    method REFRESH_GOLBALS.
+  endmethod.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->VALIDATIONS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_PARAMATER                   TYPE        TS_PARAMETER
+* | [<---] EV_SUCCESS                     TYPE        FLAG
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD validations.
+    CLEAR ev_success.
+    ev_success = abap_true.
+    IF is_paramater-v_pmo = abap_true.
+      IF is_paramater-r_nplda  IS INITIAL.
+        CLEAR ev_success.
+        MESSAGE 'Planned Date is a Mandatory Field' TYPE 'I'.
+      ENDIF.
+    ELSE.
+      IF is_paramater-r_getri IS INITIAL.
+        CLEAR ev_success.
+        MESSAGE 'Actual End Date is a Mandatory Field' TYPE 'I'.
+        EXIT.
+      ENDIF.
+      IF is_paramater-r_iwerk IS INITIAL.
+        CLEAR ev_success.
+        MESSAGE 'Planning Plant is a Mandatory Field' TYPE 'I'.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_MODEL_SELECTION~SELECT_RESULT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IS_PARAMETER                   TYPE        DATA
+* | [--->] IV_MAX_HITS                    TYPE        ZIF_A2D_MODEL_SELECTION=>TV_MAX_HITS
+* | [<---] EV_RESULT_SELECTED             TYPE        ZIF_A2D_MODEL_SELECTION=>TV_RESULT_SELECTED
+* | [<---] ET_RESULT                      TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD zif_a2d_model_selection~select_result.
+
+    DATA:ls_parameter TYPE ts_parameter,
+         lv_success   TYPE flag,
+         lt_aufk      TYPE STANDARD TABLE OF ts_aufk,
+         lt_afih      TYPE STANDARD TABLE OF ts_afih,
+         lt_afko      TYPE STANDARD TABLE OF ts_afko,
+         lt_afru      TYPE STANDARD TABLE OF ts_afru,
+         lt_jcds      TYPE STANDARD TABLE OF jcds,
+         lt_jcds_rel  TYPE STANDARD TABLE OF jcds,
+         lt_jcds_teco TYPE STANDARD TABLE OF jcds,
+         lt_jest      TYPE STANDARD TABLE OF jest,
+         lt_tj02t     TYPE STANDARD TABLE OF tj02t,
+         lt_t001w     TYPE STANDARD TABLE OF ts_t001w,
+         lt_mhio      TYPE STANDARD TABLE OF ts_mhio,
+         lt_iloa      TYPE STANDARD TABLE OF ts_iloa,
+         lt_mhis      TYPE STANDARD TABLE OF ts_mhis.
+
+    ls_parameter = is_parameter.
+
+    validations( EXPORTING is_paramater = ls_parameter
+                 IMPORTING ev_success   = lv_success ).
+
+    CHECK lv_success = abap_true.
+
+    IF ls_parameter-v_pmo = abap_true.
+      get_data_pmo( EXPORTING is_parameter = ls_parameter
+                    IMPORTING et_aufk      =  lt_aufk
+                              et_afih      =  lt_afih
+                              et_afko      =  lt_afko
+                              et_afru      =  lt_afru
+                              et_jcds      =  lt_jcds
+                              et_mhio      =  lt_mhio
+                              et_mhis      =  lt_mhis
+                              et_iloa      =  lt_iloa
+                              et_jest      =  lt_jest
+                              et_tj02t     =  lt_tj02t
+                              et_t001w     =  lt_t001w
+                              et_jcds_rel  =  lt_jcds_rel
+                              et_jcds_teco =  lt_jcds_teco ).
+
+      build_data_pmo( EXPORTING  is_parameter = ls_parameter
+                                 it_aufk      = lt_aufk
+                                 it_afih      = lt_afih
+                                 it_afko      = lt_afko
+                                 it_afru      = lt_afru
+                                 it_jcds      = lt_jcds
+                                 it_mhio      = lt_mhio
+                                 it_mhis      = lt_mhis
+                                 it_jest      = lt_jest
+                                 it_iloa      = lt_iloa
+                                 it_tj02t     = lt_tj02t
+                                 it_t001w     = lt_t001w
+                                 it_jcds_rel  = lt_jcds_rel
+                                 it_jcds_teco  = lt_jcds_teco
+                      IMPORTING  et_result    = et_result ).
+    ELSE.
+      get_data_npmo( EXPORTING is_parameter  = ls_parameter
+                     IMPORTING et_aufk       =  lt_aufk
+                               et_afih       =  lt_afih
+                               et_afko       =  lt_afko
+                               et_afru       =  lt_afru
+                               et_jcds       =  lt_jcds
+                               et_iloa       =  lt_iloa
+                               et_jest       =  lt_jest
+                               et_tj02t      =  lt_tj02t
+                               et_t001w      =  lt_t001w
+                               et_jcds_rel   =  lt_jcds_rel
+                               et_jcds_teco  =  lt_jcds_teco ).
+
+      build_data_npmo( EXPORTING  is_parameter  = ls_parameter
+                                  it_aufk       = lt_aufk
+                                  it_afih       = lt_afih
+                                  it_afko       = lt_afko
+                                  it_afru       = lt_afru
+                                  it_jcds       = lt_jcds
+                                  it_jest       = lt_jest
+                                  it_iloa       = lt_iloa
+                                  it_tj02t      = lt_tj02t
+                                  it_t001w      = lt_t001w
+                                  it_jcds_rel   = lt_jcds_rel
+                                  it_jcds_teco  = lt_jcds_teco
+                       IMPORTING  et_result     = et_result ).
+
+    ENDIF.
+
+    IF gv_missing_auth = abap_true.
+      MESSAGE 'Please note that Certain Records were not shown due to missing Authorizations'
+             TYPE 'I'.
+    ENDIF.
+
+    sy-cprog =   zcl_a2r_mvi0123=>gv_program.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_VIEW_ALV~GET_ALV_COLUMN_ATTRIBUTE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IV_COLUMN_NAME                 TYPE        LVC_FNAME
+* | [--->] IS_PARAMETER                   TYPE        ANY
+* | [<-->] CV_IS_EDITABLE                 TYPE        ABAP_BOOL
+* | [<-->] CV_IS_CHECKBOX                 TYPE        ABAP_BOOL
+* | [<-->] CV_IS_HOTSPOT                  TYPE        ABAP_BOOL
+* | [<-->] CV_LABEL_SHORT                 TYPE        STRING
+* | [<-->] CV_LABEL_MEDIUM                TYPE        STRING
+* | [<-->] CV_LABEL_LONG                  TYPE        STRING
+* | [<-->] CV_FORMAT_EDIT_MASK            TYPE        LVC_EDTMSK
+* | [<-->] CV_REF_TABLE_NAME              TYPE        TABNAME
+* | [<-->] CV_REF_FIELD_NAME              TYPE        FIELDNAME
+* | [<-->] CV_IS_NO_OUT                   TYPE        ABAP_BOOL
+* | [<-->] CV_DECIMALS                    TYPE        DECIMALS
+* | [<-->] CV_OUTPUT_LENGTH               TYPE        LVC_OUTLEN
+* | [<-->] CV_IS_FIXED_COLUMN             TYPE        ABAP_BOOL
+* | [<-->] CV_IS_LOWER_CASE               TYPE        ABAP_BOOL
+* | [<-->] CV_CURRENCY_FIELD_NAME         TYPE        FIELDNAME
+* | [<-->] CV_EMPHASIZE                   TYPE        LVC_EMPHSZ
+* | [<-->] CV_COLUMN_POSITION             TYPE        INT4
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD zif_a2d_view_alv~get_alv_column_attribute.
+    DATA:ls_parameter TYPE ts_parameter.
+
+    ls_parameter = is_parameter.
+
+    CASE iv_column_name.
+      WHEN 'AUFNR_WO'.
+        cv_label_short  = 'Work Order'(001).
+        cv_label_medium = 'Work Order #'(002).
+        cv_label_long   = 'Work Order Number'(003).
+        cv_is_hotspot   = abap_true.
+      WHEN 'KTEXT'.
+        cv_label_short  = 'WrkOrd.Dsc'(004).
+        cv_label_medium = 'Work Order Descr'(005).
+        cv_label_long   = 'Work Order Description'(006).
+      WHEN 'WERKS'.
+        cv_label_short  =
+        cv_label_medium =
+        cv_label_long   = 'Plant'(007).
+      WHEN 'WERKS_DSC'.
+        cv_label_short  = 'Plant.Dscr'(008).
+        cv_label_medium = 'Plant Description'(009).
+        cv_label_long   = 'Plant Description'(010).
+      WHEN 'ERNAM_ENTERED_BY'.
+        cv_label_short  = 'Entered.By'(011).
+        cv_label_medium =
+        cv_label_long   = 'Entered By'(012).
+      WHEN 'ERDAT_CREATED_ON'.
+        cv_label_short  = 'Created.On'(013).
+        cv_label_medium =
+        cv_label_long   = 'Created On'(013).
+      WHEN 'PRIOK'.
+        cv_label_short  =
+        cv_label_medium =
+        cv_label_long   = 'Priority'(014).
+      WHEN 'GSTRI'.
+        cv_label_short  = 'Act.Sta.Dte'(015).
+        cv_label_medium = 'Actual Start Dt'(016).
+        cv_label_long   = 'Actual Start Date'(017).
+      WHEN 'GETRI'.
+        cv_label_short  = 'Act.End.Dte'(018).
+        cv_label_medium = 'Actual End Dt'(019).
+        cv_label_long   = 'Actual End Date'(020).
+      WHEN 'BUDAT' .
+        cv_label_short  = 'Cnf.Dte'(021).
+        cv_label_medium = 'Conf Date'(022).
+        cv_label_long   = 'Confirmation Date'(023).
+      WHEN 'ERNAM' .
+        cv_label_short  = 'Cnf By'(024).
+        cv_label_medium = 'Confirmed By'(025).
+        cv_label_long   = 'Confirmation By'(026).
+      WHEN 'ADDAT' .
+        cv_label_short  = 'Ref.Dte'(027).
+        cv_label_medium = 'Refernce Dt'(028).
+        cv_label_long   = 'Reference Date'(029).
+      WHEN 'IDAT2' .
+        cv_label_short  = 'TECO.Dte'(030).
+        cv_label_medium =
+        cv_label_long   = 'TECO Date'(031).
+      WHEN 'USNAM' .
+        cv_label_short  = 'TECO.By'(032).
+        cv_label_medium =
+        cv_label_long   = 'TECO.By.User'(033).
+      WHEN 'NPLDA' .
+        cv_label_short  = 'Planned.Dt'(034).
+        cv_label_medium =
+        cv_label_long   = 'Planned Date'(035).
+        IF ls_parameter-v_npmo = abap_true.
+          cv_is_no_out    = abap_true.
+        ENDIF.
+      WHEN 'ZZLATE_DATE' .
+        cv_label_short  = 'Final Due Date'(036).
+        cv_label_medium =
+        cv_label_long   = 'FInal Due Date'(036).
+        IF ls_parameter-v_npmo = abap_true.
+          cv_is_no_out    = abap_true.
+        ENDIF.
+      WHEN 'ABNUM' .
+        cv_label_short  = 'Plan.Call#'(037).
+        cv_label_medium = 'Call Number'(038).
+        cv_label_long   = 'Plan Call Number'(039).
+        IF ls_parameter-v_npmo = abap_true.
+          cv_is_no_out    = abap_true.
+        ENDIF.
+      WHEN 'ZAEHL' .
+        cv_label_short  = 'Pkg.Number'(040).
+        cv_label_medium = 'Package Number'(041).
+        cv_label_long   = 'Package Number'(041).
+        IF ls_parameter-v_npmo = abap_true.
+          cv_is_no_out    = abap_true.
+        ENDIF.
+      WHEN 'INGPR' .
+        cv_label_short  = 'Pln.Grp'(042).
+        cv_label_medium =
+        cv_label_long   = 'Planner Group'(043).
+      WHEN 'ILART' .
+        cv_label_short  = 'Main.Act.Typ'(044).
+        cv_label_medium = 'Main Act Type'(045).
+        cv_label_long   = 'Main Activity Type'(046).
+      WHEN 'VAPL2' .
+        cv_label_short  = 'Main.Wrk.Ctr'(047).
+        cv_label_medium = 'Main Wrk Centre'(048).
+        cv_label_long   = 'Main Work Centre'(049).
+      WHEN 'KOSTL_WO' .
+        cv_label_short  = 'Cost.Ctr'(050).
+        cv_label_medium =
+        cv_label_long   = 'Cost Centre'(051).
+      WHEN 'TPLNR' .
+        cv_label_short  = 'Fun.Loc'(052).
+        cv_label_medium =
+        cv_label_long   = 'Functional Location'(053).
+        cv_is_hotspot   = abap_true.
+      WHEN 'WARPL' .
+        cv_label_short  = 'Maint.Plan'(054).
+        cv_label_medium =
+        cv_label_long   = 'Maintenance Plan'(055).
+        IF ls_parameter-v_npmo = abap_true.
+          cv_is_no_out    = abap_true.
+        ELSE.
+          cv_is_hotspot   = abap_true.
+        ENDIF.
+      WHEN 'AUART' .
+        cv_label_short  = 'Order Type'(056).
+        cv_label_medium = 'Order Type'(056).
+        cv_label_long   = 'Order Type'(056).
+      WHEN 'TXT04' .
+        cv_label_short  = 'Syst.Stat'(057).
+        cv_label_medium = 'System Status'(058).
+        cv_label_long   = 'System Status'(058).
+      WHEN 'UDATE' .
+        cv_label_short  = 'ReleaseOn'(059).
+        cv_label_medium =
+        cv_label_long   = 'Release On'(060).
+      WHEN 'USNAM_REL_BY' .
+        cv_label_short  = 'ReleaseBy'(061).
+        cv_label_medium =
+        cv_label_long   = 'Release By'(062).
+      WHEN 'GSTRS' .
+        cv_label_short  = 'SchStartDt'(063).
+        cv_label_medium = 'Scheduled Start Dt'(064).
+        cv_label_long   = 'Scheduled Start Date'(065).
+      WHEN 'GLTRS' .
+        cv_label_short  = 'SchFinDte'(066).
+        cv_label_medium = 'Scheduled Finish Dt'(067).
+        cv_label_long   = 'Scheduled Finish Date'(068).
+      WHEN 'WERKS_DEC' .
+        cv_label_short  = 'Plant Name'(069).
+        cv_label_medium = 'Plant Name'(069).
+        cv_label_long   = 'Plant Name'(069).
+*      WHEN 'ZZ_EXT_LATE_DATE'.
+*        cv_label_short  = 'Ext.Lte.Dt'(070).
+*        cv_label_medium = 'Ext.Late.Date'(071).
+*        cv_label_long   = 'Work Order Number'(072).
+*        IF ls_parameter-v_npmo = abap_true.
+*          cv_is_no_out    = abap_true.
+*        ENDIF.
+    ENDCASE.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_VIEW_ALV~GET_ALV_LAYOUT_ATTRIBUTE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IS_PARAMETER                   TYPE        ANY
+* | [<---] ET_CUSTOM_BUTTON               TYPE        TT_CUSTOM_BUTTON
+* | [<---] ET_EXCLUDE_BUTTON              TYPE        UI_FUNCTIONS
+* | [<-->] CV_SELECTION_MODE              TYPE        ZIF_A2D_VIEW_ALV=>TV_SELECT_MODE
+* | [<-->] CV_VARIANT_SAVE_MODE           TYPE        ZIF_A2D_VIEW_ALV=>TV_VARIANT_SAVE_MODE
+* | [<-->] CV_IS_ROW_OPERATION_ENABLED    TYPE        ABAP_BOOL
+* | [<-->] CS_VARIANT                     TYPE        DISVARIANT
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD ZIF_a2d_VIEW_ALV~GET_ALV_LAYOUT_ATTRIBUTE.
+    DATA ls_parameter TYPE ts_parameter.
+
+    ls_parameter         = is_parameter.
+    cs_variant-variant   = ls_parameter-v_var.
+    cv_variant_save_mode = zif_a2d_view_alv=>gc_variant_save_mode_global.
+    gs_variant           = cs_variant.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_VIEW_ALV~HANDLE_HOTSPOT_CLICK
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IV_COLUMN_NAME                 TYPE        STRING
+* | [--->] IV_VALUE                       TYPE        DATA
+* | [--->] IS_RESULT                      TYPE        DATA
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD zif_a2d_view_alv~handle_hotspot_click.
+    DATA:ls_result TYPE ts_result.
+    ls_result = is_result.
+
+    IF iv_column_name = 'AUFNR_WO'    AND ls_result-aufnr_wo
+                                              IS NOT INITIAL.
+      SET PARAMETER ID: 'ANR' FIELD ls_result-aufnr_wo.
+      CALL TRANSACTION 'IW33' AND SKIP FIRST SCREEN.
+    ENDIF.
+
+    IF iv_column_name = 'TPLNR'    AND ls_result-tplnr
+                                             IS NOT INITIAL.
+      SET PARAMETER ID: 'IFL' FIELD ls_result-tplnr.
+      CALL TRANSACTION 'IL03' AND SKIP FIRST SCREEN.
+    ENDIF.
+
+    IF iv_column_name = 'WARPL'    AND ls_result-warpl
+                                            IS NOT INITIAL.
+      SET PARAMETER ID: 'MPL' FIELD ls_result-warpl.
+      CALL TRANSACTION 'IP03' AND SKIP FIRST SCREEN.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_VIEW_REPORT~GET_REPORT_ATTRIBUTE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IS_PARAMETER                   TYPE        ANY
+* | [--->] IV_SCREEN_TYPE                 TYPE        ZIF_A2D_VIEW_REPORT=>TV_SCREEN_TYPE
+* | [<-->] CV_REPORT_TITLE                TYPE        STRING
+* | [<-->] CV_DESCRIPTION                 TYPE        STRING
+* | [<-->] CV_DEFAULT_MAX_HITS            TYPE        ZIF_A2D_VIEW_REPORT=>TV_DEFAULT_MAX_HITS
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD zif_a2d_view_report~get_report_attribute.
+
+    IF sy-langu = 'E'.
+      DATA(lv_text1) = 'This report will help to analyze duration between Actual End to Confirmation Date, Confirmation to TECO date,'.
+      DATA(lv_text2) = 'error in entering Reference Date, work order completed after  Planned or Late Date.'.
+      CONCATENATE lv_text1
+                  lv_text2 INTO cv_description SEPARATED BY space.
+    ELSEIF sy-langu = 'D'.
+      lv_text1 = 'Bericht für Analyse von tatsächlichen Ende und dem Bestätigungsdatum, dem Bestätigungs- und'.
+      lv_text2 = 'dem TECO-Datum, der Diff. Von Eingabe- / Referenzdatum und Datum Auftragsabschluss.'.
+
+      CONCATENATE lv_text1
+                  lv_text2 INTO cv_description SEPARATED BY space.
+    ENDIF.
+    cv_report_title = 'WO Confirmation & TECO Cycle Time (for Lonza)'.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_A2R_MVI0123->ZIF_A2D_VIEW_REPORT~MODIFY_SELECTION_SCREEN
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_CONTROLLER                  TYPE REF TO ZIF_A2D_CONTROLLER
+* | [--->] IO_PROGRESS                    TYPE REF TO ZIF_A2D_PROGRESS
+* | [--->] IS_PARAMETER                   TYPE        DATA
+* | [<-->] CS_SCREEN                      TYPE        SCREEN
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+    METHOD zif_a2d_view_report~modify_selection_screen.
+
+    DATA:ls_parameter TYPE ts_parameter.
+
+    ls_parameter = is_parameter.
+
+    IF cs_screen-group1 = 'SC1'.
+      IF ls_parameter-v_npmo = 'X'.
+        cs_screen-invisible = '1'.
+        cs_screen-active = '0'.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
