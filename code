@@ -1,3 +1,225 @@
+@AbapCatalog.sqlViewName: 'ZV_WO_CORE'
+@AbapCatalog.compiler.compareFilter: true
+@AbapCatalog.preserveKey: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Work Order Core - AUFK/AFIH/AFKO/ILOA'
+
+define view ZI_WO_CORE
+  as select from aufk
+  inner join afih  on afih.aufnr  = aufk.aufnr
+  inner join afko  on afko.aufnr  = aufk.aufnr
+  inner join iloa  on iloa.iloan  = afih.iloan
+  inner join t001w on t001w.werks = aufk.werks
+{
+  key aufk.aufnr   as aufnr,
+      aufk.auart   as auart,
+      aufk.erdat   as erdat,
+      aufk.idat2   as idat2,
+      aufk.vaplz   as vaplz,
+      aufk.kostl   as kostl,
+      aufk.objnr   as objnr,
+      aufk.werks   as werks,
+      aufk.ktext   as ktext,
+      aufk.ernam   as ernam,
+
+      afih.iwerk   as iwerk,
+      afih.ingpr   as ingpr,
+      afih.priok   as priok,
+      afih.iloan   as iloan,
+      afih.ilart   as ilart,
+      afih.addat   as addat,
+      afih.warpl   as warpl,
+      afih.abnum   as abnum,
+      afih.wapos   as wapos,
+      afih.lacd_date as lacd_date,
+
+      afko.gstri   as gstri,
+      afko.getri   as getri,
+      afko.gstrs   as gstrs,
+      afko.gltrs   as gltrs,
+      afko.rueck   as rueck,
+      afko.rmzhl   as rmzhl,
+
+      iloa.tplnr   as tplnr,
+
+      t001w.name1  as werks_name
+}
+
+
+
+
+@AbapCatalog.sqlViewName: 'ZV_WO_CONF'
+@AbapCatalog.compiler.compareFilter: true
+@AbapCatalog.preserveKey: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Work Order Final Confirmation'
+
+define view ZI_WO_CONFIRMATION
+  as select from afru
+{
+  key afru.rueck  as rueck,
+  key afru.rmzhl  as rmzhl,
+      afru.aufnr  as aufnr,
+      afru.budat  as budat,
+      afru.ernam  as ernam,
+      afru.aueru  as aueru,
+      afru.learr  as learr
+}
+where
+  afru.aueru  = 'X'
+  and afru.skostl = ' '
+
+
+
+
+
+@AbapCatalog.sqlViewName: 'ZV_WO_STATUS'
+@AbapCatalog.compiler.compareFilter: true
+@AbapCatalog.preserveKey: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Work Order Status Change Records'
+
+define view ZI_WO_STATUS_CHANGE
+  as select from jcds
+  inner join tj02t on  tj02t.istat = jcds.stat
+                   and tj02t.spras = 'E'
+{
+  key jcds.objnr  as objnr,
+  key jcds.stat   as stat,
+      jcds.udate  as udate,
+      jcds.utime  as utime,
+      jcds.usnam  as usnam,
+      jcds.inact  as inact,
+      tj02t.txt04 as stat_txt
+}
+where
+  jcds.inact = ''
+
+
+
+
+@AbapCatalog.sqlViewName: 'ZV_WO_NPMO'
+@AbapCatalog.compiler.compareFilter: true
+@AbapCatalog.preserveKey: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Work Order Report - Non PMO'
+
+define view ZI_WO_NPMO
+  as select from ZI_WO_CORE as core
+  left outer join ZI_WO_CONFIRMATION as conf
+               on conf.aufnr = core.aufnr
+  left outer join ZI_WO_STATUS_CHANGE as teco
+               on  teco.objnr = core.objnr
+               and teco.stat  = 'I0045'
+  left outer join ZI_WO_STATUS_CHANGE as rel
+               on  rel.objnr = core.objnr
+               and rel.stat  = 'I0002'
+{
+  key core.aufnr      as aufnr,
+      core.auart      as auart,
+      core.erdat      as erdat,
+      core.idat2      as idat2,
+      core.vaplz      as vaplz,
+      core.kostl      as kostl,
+      core.objnr      as objnr,
+      core.werks      as werks,
+      core.werks_name as werks_name,
+      core.ktext      as ktext,
+      core.ernam      as ernam,
+
+      core.iwerk      as iwerk,
+      core.ingpr      as ingpr,
+      core.priok      as priok,
+      core.ilart      as ilart,
+      core.addat      as addat,
+      core.lacd_date  as lacd_date,
+      core.tplnr      as tplnr,
+
+      core.gstri      as gstri,
+      core.getri      as getri,
+      core.gstrs      as gstrs,
+      core.gltrs      as gltrs,
+
+      conf.budat      as budat,
+      conf.ernam      as conf_ernam,
+
+      teco.udate      as teco_udate,
+      teco.usnam      as teco_usnam,
+
+      rel.udate       as rel_udate,
+      rel.usnam       as rel_usnam
+}
+
+
+
+
+@AbapCatalog.sqlViewName: 'ZV_WO_PMO'
+@AbapCatalog.compiler.compareFilter: true
+@AbapCatalog.preserveKey: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Work Order Report - PMO'
+
+define view ZI_WO_PMO
+  as select from mhis
+  inner join mhio on  mhio.warpl = mhis.warpl
+                  and mhio.abnum = mhis.abnum
+  inner join ZI_WO_CORE as core
+                  on  core.aufnr = mhio.aufnr
+  left outer join ZI_WO_CONFIRMATION as conf
+               on  conf.aufnr = core.aufnr
+  left outer join ZI_WO_STATUS_CHANGE as teco
+               on  teco.objnr = core.objnr
+               and teco.stat  = 'I0045'
+  left outer join ZI_WO_STATUS_CHANGE as rel
+               on  rel.objnr = core.objnr
+               and rel.stat  = 'I0002'
+{
+  key mhis.warpl      as warpl,
+  key mhis.abnum      as abnum,
+      mhis.zaehl      as zaehl,
+      mhis.nplda      as nplda,
+
+      mhio.wppos      as wppos,
+
+      core.aufnr      as aufnr,
+      core.auart      as auart,
+      core.erdat      as erdat,
+      core.idat2      as idat2,
+      core.vaplz      as vaplz,
+      core.kostl      as kostl,
+      core.objnr      as objnr,
+      core.werks      as werks,
+      core.werks_name as werks_name,
+      core.ktext      as ktext,
+      core.ernam      as ernam,
+
+      core.iwerk      as iwerk,
+      core.ingpr      as ingpr,
+      core.priok      as priok,
+      core.ilart      as ilart,
+      core.addat      as addat,
+      core.lacd_date  as lacd_date,
+      core.tplnr      as tplnr,
+
+      core.gstri      as gstri,
+      core.getri      as getri,
+      core.gstrs      as gstrs,
+      core.gltrs      as gltrs,
+
+      conf.budat      as budat,
+      conf.ernam      as conf_ernam,
+
+      teco.udate      as teco_udate,
+      teco.usnam      as teco_usnam,
+
+      rel.udate       as rel_udate,
+      rel.usnam       as rel_usnam
+}
+
+
+
+
+
 METHOD get_data_npmo.
 
   CLEAR: et_aufk, et_afih, et_afko, et_afru,
@@ -6,309 +228,171 @@ METHOD get_data_npmo.
          et_t001w, et_jcds_rel, et_jcds_teco.
 
   "--------------------------------------------------------------------
-  " GUARD: r_iwerk is mandatory (enforced in VALIDATIONS).
-  " At least one date range is also mandatory. Both are safe to use
-  " directly. All other ranges below are optional and guarded.
+  " Single CDS read replaces all individual SELECTs and JOINs.
+  " Each optional range is guarded before being pushed into WHERE.
   "--------------------------------------------------------------------
+  DATA lt_npmo TYPE STANDARD TABLE OF zi_wo_npmo WITH EMPTY KEY.
 
-  "--------------------------------------------------------------------
-  " 1. AFKO — only fetch if date ranges are provided (mandatory by
-  "    validation, but we guard getri/gstri as they are optional)
-  "--------------------------------------------------------------------
-  DATA lt_afko TYPE STANDARD TABLE OF ts_afko WITH EMPTY KEY.
+  SELECT aufnr, auart, erdat, idat2, vaplz, kostl, objnr,
+         werks, werks_name, ktext, ernam,
+         iwerk, ingpr, priok, ilart, addat, lacd_date, tplnr,
+         gstri, getri, gstrs, gltrs,
+         budat, conf_ernam,
+         teco_udate, teco_usnam,
+         rel_udate,  rel_usnam
+    FROM zi_wo_npmo
+    INTO TABLE @lt_npmo
+    WHERE ( @is_parameter-r_aufnr IS INITIAL
+            OR aufnr IN @is_parameter-r_aufnr )
+      AND iwerk IN @is_parameter-r_iwerk        "mandatory
+      AND ( @is_parameter-r_getri IS INITIAL
+            OR getri IN @is_parameter-r_getri )
+      AND ( @is_parameter-r_gstri IS INITIAL
+            OR gstri IN @is_parameter-r_gstri )
+      AND ( @is_parameter-r_auart IS INITIAL
+            OR auart IN @is_parameter-r_auart )
+      AND ( @is_parameter-r_erdat IS INITIAL
+            OR erdat IN @is_parameter-r_erdat )
+      AND ( @is_parameter-r_ingpr IS INITIAL
+            OR ingpr IN @is_parameter-r_ingpr )
+      AND ( @is_parameter-r_priok IS INITIAL
+            OR priok IN @is_parameter-r_priok )
+      AND ( @is_parameter-r_tplnr IS INITIAL
+            OR tplnr IN @is_parameter-r_tplnr ).
 
-  " Build WHERE dynamically based on which ranges are filled
-  IF is_parameter-r_aufnr IS NOT INITIAL
-     AND is_parameter-r_getri IS NOT INITIAL
-     AND is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE aufnr IN @is_parameter-r_aufnr
-        AND getri IN @is_parameter-r_getri
-        AND gstri IN @is_parameter-r_gstri.
-
-  ELSEIF is_parameter-r_aufnr IS NOT INITIAL
-         AND is_parameter-r_getri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE aufnr IN @is_parameter-r_aufnr
-        AND getri IN @is_parameter-r_getri.
-
-  ELSEIF is_parameter-r_aufnr IS NOT INITIAL
-         AND is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE aufnr IN @is_parameter-r_aufnr
-        AND gstri IN @is_parameter-r_gstri.
-
-  ELSEIF is_parameter-r_getri IS NOT INITIAL
-         AND is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE getri IN @is_parameter-r_getri
-        AND gstri IN @is_parameter-r_gstri.
-
-  ELSEIF is_parameter-r_aufnr IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE aufnr IN @is_parameter-r_aufnr.
-
-  ELSEIF is_parameter-r_getri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE getri IN @is_parameter-r_getri.
-
-  ELSEIF is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT aufnr, gstri, getri, rueck, rmzhl, gstrs, gltrs
-      FROM afko
-      INTO TABLE @lt_afko
-      WHERE gstri IN @is_parameter-r_gstri.
-
+  " Post-filter fields with no DB index
+  IF is_parameter-r_idat2 IS NOT INITIAL.
+    DELETE lt_npmo WHERE idat2 NOT IN is_parameter-r_idat2.
   ENDIF.
-  " If all three are initial, lt_afko stays empty — CHECK below exits.
-
-  CHECK lt_afko IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 2. AFIH joined to AFKO
-  "    r_iwerk / r_ingpr / r_priok: iwerk is mandatory, others guarded
-  "--------------------------------------------------------------------
-  DATA lt_afih TYPE STANDARD TABLE OF ts_afih WITH EMPTY KEY.
-
-  IF is_parameter-r_ingpr IS NOT INITIAL
-     AND is_parameter-r_priok IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_afko AS afko ON afko~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk
-        AND afih~ingpr IN @is_parameter-r_ingpr
-        AND afih~priok IN @is_parameter-r_priok.
-
-  ELSEIF is_parameter-r_ingpr IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_afko AS afko ON afko~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk
-        AND afih~ingpr IN @is_parameter-r_ingpr.
-
-  ELSEIF is_parameter-r_priok IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_afko AS afko ON afko~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk.
-
-  ELSE.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_afko AS afko ON afko~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk.
-
+  IF is_parameter-r_vaplz IS NOT INITIAL.
+    DELETE lt_npmo WHERE vaplz NOT IN is_parameter-r_vaplz.
   ENDIF.
-
-  " ILART: no secondary index — post-filter
+  IF is_parameter-r_kostl IS NOT INITIAL.
+    DELETE lt_npmo WHERE kostl NOT IN is_parameter-r_kostl.
+  ENDIF.
   IF is_parameter-r_ilart IS NOT INITIAL.
-    DELETE lt_afih WHERE ilart NOT IN is_parameter-r_ilart.
+    DELETE lt_npmo WHERE ilart NOT IN is_parameter-r_ilart.
   ENDIF.
 
-  CHECK lt_afih IS NOT INITIAL.
+  CHECK lt_npmo IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " 3. Authority check
+  " Authority check
   "--------------------------------------------------------------------
-  DATA lt_afih_auth TYPE STANDARD TABLE OF ts_afih WITH EMPTY KEY.
-
-  LOOP AT lt_afih INTO DATA(ls_afih_chk).
+  LOOP AT lt_npmo ASSIGNING FIELD-SYMBOL(<fs_npmo>).
     AUTHORITY-CHECK OBJECT 'I_IWERK'
       ID 'TCD'   FIELD 'ZIW123'
-      ID 'IWERK' FIELD ls_afih_chk-iwerk.
-    IF sy-subrc = 0.
-      APPEND ls_afih_chk TO lt_afih_auth.
-    ELSE.
+      ID 'IWERK' FIELD <fs_npmo>-iwerk.
+    IF sy-subrc <> 0.
+      <fs_npmo>-iwerk = ''.       "mark for delete
       gv_missing_auth = abap_true.
     ENDIF.
   ENDLOOP.
+  DELETE lt_npmo WHERE iwerk = ''.
 
-  lt_afih = lt_afih_auth.
-  CHECK lt_afih IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 4. AUFK joined on AFIH
-  "    r_auart / r_erdat: both optional — guarded
-  "--------------------------------------------------------------------
-  DATA lt_aufk TYPE STANDARD TABLE OF ts_aufk WITH EMPTY KEY.
-
-  IF is_parameter-r_auart IS NOT INITIAL
-     AND is_parameter-r_erdat IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~auart IN @is_parameter-r_auart
-        AND aufk~erdat IN @is_parameter-r_erdat.
-
-  ELSEIF is_parameter-r_auart IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~auart IN @is_parameter-r_auart.
-
-  ELSEIF is_parameter-r_erdat IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~erdat IN @is_parameter-r_erdat.
-
-  ELSE.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk.
-
-  ENDIF.
-
-  " Post-filter fields with no secondary index
-  IF is_parameter-r_idat2 IS NOT INITIAL.
-    DELETE lt_aufk WHERE idat2 NOT IN is_parameter-r_idat2.
-  ENDIF.
-  IF is_parameter-r_vaplz IS NOT INITIAL.
-    DELETE lt_aufk WHERE vaplz NOT IN is_parameter-r_vaplz.
-  ENDIF.
-  IF is_parameter-r_kostl IS NOT INITIAL.
-    DELETE lt_aufk WHERE kostl NOT IN is_parameter-r_kostl.
-  ENDIF.
-
-  CHECK lt_aufk IS NOT INITIAL.
+  CHECK lt_npmo IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " 5. ILOA joined on AFIH
-  "    r_tplnr: optional — guarded
+  " Map CDS result into existing export table structures
+  " so BUILD_DATA_NPMO needs zero changes
   "--------------------------------------------------------------------
-  DATA lt_iloa TYPE STANDARD TABLE OF ts_iloa WITH EMPTY KEY.
-
-  IF is_parameter-r_tplnr IS NOT INITIAL.
-    SELECT iloa~iloan, iloa~tplnr
-      FROM iloa
-      INNER JOIN @lt_afih AS afih ON afih~iloan = iloa~iloan
-      INTO TABLE @lt_iloa
-      WHERE iloa~tplnr IN @is_parameter-r_tplnr.
-  ELSE.
-    SELECT iloa~iloan, iloa~tplnr
-      FROM iloa
-      INNER JOIN @lt_afih AS afih ON afih~iloan = iloa~iloan
-      INTO TABLE @lt_iloa.
-  ENDIF.
-
-  "--------------------------------------------------------------------
-  " 6. T001W joined on AUFK — no optional ranges, always needed
-  "--------------------------------------------------------------------
-  SELECT t001w~werks, t001w~name1
-    FROM t001w
-    INNER JOIN @lt_aufk AS aufk ON aufk~werks = t001w~werks
-    INTO TABLE @DATA(lt_t001w).
-
-  "--------------------------------------------------------------------
-  " 7. JCDS — one SELECT; split TECO/REL in ABAP
-  "--------------------------------------------------------------------
-  SELECT jcds~objnr, jcds~stat, jcds~udate,
-         jcds~utime,  jcds~usnam, jcds~inact
-    FROM jcds
-    INNER JOIN @lt_aufk AS aufk ON aufk~objnr = jcds~objnr
-    INTO TABLE @DATA(lt_jcds_all)
-    WHERE jcds~inact = @abap_false.
-
+  DATA lt_aufk  TYPE STANDARD TABLE OF ts_aufk  WITH EMPTY KEY.
+  DATA lt_afih  TYPE STANDARD TABLE OF ts_afih  WITH EMPTY KEY.
+  DATA lt_afko  TYPE STANDARD TABLE OF ts_afko  WITH EMPTY KEY.
+  DATA lt_afru  TYPE STANDARD TABLE OF ts_afru  WITH EMPTY KEY.
+  DATA lt_iloa  TYPE STANDARD TABLE OF ts_iloa  WITH EMPTY KEY.
+  DATA lt_t001w TYPE STANDARD TABLE OF ts_t001w WITH EMPTY KEY.
   DATA lt_jcds_teco TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
   DATA lt_jcds_rel  TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
 
-  LOOP AT lt_jcds_all INTO DATA(ls_jcds_split).
-    CASE ls_jcds_split-stat.
-      WHEN 'I0045'. APPEND ls_jcds_split TO lt_jcds_teco.
-      WHEN 'I0002'. APPEND ls_jcds_split TO lt_jcds_rel.
-    ENDCASE.
+  LOOP AT lt_npmo INTO DATA(ls_npmo).
+
+    " AUFK
+    DATA(ls_aufk) = VALUE ts_aufk(
+      aufnr = ls_npmo-aufnr
+      auart = ls_npmo-auart
+      erdat = ls_npmo-erdat
+      idat2 = ls_npmo-idat2
+      vaplz = ls_npmo-vaplz
+      kostl = ls_npmo-kostl
+      objnr = ls_npmo-objnr
+      werks = ls_npmo-werks
+      ktext = ls_npmo-ktext
+      ernam = ls_npmo-ernam ).
+    APPEND ls_aufk TO lt_aufk.
+
+    " AFIH
+    DATA(ls_afih) = VALUE ts_afih(
+      aufnr     = ls_npmo-aufnr
+      iwerk     = ls_npmo-iwerk
+      ingpr     = ls_npmo-ingpr
+      priok     = ls_npmo-priok
+      ilart     = ls_npmo-ilart
+      addat     = ls_npmo-addat
+      lacd_date = ls_npmo-lacd_date ).
+    APPEND ls_afih TO lt_afih.
+
+    " AFKO
+    DATA(ls_afko) = VALUE ts_afko(
+      aufnr = ls_npmo-aufnr
+      gstri = ls_npmo-gstri
+      getri = ls_npmo-getri
+      gstrs = ls_npmo-gstrs
+      gltrs = ls_npmo-gltrs ).
+    APPEND ls_afko TO lt_afko.
+
+    " AFRU
+    IF ls_npmo-budat IS NOT INITIAL.
+      DATA(ls_afru) = VALUE ts_afru(
+        aufnr = ls_npmo-aufnr
+        budat = ls_npmo-budat
+        ernam = ls_npmo-conf_ernam ).
+      APPEND ls_afru TO lt_afru.
+    ENDIF.
+
+    " ILOA
+    DATA(ls_iloa) = VALUE ts_iloa(
+      tplnr = ls_npmo-tplnr ).
+    APPEND ls_iloa TO lt_iloa.
+
+    " T001W
+    DATA(ls_t001w) = VALUE ts_t001w(
+      werks = ls_npmo-werks
+      name1 = ls_npmo-werks_name ).
+    COLLECT ls_t001w INTO lt_t001w.   "COLLECT avoids duplicates
+
+    " JCDS TECO
+    IF ls_npmo-teco_udate IS NOT INITIAL.
+      DATA(ls_teco) = VALUE jcds(
+        objnr = ls_npmo-objnr
+        stat  = 'I0045'
+        udate = ls_npmo-teco_udate
+        usnam = ls_npmo-teco_usnam ).
+      APPEND ls_teco TO lt_jcds_teco.
+    ENDIF.
+
+    " JCDS REL
+    IF ls_npmo-rel_udate IS NOT INITIAL.
+      DATA(ls_rel) = VALUE jcds(
+        objnr = ls_npmo-objnr
+        stat  = 'I0002'
+        udate = ls_npmo-rel_udate
+        usnam = ls_npmo-rel_usnam ).
+      APPEND ls_rel TO lt_jcds_rel.
+    ENDIF.
+
   ENDLOOP.
 
-  "--------------------------------------------------------------------
-  " 8. TJ02T — status texts (both logon language and English fallback)
-  "--------------------------------------------------------------------
-  DATA lt_tj02t TYPE STANDARD TABLE OF tj02t WITH EMPTY KEY.
-
-  IF lt_jcds_all IS NOT INITIAL.
-    SELECT DISTINCT tj02t~istat, tj02t~spras, tj02t~txt04
-      FROM tj02t
-      INNER JOIN @lt_jcds_all AS jcds ON jcds~stat = tj02t~istat
-      INTO TABLE @lt_tj02t
-      WHERE tj02t~spras IN ( @sy-langu, 'E' ).
-  ENDIF.
-
-  "--------------------------------------------------------------------
-  " 9. AFRU — final confirmations only
-  "--------------------------------------------------------------------
-  SELECT afru~rueck, afru~rmzhl, afru~budat,
-         afru~ernam,  afru~aufnr, afru~aueru, afru~learr
-    FROM afru
-    INNER JOIN @lt_afih AS afih ON afih~aufnr = afru~aufnr
-    INTO TABLE @DATA(lt_afru)
-    WHERE afru~aueru  = @abap_true
-      AND afru~skostl = ' '.
-
-  "--------------------------------------------------------------------
-  " 10. Export all tables
-  "--------------------------------------------------------------------
   et_aufk      = lt_aufk.
   et_afih      = lt_afih.
   et_afko      = lt_afko.
   et_afru      = lt_afru.
-  et_jcds_rel  = lt_jcds_rel.
-  et_jcds_teco = lt_jcds_teco.
   et_iloa      = lt_iloa.
-  et_tj02t     = lt_tj02t.
   et_t001w     = lt_t001w.
+  et_jcds_teco = lt_jcds_teco.
+  et_jcds_rel  = lt_jcds_rel.
 
 ENDMETHOD.
-
-
 
 
 
@@ -320,362 +404,189 @@ METHOD get_data_pmo.
          et_tj02t, et_iloa, gv_missing_auth,
          et_t001w, et_jcds_rel, et_jcds_teco.
 
-  "--------------------------------------------------------------------
-  " 1. MHIS — r_warpl and r_nplda both optional but at least one date
-  "    is mandatory (VALIDATIONS). Guard each combination.
-  "--------------------------------------------------------------------
-  DATA lt_mhis TYPE STANDARD TABLE OF ts_mhis WITH EMPTY KEY.
+  DATA lt_pmo TYPE STANDARD TABLE OF zi_wo_pmo WITH EMPTY KEY.
 
-  IF is_parameter-r_warpl IS NOT INITIAL
-     AND is_parameter-r_nplda IS NOT INITIAL.
+  SELECT warpl, abnum, zaehl, nplda, wppos,
+         aufnr, auart, erdat, idat2, vaplz, kostl, objnr,
+         werks, werks_name, ktext, ernam,
+         iwerk, ingpr, priok, ilart, addat, lacd_date, tplnr,
+         gstri, getri, gstrs, gltrs,
+         budat, conf_ernam,
+         teco_udate, teco_usnam,
+         rel_udate,  rel_usnam
+    FROM zi_wo_pmo
+    INTO TABLE @lt_pmo
+    WHERE ( @is_parameter-r_warpl IS INITIAL
+            OR warpl IN @is_parameter-r_warpl )
+      AND ( @is_parameter-r_nplda IS INITIAL
+            OR nplda IN @is_parameter-r_nplda )
+      AND ( @is_parameter-r_aufnr IS INITIAL
+            OR aufnr IN @is_parameter-r_aufnr )
+      AND iwerk IN @is_parameter-r_iwerk        "mandatory
+      AND ( @is_parameter-r_auart IS INITIAL
+            OR auart IN @is_parameter-r_auart )
+      AND ( @is_parameter-r_erdat IS INITIAL
+            OR erdat IN @is_parameter-r_erdat )
+      AND ( @is_parameter-r_getri IS INITIAL
+            OR getri IN @is_parameter-r_getri )
+      AND ( @is_parameter-r_gstri IS INITIAL
+            OR gstri IN @is_parameter-r_gstri )
+      AND ( @is_parameter-r_ingpr IS INITIAL
+            OR ingpr IN @is_parameter-r_ingpr )
+      AND ( @is_parameter-r_priok IS INITIAL
+            OR priok IN @is_parameter-r_priok )
+      AND ( @is_parameter-r_tplnr IS INITIAL
+            OR tplnr IN @is_parameter-r_tplnr ).
 
-    SELECT warpl, abnum, zaehl, nplda
-      FROM mhis
-      INTO TABLE @lt_mhis
-      WHERE warpl IN @is_parameter-r_warpl
-        AND nplda IN @is_parameter-r_nplda.
-
-  ELSEIF is_parameter-r_warpl IS NOT INITIAL.
-
-    SELECT warpl, abnum, zaehl, nplda
-      FROM mhis
-      INTO TABLE @lt_mhis
-      WHERE warpl IN @is_parameter-r_warpl.
-
-  ELSEIF is_parameter-r_nplda IS NOT INITIAL.
-
-    SELECT warpl, abnum, zaehl, nplda
-      FROM mhis
-      INTO TABLE @lt_mhis
-      WHERE nplda IN @is_parameter-r_nplda.
-
+  " Post-filter fields with no DB index
+  IF is_parameter-r_idat2 IS NOT INITIAL.
+    DELETE lt_pmo WHERE idat2 NOT IN is_parameter-r_idat2.
   ENDIF.
-  " If both initial, lt_mhis is empty — CHECK below exits cleanly.
-
-  CHECK lt_mhis IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 2. MHIO joined on MHIS — r_aufnr optional, guarded
-  "--------------------------------------------------------------------
-  DATA lt_mhio TYPE STANDARD TABLE OF ts_mhio WITH EMPTY KEY.
-
-  IF is_parameter-r_aufnr IS NOT INITIAL.
-
-    SELECT mhio~warpl, mhio~abnum, mhio~wppos, mhio~aufnr
-      FROM mhio
-      INNER JOIN @lt_mhis AS mhis
-             ON  mhis~warpl = mhio~warpl
-            AND  mhis~abnum = mhio~abnum
-      INTO TABLE @lt_mhio
-      WHERE mhio~aufnr IN @is_parameter-r_aufnr.
-
-  ELSE.
-
-    SELECT mhio~warpl, mhio~abnum, mhio~wppos, mhio~aufnr
-      FROM mhio
-      INNER JOIN @lt_mhis AS mhis
-             ON  mhis~warpl = mhio~warpl
-            AND  mhis~abnum = mhio~abnum
-      INTO TABLE @lt_mhio.
-
+  IF is_parameter-r_vaplz IS NOT INITIAL.
+    DELETE lt_pmo WHERE vaplz NOT IN is_parameter-r_vaplz.
+  ENDIF.
+  IF is_parameter-r_kostl IS NOT INITIAL.
+    DELETE lt_pmo WHERE kostl NOT IN is_parameter-r_kostl.
+  ENDIF.
+  IF is_parameter-r_ilart IS NOT INITIAL.
+    DELETE lt_pmo WHERE ilart NOT IN is_parameter-r_ilart.
   ENDIF.
 
-  CHECK lt_mhio IS NOT INITIAL.
+  CHECK lt_pmo IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " 3. AUFK joined on MHIO — r_auart / r_erdat optional, guarded
+  " Authority check
   "--------------------------------------------------------------------
-  DATA lt_aufk TYPE STANDARD TABLE OF ts_aufk WITH EMPTY KEY.
-
-  IF is_parameter-r_auart IS NOT INITIAL
-     AND is_parameter-r_erdat IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_mhio AS mhio ON mhio~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~auart IN @is_parameter-r_auart
-        AND aufk~erdat IN @is_parameter-r_erdat.
-
-  ELSEIF is_parameter-r_auart IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_mhio AS mhio ON mhio~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~auart IN @is_parameter-r_auart.
-
-  ELSEIF is_parameter-r_erdat IS NOT INITIAL.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_mhio AS mhio ON mhio~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk
-      WHERE aufk~erdat IN @is_parameter-r_erdat.
-
-  ELSE.
-
-    SELECT aufk~aufnr, aufk~auart, aufk~erdat, aufk~idat2,
-           aufk~vaplz,  aufk~kostl,  aufk~objnr,
-           aufk~werks,  aufk~ktext,  aufk~ernam
-      FROM aufk
-      INNER JOIN @lt_mhio AS mhio ON mhio~aufnr = aufk~aufnr
-      INTO TABLE @lt_aufk.
-
-  ENDIF.
-
-  CHECK lt_aufk IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 4. Authority check — filter AUFK, then re-align MHIO and MHIS
-  "--------------------------------------------------------------------
-  DATA lt_aufk_auth TYPE STANDARD TABLE OF ts_aufk WITH EMPTY KEY.
-  DATA lt_mhio_auth TYPE STANDARD TABLE OF ts_mhio WITH EMPTY KEY.
-  DATA lt_mhis_auth TYPE STANDARD TABLE OF ts_mhis WITH EMPTY KEY.
-
-  LOOP AT lt_aufk INTO DATA(ls_aufk_chk).
+  LOOP AT lt_pmo ASSIGNING FIELD-SYMBOL(<fs_pmo>).
     AUTHORITY-CHECK OBJECT 'I_IWERK'
       ID 'TCD'   FIELD 'ZIW123'
-      ID 'IWERK' FIELD ls_aufk_chk-werks.
-    IF sy-subrc = 0.
-      APPEND ls_aufk_chk TO lt_aufk_auth.
-    ELSE.
+      ID 'IWERK' FIELD <fs_pmo>-iwerk.
+    IF sy-subrc <> 0.
+      <fs_pmo>-iwerk = ''.
       gv_missing_auth = abap_true.
     ENDIF.
   ENDLOOP.
+  DELETE lt_pmo WHERE iwerk = ''.
 
-  lt_aufk = lt_aufk_auth.
-  CHECK lt_aufk IS NOT INITIAL.
-
-  " Re-align MHIO to authorised orders only
-  SORT lt_aufk BY aufnr.
-  LOOP AT lt_mhio INTO DATA(ls_mhio_chk).
-    READ TABLE lt_aufk WITH KEY aufnr = ls_mhio_chk-aufnr
-         BINARY SEARCH TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      APPEND ls_mhio_chk TO lt_mhio_auth.
-    ENDIF.
-  ENDLOOP.
-  lt_mhio = lt_mhio_auth.
-
-  " Re-align MHIS to remaining MHIO entries only
-  SORT lt_mhio BY warpl abnum.
-  LOOP AT lt_mhis INTO DATA(ls_mhis_chk).
-    READ TABLE lt_mhio WITH KEY warpl = ls_mhis_chk-warpl
-                                abnum = ls_mhis_chk-abnum
-         BINARY SEARCH TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      APPEND ls_mhis_chk TO lt_mhis_auth.
-    ENDIF.
-  ENDLOOP.
-  lt_mhis = lt_mhis_auth.
+  CHECK lt_pmo IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " 5. Post-filter fields with no secondary index
+  " Map into existing export structures
   "--------------------------------------------------------------------
-  IF is_parameter-r_idat2 IS NOT INITIAL.
-    DELETE lt_aufk WHERE idat2 NOT IN is_parameter-r_idat2.
-  ENDIF.
-  IF is_parameter-r_vaplz IS NOT INITIAL.
-    DELETE lt_aufk WHERE vaplz NOT IN is_parameter-r_vaplz.
-  ENDIF.
-  IF is_parameter-r_kostl IS NOT INITIAL.
-    DELETE lt_aufk WHERE kostl NOT IN is_parameter-r_kostl.
-  ENDIF.
-
-  CHECK lt_aufk IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 6. T001W — plant descriptions
-  "--------------------------------------------------------------------
-  SELECT t001w~werks, t001w~name1
-    FROM t001w
-    INNER JOIN @lt_aufk AS aufk ON aufk~werks = t001w~werks
-    INTO TABLE @DATA(lt_t001w).
-
-  "--------------------------------------------------------------------
-  " 7. JCDS — all active statuses; split TECO/REL in ABAP
-  "--------------------------------------------------------------------
-  SELECT jcds~objnr, jcds~stat, jcds~udate,
-         jcds~utime,  jcds~usnam, jcds~inact
-    FROM jcds
-    INNER JOIN @lt_aufk AS aufk ON aufk~objnr = jcds~objnr
-    INTO TABLE @DATA(lt_jcds_all)
-    WHERE jcds~inact = @abap_false.
-
+  DATA lt_aufk  TYPE STANDARD TABLE OF ts_aufk  WITH EMPTY KEY.
+  DATA lt_afih  TYPE STANDARD TABLE OF ts_afih  WITH EMPTY KEY.
+  DATA lt_afko  TYPE STANDARD TABLE OF ts_afko  WITH EMPTY KEY.
+  DATA lt_afru  TYPE STANDARD TABLE OF ts_afru  WITH EMPTY KEY.
+  DATA lt_mhio  TYPE STANDARD TABLE OF ts_mhio  WITH EMPTY KEY.
+  DATA lt_mhis  TYPE STANDARD TABLE OF ts_mhis  WITH EMPTY KEY.
+  DATA lt_iloa  TYPE STANDARD TABLE OF ts_iloa  WITH EMPTY KEY.
+  DATA lt_t001w TYPE STANDARD TABLE OF ts_t001w WITH EMPTY KEY.
   DATA lt_jcds_teco TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
   DATA lt_jcds_rel  TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
 
-  LOOP AT lt_jcds_all INTO DATA(ls_jcds_split).
-    CASE ls_jcds_split-stat.
-      WHEN 'I0045'. APPEND ls_jcds_split TO lt_jcds_teco.
-      WHEN 'I0002'. APPEND ls_jcds_split TO lt_jcds_rel.
-    ENDCASE.
+  LOOP AT lt_pmo INTO DATA(ls_pmo).
+
+    " AUFK
+    DATA(ls_aufk) = VALUE ts_aufk(
+      aufnr = ls_pmo-aufnr
+      auart = ls_pmo-auart
+      erdat = ls_pmo-erdat
+      idat2 = ls_pmo-idat2
+      vaplz = ls_pmo-vaplz
+      kostl = ls_pmo-kostl
+      objnr = ls_pmo-objnr
+      werks = ls_pmo-werks
+      ktext = ls_pmo-ktext
+      ernam = ls_pmo-ernam ).
+    APPEND ls_aufk TO lt_aufk.
+
+    " AFIH
+    DATA(ls_afih) = VALUE ts_afih(
+      aufnr     = ls_pmo-aufnr
+      iwerk     = ls_pmo-iwerk
+      ingpr     = ls_pmo-ingpr
+      priok     = ls_pmo-priok
+      ilart     = ls_pmo-ilart
+      addat     = ls_pmo-addat
+      lacd_date = ls_pmo-lacd_date ).
+    APPEND ls_afih TO lt_afih.
+
+    " AFKO
+    DATA(ls_afko) = VALUE ts_afko(
+      aufnr = ls_pmo-aufnr
+      gstri = ls_pmo-gstri
+      getri = ls_pmo-getri
+      gstrs = ls_pmo-gstrs
+      gltrs = ls_pmo-gltrs ).
+    APPEND ls_afko TO lt_afko.
+
+    " AFRU
+    IF ls_pmo-budat IS NOT INITIAL.
+      DATA(ls_afru) = VALUE ts_afru(
+        aufnr = ls_pmo-aufnr
+        budat = ls_pmo-budat
+        ernam = ls_pmo-conf_ernam ).
+      APPEND ls_afru TO lt_afru.
+    ENDIF.
+
+    " MHIO
+    DATA(ls_mhio) = VALUE ts_mhio(
+      warpl = ls_pmo-warpl
+      abnum = ls_pmo-abnum
+      wppos = ls_pmo-wppos
+      aufnr = ls_pmo-aufnr ).
+    APPEND ls_mhio TO lt_mhio.
+
+    " MHIS
+    DATA(ls_mhis) = VALUE ts_mhis(
+      warpl = ls_pmo-warpl
+      abnum = ls_pmo-abnum
+      zaehl = ls_pmo-zaehl
+      nplda = ls_pmo-nplda ).
+    COLLECT ls_mhis INTO lt_mhis.
+
+    " ILOA
+    DATA(ls_iloa) = VALUE ts_iloa(
+      tplnr = ls_pmo-tplnr ).
+    APPEND ls_iloa TO lt_iloa.
+
+    " T001W
+    DATA(ls_t001w) = VALUE ts_t001w(
+      werks = ls_pmo-werks
+      name1 = ls_pmo-werks_name ).
+    COLLECT ls_t001w INTO lt_t001w.
+
+    " JCDS TECO
+    IF ls_pmo-teco_udate IS NOT INITIAL.
+      DATA(ls_teco) = VALUE jcds(
+        objnr = ls_pmo-objnr
+        stat  = 'I0045'
+        udate = ls_pmo-teco_udate
+        usnam = ls_pmo-teco_usnam ).
+      APPEND ls_teco TO lt_jcds_teco.
+    ENDIF.
+
+    " JCDS REL
+    IF ls_pmo-rel_udate IS NOT INITIAL.
+      DATA(ls_rel) = VALUE jcds(
+        objnr = ls_pmo-objnr
+        stat  = 'I0002'
+        udate = ls_pmo-rel_udate
+        usnam = ls_pmo-rel_usnam ).
+      APPEND ls_rel TO lt_jcds_rel.
+    ENDIF.
+
   ENDLOOP.
 
-  "--------------------------------------------------------------------
-  " 8. TJ02T — status texts; DISTINCT avoids duplicates from the JOIN
-  "--------------------------------------------------------------------
-  DATA lt_tj02t TYPE STANDARD TABLE OF tj02t WITH EMPTY KEY.
-
-  IF lt_jcds_all IS NOT INITIAL.
-    SELECT DISTINCT tj02t~istat, tj02t~spras, tj02t~txt04
-      FROM tj02t
-      INNER JOIN @lt_jcds_all AS jcds ON jcds~stat = tj02t~istat
-      INTO TABLE @lt_tj02t
-      WHERE tj02t~spras IN ( @sy-langu, 'E' ).
-  ENDIF.
-
-  "--------------------------------------------------------------------
-  " 9. AFIH joined on AUFK — r_iwerk mandatory, r_ingpr/r_priok guarded
-  "--------------------------------------------------------------------
-  DATA lt_afih TYPE STANDARD TABLE OF ts_afih WITH EMPTY KEY.
-
-  IF is_parameter-r_ingpr IS NOT INITIAL
-     AND is_parameter-r_priok IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_aufk AS aufk ON aufk~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk
-        AND afih~ingpr IN @is_parameter-r_ingpr
-        AND afih~priok IN @is_parameter-r_priok.
-
-  ELSEIF is_parameter-r_ingpr IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_aufk AS aufk ON aufk~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk
-        AND afih~ingpr IN @is_parameter-r_ingpr.
-
-  ELSEIF is_parameter-r_priok IS NOT INITIAL.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_aufk AS aufk ON aufk~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk
-        AND afih~priok IN @is_parameter-r_priok.
-
-  ELSE.
-
-    SELECT afih~aufnr, afih~iwerk, afih~ingpr, afih~priok,
-           afih~iloan,  afih~ilart,  afih~addat,
-           afih~warpl,  afih~abnum,  afih~wapos, afih~lacd_date
-      FROM afih
-      INNER JOIN @lt_aufk AS aufk ON aufk~aufnr = afih~aufnr
-      INTO TABLE @lt_afih
-      WHERE afih~iwerk IN @is_parameter-r_iwerk.
-
-  ENDIF.
-
-  IF is_parameter-r_ilart IS NOT INITIAL.
-    DELETE lt_afih WHERE ilart NOT IN is_parameter-r_ilart.
-  ENDIF.
-
-  CHECK lt_afih IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " 10. ILOA — r_tplnr optional, guarded
-  "--------------------------------------------------------------------
-  DATA lt_iloa TYPE STANDARD TABLE OF ts_iloa WITH EMPTY KEY.
-
-  IF is_parameter-r_tplnr IS NOT INITIAL.
-    SELECT iloa~iloan, iloa~tplnr
-      FROM iloa
-      INNER JOIN @lt_afih AS afih ON afih~iloan = iloa~iloan
-      INTO TABLE @lt_iloa
-      WHERE iloa~tplnr IN @is_parameter-r_tplnr.
-  ELSE.
-    SELECT iloa~iloan, iloa~tplnr
-      FROM iloa
-      INNER JOIN @lt_afih AS afih ON afih~iloan = iloa~iloan
-      INTO TABLE @lt_iloa.
-  ENDIF.
-
-  "--------------------------------------------------------------------
-  " 11. AFKO — r_getri / r_gstri optional, guarded
-  "--------------------------------------------------------------------
-  DATA lt_afko TYPE STANDARD TABLE OF ts_afko WITH EMPTY KEY.
-
-  IF is_parameter-r_getri IS NOT INITIAL
-     AND is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT afko~aufnr, afko~gstri, afko~getri,
-           afko~rueck,  afko~rmzhl, afko~gstrs, afko~gltrs
-      FROM afko
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = afko~aufnr
-      INTO TABLE @lt_afko
-      WHERE afko~getri IN @is_parameter-r_getri
-        AND afko~gstri IN @is_parameter-r_gstri.
-
-  ELSEIF is_parameter-r_getri IS NOT INITIAL.
-
-    SELECT afko~aufnr, afko~gstri, afko~getri,
-           afko~rueck,  afko~rmzhl, afko~gstrs, afko~gltrs
-      FROM afko
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = afko~aufnr
-      INTO TABLE @lt_afko
-      WHERE afko~getri IN @is_parameter-r_getri.
-
-  ELSEIF is_parameter-r_gstri IS NOT INITIAL.
-
-    SELECT afko~aufnr, afko~gstri, afko~getri,
-           afko~rueck,  afko~rmzhl, afko~gstrs, afko~gltrs
-      FROM afko
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = afko~aufnr
-      INTO TABLE @lt_afko
-      WHERE afko~gstri IN @is_parameter-r_gstri.
-
-  ELSE.
-
-    SELECT afko~aufnr, afko~gstri, afko~getri,
-           afko~rueck,  afko~rmzhl, afko~gstrs, afko~gltrs
-      FROM afko
-      INNER JOIN @lt_afih AS afih ON afih~aufnr = afko~aufnr
-      INTO TABLE @lt_afko.
-
-  ENDIF.
-
-  "--------------------------------------------------------------------
-  " 12. AFRU — final confirmations only
-  "--------------------------------------------------------------------
-  SELECT afru~rueck, afru~rmzhl, afru~budat,
-         afru~ernam,  afru~aufnr, afru~aueru, afru~learr
-    FROM afru
-    INNER JOIN @lt_afih AS afih ON afih~aufnr = afru~aufnr
-    INTO TABLE @DATA(lt_afru)
-    WHERE afru~aueru  = @abap_true
-      AND afru~skostl = ' '.
-
-  "--------------------------------------------------------------------
-  " 13. Export
-  "--------------------------------------------------------------------
   et_aufk      = lt_aufk.
   et_afih      = lt_afih.
   et_afko      = lt_afko.
   et_afru      = lt_afru.
-  et_jcds_rel  = lt_jcds_rel.
-  et_jcds_teco = lt_jcds_teco.
   et_mhio      = lt_mhio.
   et_mhis      = lt_mhis.
   et_iloa      = lt_iloa.
-  et_tj02t     = lt_tj02t.
   et_t001w     = lt_t001w.
+  et_jcds_teco = lt_jcds_teco.
+  et_jcds_rel  = lt_jcds_rel.
 
 ENDMETHOD.
