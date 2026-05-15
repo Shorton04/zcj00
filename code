@@ -223,3 +223,395 @@ CLASS zcl_a2r_mvi0123 DEFINITION
     CLASS-DATA gv_missing_auth TYPE flag.
 
 ENDCLASS.
+
+
+
+
+
+METHOD build_data.
+  DATA: lt_aufk        TYPE STANDARD TABLE OF ts_aufk,
+        lt_afih        TYPE STANDARD TABLE OF ts_afih,
+        lt_afko        TYPE STANDARD TABLE OF ts_afko,
+        lt_afru        TYPE STANDARD TABLE OF ts_afru,
+        lt_jcds_rel    TYPE STANDARD TABLE OF jcds,
+        lt_jcds_teco   TYPE STANDARD TABLE OF jcds,
+        lt_jcds_tmp    TYPE STANDARD TABLE OF jcds,
+        lt_mhio        TYPE STANDARD TABLE OF ts_mhio,
+        lt_mhis        TYPE STANDARD TABLE OF ts_mhis,
+        lt_iloa        TYPE STANDARD TABLE OF ts_iloa,
+        lt_t001w       TYPE STANDARD TABLE OF ts_t001w,
+        lt_tj02t       TYPE STANDARD TABLE OF tj02t,
+        lt_tj02t_i     TYPE STANDARD TABLE OF tj02t,
+        lt_tj02t_e     TYPE STANDARD TABLE OF tj02t,
+        lt_tj02        TYPE STANDARD TABLE OF tj02,
+        lt_status      TYPE STANDARD TABLE OF jstat,
+        lt_status_tmp  TYPE STANDARD TABLE OF jstat,
+        lt_result      TYPE STANDARD TABLE OF ts_result,
+        ls_aufk        TYPE ts_aufk,
+        ls_afih        TYPE ts_afih,
+        ls_afko        TYPE ts_afko,
+        ls_afru        TYPE ts_afru,
+        ls_mhio        TYPE ts_mhio,
+        ls_mhis        TYPE ts_mhis,
+        ls_iloa        TYPE ts_iloa,
+        ls_t001w       TYPE ts_t001w,
+        ls_tj02t       TYPE tj02t,
+        ls_jcds        TYPE jcds,
+        ls_status      TYPE jstat,
+        ls_result      TYPE ts_result,
+        lv_objnr       TYPE jsto-objnr,
+        lv_incl_status TYPE flag,
+        lv_excl_status TYPE flag,
+        rt_tj02t       TYPE RANGE OF tj02t-istat,
+        lrs_tj02t      LIKE LINE OF rt_tj02t.
+
+  CLEAR et_result.
+
+  "--- Copy imports to local tables ---
+  lt_aufk      = it_aufk.
+  lt_afih      = it_afih.
+  lt_afko      = it_afko.
+  lt_afru      = it_afru.
+  lt_mhio      = it_mhio.
+  lt_mhis      = it_mhis.
+  lt_iloa      = it_iloa.
+  lt_t001w     = it_t001w.
+  lt_jcds_rel  = it_jcds_rel.
+  lt_jcds_teco = it_jcds_teco.
+
+  "--------------------------------------------------------------------
+  " Sort all tables for BINARY SEARCH performance
+  "--------------------------------------------------------------------
+  SORT: lt_aufk      BY aufnr,
+        lt_afih      BY aufnr,
+        lt_afko      BY aufnr,
+        lt_afru      BY aufnr,
+        lt_mhio      BY aufnr,
+        lt_mhis      BY warpl abnum,
+        lt_iloa      BY iloan,
+        lt_t001w     BY werks,
+        lt_jcds_rel  BY objnr,
+        lt_jcds_teco BY objnr.
+
+  "--------------------------------------------------------------------
+  " Resolve include/exclude status filters into TJ02T lookup tables
+  "--------------------------------------------------------------------
+  IF is_parameter-r_stati IS NOT INITIAL.
+    SELECT * FROM tj02t INTO TABLE lt_tj02t_i
+      WHERE txt04 IN is_parameter-r_stati
+        AND spras = 'E'.
+  ENDIF.
+
+  IF is_parameter-r_state IS NOT INITIAL.
+    SELECT * FROM tj02t INTO TABLE lt_tj02t_e
+      WHERE txt04 IN is_parameter-r_state
+        AND spras = 'E'.
+  ENDIF.
+
+  "--- Build range table for include statuses ---
+  LOOP AT lt_tj02t_i INTO DATA(ls_tj02t_tmp).
+    lrs_tj02t-sign   = 'I'.
+    lrs_tj02t-option = 'EQ'.
+    TRANSLATE ls_tj02t_tmp-istat TO UPPER CASE.
+    lrs_tj02t-low = ls_tj02t_tmp-istat.
+    APPEND lrs_tj02t TO rt_tj02t.
+  ENDLOOP.
+
+  "--------------------------------------------------------------------
+  " Fetch TJ02T for status text display
+  " (done once here instead of per order)
+  "--------------------------------------------------------------------
+  IF lt_jcds_rel IS NOT INITIAL OR lt_jcds_teco IS NOT INITIAL.
+    DATA lt_jcds_all TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
+    lt_jcds_all = lt_jcds_rel.
+    APPEND LINES OF lt_jcds_teco TO lt_jcds_all.
+    SORT lt_jcds_all BY stat.
+    DELETE ADJACENT DUPLICATES FROM lt_jcds_all COMPARING stat.
+
+    IF lt_jcds_all IS NOT INITIAL.
+      SELECT * FROM tj02t INTO TABLE lt_tj02t
+        FOR ALL ENTRIES IN lt_jcds_all
+          WHERE istat = lt_jcds_all-stat
+            AND spras IN ( sy-langu, 'E' ).
+      SORT lt_tj02t BY spras istat.
+    ENDIF.
+  ENDIF.
+
+  "--------------------------------------------------------------------
+  " Main loop — one entry per work order
+  "--------------------------------------------------------------------
+  LOOP AT lt_aufk INTO ls_aufk.
+
+    CLEAR: ls_result,    ls_afih,
+           ls_afko,      ls_afru,
+           ls_iloa,      ls_t001w,
+           lt_jcds_tmp,  lt_status,
+           lt_status_tmp.
+
+    "--------------------------------------------------------------------
+    " AUFK fields
+    "--------------------------------------------------------------------
+    ls_result-aufnr_wo         = ls_aufk-aufnr.
+    ls_result-auart            = ls_aufk-auart.
+    ls_result-idat2            = ls_aufk-idat2.
+    ls_result-vaplz            = ls_aufk-vaplz.
+    ls_result-kostl_wo         = ls_aufk-kostl.
+    ls_result-ktext            = ls_aufk-ktext.
+    ls_result-werks            = ls_aufk-werks.
+    ls_result-ernam_entered_by = ls_aufk-ernam.
+    ls_result-erdat_created_on = ls_aufk-erdat.
+
+    "--------------------------------------------------------------------
+    " T001W — Plant description
+    "--------------------------------------------------------------------
+    READ TABLE lt_t001w INTO ls_t001w
+      WITH KEY werks = ls_aufk-werks BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_result-werks_dec = ls_t001w-name1.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " AFIH — Maintenance order header
+    "--------------------------------------------------------------------
+    READ TABLE lt_afih INTO ls_afih
+      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
+    CHECK sy-subrc = 0.
+
+    ls_result-priok       = ls_afih-priok.
+    ls_result-addat       = ls_afih-addat.
+    ls_result-ingpr       = ls_afih-ingpr.
+    ls_result-ilart       = ls_afih-ilart.
+    ls_result-final_due_date = ls_afih-lacd_date.
+
+    "--------------------------------------------------------------------
+    " ILOA — Functional location
+    "--------------------------------------------------------------------
+    READ TABLE lt_iloa INTO ls_iloa
+      WITH KEY iloan = ls_afih-iloan BINARY SEARCH.
+    IF sy-subrc = 0.
+      CALL FUNCTION 'CONVERSION_EXIT_TPLNR_OUTPUT'
+        EXPORTING
+          input  = ls_iloa-tplnr
+        IMPORTING
+          output = ls_result-tplnr.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " AFKO — Scheduled/Actual dates
+    "--------------------------------------------------------------------
+    READ TABLE lt_afko INTO ls_afko
+      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
+    CHECK sy-subrc = 0.
+
+    ls_result-getri = ls_afko-getri.
+    ls_result-gstri = ls_afko-gstri.
+    ls_result-gstrs = ls_afko-gstrs.
+    ls_result-gltrs = ls_afko-gltrs.
+
+    "--------------------------------------------------------------------
+    " MHIO/MHIS — Maintenance plan fields
+    " Only populated for PMO orders; NPMO orders get blank fields
+    "--------------------------------------------------------------------
+    READ TABLE lt_mhio INTO ls_mhio
+      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_result-warpl = ls_mhio-warpl.
+      ls_result-abnum = ls_mhio-abnum.
+
+      READ TABLE lt_mhis INTO ls_mhis
+        WITH KEY warpl = ls_mhio-warpl
+                 abnum = ls_mhio-abnum BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_result-nplda = ls_mhis-nplda.
+        ls_result-zaehl = ls_mhis-zaehl.
+      ENDIF.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " System Status — validate include/exclude filters
+    " and build TXT04 display string
+    "--------------------------------------------------------------------
+    CLEAR: lv_incl_status, lv_excl_status.
+
+    lv_objnr = ls_aufk-objnr.
+
+    CALL FUNCTION 'STATUS_READ'
+      EXPORTING
+        client           = sy-mandt
+        objnr            = lv_objnr
+        only_active      = abap_true
+      TABLES
+        status           = lt_status_tmp
+      EXCEPTIONS
+        object_not_found = 1
+        OTHERS           = 2.
+
+    IF sy-subrc = 0.
+      "--- Keep system statuses only (prefix 'I') ---
+      LOOP AT lt_status_tmp INTO ls_status
+        WHERE stat+0(1) = 'I'.
+        APPEND ls_status TO lt_status.
+      ENDLOOP.
+
+      IF lt_status IS NOT INITIAL.
+        CLEAR lt_tj02.
+        SELECT * FROM tj02 INTO TABLE lt_tj02
+          FOR ALL ENTRIES IN lt_status
+            WHERE istat  = lt_status-stat
+              AND nodis  = abap_false.
+
+        LOOP AT lt_status INTO ls_status.
+
+          CLEAR ls_tj02t.
+
+          "--- Skip statuses not in TJ02 (display suppressed) ---
+          READ TABLE lt_tj02 WITH KEY istat = ls_status-stat
+               TRANSPORTING NO FIELDS.
+          CHECK sy-subrc = 0.
+
+          "--- Include status check ---
+          IF is_parameter-r_stati IS NOT INITIAL.
+            READ TABLE lt_tj02t_i WITH KEY istat = ls_status-stat
+                 TRANSPORTING NO FIELDS.
+            IF sy-subrc = 0.
+              lv_incl_status = abap_true.
+            ENDIF.
+          ELSE.
+            lv_incl_status = abap_true.
+          ENDIF.
+
+          "--- Exclude status check ---
+          IF is_parameter-r_state IS NOT INITIAL.
+            READ TABLE lt_tj02t_e WITH KEY istat = ls_status-stat
+                 TRANSPORTING NO FIELDS.
+            IF sy-subrc = 0.
+              lv_excl_status = abap_true.
+              EXIT.
+            ENDIF.
+          ENDIF.
+
+          "--- Build status text string ---
+          READ TABLE lt_tj02t INTO ls_tj02t
+            WITH KEY spras = sy-langu
+                     istat = ls_status-stat BINARY SEARCH.
+          IF sy-subrc <> 0.
+            READ TABLE lt_tj02t INTO ls_tj02t
+              WITH KEY spras = 'E'
+                       istat = ls_status-stat BINARY SEARCH.
+          ENDIF.
+
+          CHECK ls_tj02t-txt04 IS NOT INITIAL.
+
+          IF ls_result-txt04 IS INITIAL.
+            ls_result-txt04 = ls_tj02t-txt04.
+          ELSE.
+            CONCATENATE ls_result-txt04
+                        ls_tj02t-txt04
+                   INTO ls_result-txt04
+              SEPARATED BY '/'.
+          ENDIF.
+
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
+    "--- Skip order if status filter not satisfied ---
+    CHECK lv_incl_status = abap_true
+      AND lv_excl_status = abap_false.
+
+    "--------------------------------------------------------------------
+    " AFRU — Confirmation date and user
+    "--------------------------------------------------------------------
+    READ TABLE lt_afru INTO ls_afru
+      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_result-budat = ls_afru-budat.
+      ls_result-ernam = ls_afru-ernam.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " Ref <> Act Start
+    " Compare reference date (addat) vs actual start (gstri)
+    "--------------------------------------------------------------------
+    IF ls_afih-addat <> ls_afko-gstri.
+      ls_result-ref_act_start = 'Yes'.
+    ELSE.
+      ls_result-ref_act_start = 'No'.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " Act <> Planned
+    " PMO  : compare actual end (getri) vs planned date (nplda)
+    " NPMO : compare actual end (getri) vs result nplda (initial = no plan)
+    "--------------------------------------------------------------------
+    IF ls_afko-getri IS INITIAL
+      OR ls_afko-getri > ls_result-nplda.
+      ls_result-act_planned = 'Yes'.
+    ELSE.
+      ls_result-act_planned = 'No'.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " CNF <> Act End
+    " Difference between confirmation date and actual end date
+    "--------------------------------------------------------------------
+    CLEAR ls_result-cnf_act_end.
+    IF ls_afru-budat    IS NOT INITIAL
+      AND ls_afko-getri IS NOT INITIAL.
+      ls_result-cnf_act_end = ls_afru-budat - ls_afko-getri.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " TECO <> Actual End
+    " Difference between TECO date (idat2) and actual end date (getri)
+    "--------------------------------------------------------------------
+    CLEAR ls_result-teco_actual_end.
+    IF ls_aufk-idat2    IS NOT INITIAL
+      AND ls_afko-getri IS NOT INITIAL.
+      ls_result-teco_actual_end = ls_aufk-idat2 - ls_afko-getri.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " TECO By — pick latest JCDS record for stat I0045
+    "--------------------------------------------------------------------
+    CLEAR lt_jcds_tmp.
+    LOOP AT lt_jcds_teco INTO ls_jcds
+      WHERE objnr = ls_aufk-objnr.
+      APPEND ls_jcds TO lt_jcds_tmp.
+    ENDLOOP.
+
+    SORT lt_jcds_tmp BY udate DESCENDING
+                        utime DESCENDING.
+
+    READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+    IF sy-subrc = 0.
+      ls_result-usnam = ls_jcds-usnam.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " Released By / Released On — pick latest JCDS for stat I0002
+    "--------------------------------------------------------------------
+    CLEAR lt_jcds_tmp.
+    LOOP AT lt_jcds_rel INTO ls_jcds
+      WHERE objnr = ls_aufk-objnr.
+      APPEND ls_jcds TO lt_jcds_tmp.
+    ENDLOOP.
+
+    SORT lt_jcds_tmp BY udate DESCENDING
+                        utime DESCENDING.
+
+    READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+    IF sy-subrc = 0.
+      ls_result-usnam_rel_by = ls_jcds-usnam.
+      ls_result-udate        = ls_jcds-udate.
+    ENDIF.
+
+    "--------------------------------------------------------------------
+    " Append to result
+    "--------------------------------------------------------------------
+    APPEND ls_result TO et_result.
+
+  ENDLOOP.
+
+ENDMETHOD.
+
