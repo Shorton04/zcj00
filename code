@@ -1,460 +1,225 @@
-@AbapCatalog.sqlViewName: 'ZV_WO_CONF'
-@AbapCatalog.compiler.compareFilter: true
-@AbapCatalog.preserveKey: true
-@AccessControl.authorizationCheck: #NOT_REQUIRED
-@EndUserText.label: 'Work Order Final Confirmation'
-
-define view ZZI_A2R_WO_CONFIRMATION
-  as select from afru
-{
-  key afru.rueck as rueck,
-  key afru.rmzhl as rmzhl,
-      afru.aufnr as aufnr,
-      afru.budat as budat,
-      afru.ernam as ernam,
-      afru.aueru as aueru,
-      afru.learr as learr
-}
-where
-      afru.aueru  = 'X'
-  and afru.skostl = ' '
-
-
-
-
-@AbapCatalog.sqlViewName: 'ZV_WO_STATC'
-@AbapCatalog.compiler.compareFilter: true
-@AbapCatalog.preserveKey: true
-@AccessControl.authorizationCheck: #NOT_REQUIRED
-@EndUserText.label: 'Work Order Status Change Records'
-
-define view ZZI_A2R_WO_STATUS_CHANGE
-  as select from jcds
-  inner join tj02t on  tj02t.istat = jcds.stat
-                   and tj02t.spras = 'E'
-{
-  key jcds.objnr  as objnr,
-  key jcds.stat   as stat,
-      jcds.udate  as udate,
-      jcds.utime  as utime,
-      jcds.usnam  as usnam,
-      tj02t.txt04 as stat_txt
-}
-where
-  jcds.inact = ''
-
-
-
-
-@AbapCatalog.sqlViewName: 'ZV_WO_CORE'
-@AbapCatalog.compiler.compareFilter: true
-@AbapCatalog.preserveKey: true
-@AccessControl.authorizationCheck: #NOT_REQUIRED
-@EndUserText.label: 'Work Order Core'
-
-define view ZZI_A2R_WO_CORE
-  as select from aufk
-  inner join afih  on afih.aufnr  = aufk.aufnr
-  inner join afko  on afko.aufnr  = aufk.aufnr
-  inner join iloa  on iloa.iloan  = afih.iloan
-  inner join t001w on t001w.werks = aufk.werks
-{
-  key aufk.aufnr     as aufnr,
-      aufk.auart     as auart,
-      aufk.erdat     as erdat,
-      aufk.idat2     as idat2,
-      aufk.vaplz     as vaplz,
-      aufk.kostl     as kostl,
-      aufk.objnr     as objnr,
-      aufk.werks     as werks,
-      aufk.ktext     as ktext,
-      aufk.ernam     as ernam,
-
-      afih.iwerk     as iwerk,
-      afih.ingpr     as ingpr,
-      afih.priok     as priok,
-      afih.iloan     as iloan,
-      afih.ilart     as ilart,
-      afih.addat     as addat,
-      afih.warpl     as afih_warpl,
-      afih.abnum     as afih_abnum,
-      afih.wapos     as wapos,
-      afih.lacd_date as lacd_date,
-
-      afko.gstri     as gstri,
-      afko.getri     as getri,
-      afko.gstrs     as gstrs,
-      afko.gltrs     as gltrs,
-      afko.rueck     as rueck,
-      afko.rmzhl     as rmzhl,
-
-      iloa.tplnr     as tplnr,
-
-      t001w.name1    as werks_name
-}
-
-
-
-
-@AbapCatalog.sqlViewName: 'ZV_WO_RPT'
-@AbapCatalog.compiler.compareFilter: true
-@AbapCatalog.preserveKey: true
-@AccessControl.authorizationCheck: #NOT_REQUIRED
-@EndUserText.label: 'Work Order Combined Report'
-
-define view ZZI_A2R_WO_REPORT
-  as select from ZZI_A2R_WO_CORE as core
-
-  "--- Maintenance plan link (left = order appears even with no plan)
-  left outer join mhio on  mhio.aufnr = core.aufnr
-
-  left outer join mhis on  mhis.warpl = mhio.warpl
-                        and mhis.abnum = mhio.abnum
-
-  "--- Final confirmation
-  left outer join ZI_WO_CONFIRMATION as conf
-               on conf.aufnr = core.aufnr
-
-  "--- TECO status
-  left outer join ZI_WO_STATUS_CHANGE as teco
-               on  teco.objnr = core.objnr
-               and teco.stat  = 'I0045'
-
-  "--- Released status
-  left outer join ZI_WO_STATUS_CHANGE as rel
-               on  rel.objnr = core.objnr
-               and rel.stat  = 'I0002'
-{
-  key core.aufnr      as aufnr,
-      core.auart      as auart,
-      core.erdat      as erdat,
-      core.idat2      as idat2,
-      core.vaplz      as vaplz,
-      core.kostl      as kostl,
-      core.objnr      as objnr,
-      core.werks      as werks,
-      core.werks_name as werks_name,
-      core.ktext      as ktext,
-      core.ernam      as ernam,
-
-      core.iwerk      as iwerk,
-      core.ingpr      as ingpr,
-      core.priok      as priok,
-      core.ilart      as ilart,
-      core.addat      as addat,
-      core.lacd_date  as lacd_date,
-      core.tplnr      as tplnr,
-
-      core.gstri      as gstri,
-      core.getri      as getri,
-      core.gstrs      as gstrs,
-      core.gltrs      as gltrs,
-
-      "--- Maintenance plan fields (null if no plan)
-      mhio.warpl      as warpl,
-      mhio.abnum      as abnum,
-      mhio.wppos      as wppos,
-      mhis.zaehl      as zaehl,
-      mhis.nplda      as nplda,
-
-      "--- Confirmation fields (null if not confirmed)
-      conf.budat      as budat,
-      conf.ernam      as conf_ernam,
-
-      "--- TECO fields (null if not TECO'd)
-      teco.udate      as teco_udate,
-      teco.usnam      as teco_usnam,
-
-      "--- Released fields (null if not released)
-      rel.udate       as rel_udate,
-      rel.usnam       as rel_usnam
-}
-
-
-
-
-METHOD get_data.
-
-  CLEAR: et_aufk, et_afih, et_afko, et_afru,
-         et_jcds, et_mhio, et_mhis, et_jest,
-         et_tj02t, et_iloa, gv_missing_auth,
-         et_t001w, et_jcds_rel, et_jcds_teco.
-
-  DATA lt_report TYPE STANDARD TABLE OF zi_wo_report WITH EMPTY KEY.
-
-  "--------------------------------------------------------------------
-  " Single CDS SELECT — mandatory filter only in WHERE
-  " Everything else applied as DELETE after
-  "--------------------------------------------------------------------
-  SELECT aufnr, auart, erdat, idat2, vaplz, kostl, objnr,
-         werks, werks_name, ktext, ernam,
-         iwerk, ingpr, priok, ilart, addat, lacd_date, tplnr,
-         gstri, getri, gstrs, gltrs,
-         warpl, abnum, wppos, zaehl, nplda,
-         budat, conf_ernam,
-         teco_udate, teco_usnam,
-         rel_udate,  rel_usnam
-    FROM zi_wo_report
-    INTO TABLE @lt_report
-    WHERE iwerk IN @is_parameter-r_iwerk.  "mandatory
-
-  CHECK lt_report IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " Optional range filters — applied in ABAP
-  "--------------------------------------------------------------------
-  IF is_parameter-r_aufnr IS NOT INITIAL.
-    DELETE lt_report WHERE aufnr NOT IN is_parameter-r_aufnr.
-  ENDIF.
-  IF is_parameter-r_auart IS NOT INITIAL.
-    DELETE lt_report WHERE auart NOT IN is_parameter-r_auart.
-  ENDIF.
-  IF is_parameter-r_erdat IS NOT INITIAL.
-    DELETE lt_report WHERE erdat NOT IN is_parameter-r_erdat.
-  ENDIF.
-  IF is_parameter-r_getri IS NOT INITIAL.
-    DELETE lt_report WHERE getri NOT IN is_parameter-r_getri.
-  ENDIF.
-  IF is_parameter-r_gstri IS NOT INITIAL.
-    DELETE lt_report WHERE gstri NOT IN is_parameter-r_gstri.
-  ENDIF.
-  IF is_parameter-r_ingpr IS NOT INITIAL.
-    DELETE lt_report WHERE ingpr NOT IN is_parameter-r_ingpr.
-  ENDIF.
-  IF is_parameter-r_priok IS NOT INITIAL.
-    DELETE lt_report WHERE priok NOT IN is_parameter-r_priok.
-  ENDIF.
-  IF is_parameter-r_tplnr IS NOT INITIAL.
-    DELETE lt_report WHERE tplnr NOT IN is_parameter-r_tplnr.
-  ENDIF.
-  IF is_parameter-r_warpl IS NOT INITIAL.
-    DELETE lt_report WHERE warpl NOT IN is_parameter-r_warpl.
-  ENDIF.
-  IF is_parameter-r_nplda IS NOT INITIAL.
-    DELETE lt_report WHERE nplda NOT IN is_parameter-r_nplda.
-  ENDIF.
-  IF is_parameter-r_idat2 IS NOT INITIAL.
-    DELETE lt_report WHERE idat2 NOT IN is_parameter-r_idat2.
-  ENDIF.
-  IF is_parameter-r_vaplz IS NOT INITIAL.
-    DELETE lt_report WHERE vaplz NOT IN is_parameter-r_vaplz.
-  ENDIF.
-  IF is_parameter-r_kostl IS NOT INITIAL.
-    DELETE lt_report WHERE kostl NOT IN is_parameter-r_kostl.
-  ENDIF.
-  IF is_parameter-r_ilart IS NOT INITIAL.
-    DELETE lt_report WHERE ilart NOT IN is_parameter-r_ilart.
-  ENDIF.
-
-  CHECK lt_report IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " Authority check
-  "--------------------------------------------------------------------
-  DATA lt_report_auth TYPE STANDARD TABLE OF zi_wo_report
-                       WITH EMPTY KEY.
-
-  LOOP AT lt_report INTO DATA(ls_auth).
-    AUTHORITY-CHECK OBJECT 'I_IWERK'
-      ID 'TCD'   FIELD 'ZIW123'
-      ID 'IWERK' FIELD ls_auth-iwerk.
-    IF sy-subrc = 0.
-      APPEND ls_auth TO lt_report_auth.
-    ELSE.
-      gv_missing_auth = abap_true.
-    ENDIF.
-  ENDLOOP.
-
-  lt_report = lt_report_auth.
-  CHECK lt_report IS NOT INITIAL.
-
-  "--------------------------------------------------------------------
-  " Map into export structures
-  "--------------------------------------------------------------------
-  DATA lt_aufk      TYPE STANDARD TABLE OF ts_aufk  WITH EMPTY KEY.
-  DATA lt_afih      TYPE STANDARD TABLE OF ts_afih  WITH EMPTY KEY.
-  DATA lt_afko      TYPE STANDARD TABLE OF ts_afko  WITH EMPTY KEY.
-  DATA lt_afru      TYPE STANDARD TABLE OF ts_afru  WITH EMPTY KEY.
-  DATA lt_mhio      TYPE STANDARD TABLE OF ts_mhio  WITH EMPTY KEY.
-  DATA lt_mhis      TYPE STANDARD TABLE OF ts_mhis  WITH EMPTY KEY.
-  DATA lt_iloa      TYPE STANDARD TABLE OF ts_iloa  WITH EMPTY KEY.
-  DATA lt_t001w     TYPE STANDARD TABLE OF ts_t001w WITH EMPTY KEY.
-  DATA lt_jcds_teco TYPE STANDARD TABLE OF jcds     WITH EMPTY KEY.
-  DATA lt_jcds_rel  TYPE STANDARD TABLE OF jcds     WITH EMPTY KEY.
-
-  LOOP AT lt_report INTO DATA(ls_row).
-
-    "--- AUFK ---
-    APPEND VALUE ts_aufk(
-      aufnr = ls_row-aufnr
-      auart = ls_row-auart
-      erdat = ls_row-erdat
-      idat2 = ls_row-idat2
-      vaplz = ls_row-vaplz
-      kostl = ls_row-kostl
-      objnr = ls_row-objnr
-      werks = ls_row-werks
-      ktext = ls_row-ktext
-      ernam = ls_row-ernam ) TO lt_aufk.
-
-    "--- AFIH ---
-    APPEND VALUE ts_afih(
-      aufnr     = ls_row-aufnr
-      iwerk     = ls_row-iwerk
-      ingpr     = ls_row-ingpr
-      priok     = ls_row-priok
-      ilart     = ls_row-ilart
-      addat     = ls_row-addat
-      lacd_date = ls_row-lacd_date ) TO lt_afih.
-
-    "--- AFKO ---
-    APPEND VALUE ts_afko(
-      aufnr = ls_row-aufnr
-      gstri = ls_row-gstri
-      getri = ls_row-getri
-      gstrs = ls_row-gstrs
-      gltrs = ls_row-gltrs ) TO lt_afko.
-
-    "--- AFRU (only if confirmation exists) ---
-    IF ls_row-budat IS NOT INITIAL.
-      APPEND VALUE ts_afru(
-        aufnr = ls_row-aufnr
-        budat = ls_row-budat
-        ernam = ls_row-conf_ernam ) TO lt_afru.
-    ENDIF.
-
-    "--- MHIO (only if order came from a maintenance plan) ---
-    IF ls_row-warpl IS NOT INITIAL.
-      APPEND VALUE ts_mhio(
-        warpl = ls_row-warpl
-        abnum = ls_row-abnum
-        wppos = ls_row-wppos
-        aufnr = ls_row-aufnr ) TO lt_mhio.
-    ENDIF.
-
-    "--- MHIS — deduplicate by warpl + abnum ---
-    IF ls_row-warpl IS NOT INITIAL.
-      READ TABLE lt_mhis WITH KEY warpl = ls_row-warpl
-                                  abnum = ls_row-abnum
-           TRANSPORTING NO FIELDS.
-      IF sy-subrc <> 0.
-        APPEND VALUE ts_mhis(
-          warpl = ls_row-warpl
-          abnum = ls_row-abnum
-          zaehl = ls_row-zaehl
-          nplda = ls_row-nplda ) TO lt_mhis.
-      ENDIF.
-    ENDIF.
-
-    "--- ILOA ---
-    APPEND VALUE ts_iloa(
-      tplnr = ls_row-tplnr ) TO lt_iloa.
-
-    "--- T001W — deduplicate by plant ---
-    READ TABLE lt_t001w WITH KEY werks = ls_row-werks
-         TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      APPEND VALUE ts_t001w(
-        werks = ls_row-werks
-        name1 = ls_row-werks_name ) TO lt_t001w.
-    ENDIF.
-
-    "--- JCDS TECO ---
-    IF ls_row-teco_udate IS NOT INITIAL.
-      APPEND VALUE jcds(
-        objnr = ls_row-objnr
-        stat  = 'I0045'
-        udate = ls_row-teco_udate
-        usnam = ls_row-teco_usnam ) TO lt_jcds_teco.
-    ENDIF.
-
-    "--- JCDS REL ---
-    IF ls_row-rel_udate IS NOT INITIAL.
-      APPEND VALUE jcds(
-        objnr = ls_row-objnr
-        stat  = 'I0002'
-        udate = ls_row-rel_udate
-        usnam = ls_row-rel_usnam ) TO lt_jcds_rel.
-    ENDIF.
-
-  ENDLOOP.
-
-  "--------------------------------------------------------------------
-  " Export
-  "--------------------------------------------------------------------
-  et_aufk      = lt_aufk.
-  et_afih      = lt_afih.
-  et_afko      = lt_afko.
-  et_afru      = lt_afru.
-  et_mhio      = lt_mhio.
-  et_mhis      = lt_mhis.
-  et_iloa      = lt_iloa.
-  et_t001w     = lt_t001w.
-  et_jcds_teco = lt_jcds_teco.
-  et_jcds_rel  = lt_jcds_rel.
-
-ENDMETHOD.
-
-
-
-
-
-METHOD zif_a2d_model_selection~select_result.
-
-  DATA: ls_parameter TYPE ts_parameter,
-        lv_success   TYPE flag.
-
-  ls_parameter = is_parameter.
-
-  validations( EXPORTING is_paramater = ls_parameter
-               IMPORTING ev_success   = lv_success ).
-
-  CHECK lv_success = abap_true.
-
-  "--- Single call replaces the PMO/NPMO branch ---
-  DATA: lt_aufk      TYPE STANDARD TABLE OF ts_aufk,
-        lt_afih      TYPE STANDARD TABLE OF ts_afih,
-        lt_afko      TYPE STANDARD TABLE OF ts_afko,
-        lt_afru      TYPE STANDARD TABLE OF ts_afru,
-        lt_jcds_rel  TYPE STANDARD TABLE OF jcds,
-        lt_jcds_teco TYPE STANDARD TABLE OF jcds,
-        lt_mhio      TYPE STANDARD TABLE OF ts_mhio,
-        lt_mhis      TYPE STANDARD TABLE OF ts_mhis,
-        lt_iloa      TYPE STANDARD TABLE OF ts_iloa,
-        lt_t001w     TYPE STANDARD TABLE OF ts_t001w.
-
-  get_data( EXPORTING is_parameter  = ls_parameter
-            IMPORTING et_aufk       = lt_aufk
-                      et_afih       = lt_afih
-                      et_afko       = lt_afko
-                      et_afru       = lt_afru
-                      et_mhio       = lt_mhio
-                      et_mhis       = lt_mhis
-                      et_iloa       = lt_iloa
-                      et_t001w      = lt_t001w
-                      et_jcds_rel   = lt_jcds_rel
-                      et_jcds_teco  = lt_jcds_teco ).
-
-  build_data( EXPORTING is_parameter  = ls_parameter
-                        it_aufk       = lt_aufk
-                        it_afih       = lt_afih
-                        it_afko       = lt_afko
-                        it_afru       = lt_afru
-                        it_mhio       = lt_mhio
-                        it_mhis       = lt_mhis
-                        it_iloa       = lt_iloa
-                        it_t001w      = lt_t001w
-                        it_jcds_rel   = lt_jcds_rel
-                        it_jcds_teco  = lt_jcds_teco
-              IMPORTING et_result     = et_result ).
-
-  IF gv_missing_auth = abap_true.
-    MESSAGE 'Certain records not shown due to missing authorizations'
-      TYPE 'I'.
-  ENDIF.
-
-  sy-cprog = zcl_a2r_mvi0123=>gv_program.
-
-ENDMETHOD.
-
-
+CLASS zcl_a2r_mvi0123 DEFINITION
+  PUBLIC
+  INHERITING FROM zcl_a2d_cbc_controller_m01_v01
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    TYPES:
+      BEGIN OF ts_viaufkst,
+        aufnr TYPE afih-aufnr,
+      END OF ts_viaufkst.
+
+    TYPES:
+      BEGIN OF ts_result,
+        aufnr_wo         TYPE aufk-aufnr,
+        ktext            TYPE aufk-ktext,
+        werks            TYPE aufk-werks,
+        werks_dec        TYPE t001w-name1,
+        ernam_entered_by TYPE aufk-ernam,
+        erdat_created_on TYPE aufk-erdat,
+        auart            TYPE aufk-auart,
+        txt04            TYPE char80,
+        priok            TYPE afih-priok,
+        gstrs            TYPE afko-gstrs,
+        gltrs            TYPE afko-gltrs,
+        gstri            TYPE afko-gstri,
+        getri            TYPE afko-getri,
+        udate            TYPE jcds-udate,
+        usnam            TYPE jcds-usnam,
+        budat            TYPE afru-budat,
+        ernam            TYPE afru-ernam,
+        addat            TYPE afih-addat,
+        idat2            TYPE aufk-idat2,
+        usnam_rel_by     TYPE jcds-usnam,
+        ingpr            TYPE afih-ingpr,
+        ilart            TYPE afih-ilart,
+        vaplz            TYPE aufk-vaplz,
+        kostl_wo         TYPE aufk-kostl,
+        tplnr            TYPE iloa-tplnr,
+        nplda            TYPE mhis-nplda,
+        warpl            TYPE mhio-warpl,
+        abnum            TYPE mhis-abnum,
+        zaehl            TYPE mhis-zaehl,
+        ref_act_start    TYPE char3,
+        act_planned      TYPE char3,
+        cnf_act_end      TYPE i,
+        teco_actual_end  TYPE i,
+        final_due_date   TYPE afih-lacd_date,
+      END OF ts_result.
+
+    TYPES:
+      BEGIN OF ts_parameter,
+        r_aufnr TYPE RANGE OF aufk-aufnr,
+        r_stati TYPE RANGE OF jest-stat,
+        r_state TYPE RANGE OF jest-stat,
+        r_auart TYPE RANGE OF aufk-auart,
+        r_erdat TYPE RANGE OF aufk-erdat,
+        r_idat2 TYPE RANGE OF aufk-idat2,
+        r_gstri TYPE RANGE OF afko-gstri,
+        r_getri TYPE RANGE OF afko-getri,
+        r_iwerk TYPE RANGE OF afih-iwerk,
+        r_ingpr TYPE RANGE OF afih-ingpr,
+        r_priok TYPE RANGE OF afih-priok,
+        r_ilart TYPE RANGE OF afih-ilart,
+        r_vaplz TYPE RANGE OF aufk-vaplz,
+        r_kostl TYPE RANGE OF aufk-kostl,
+        r_tplnr TYPE RANGE OF iloa-tplnr,
+        r_warpl TYPE RANGE OF mhio-warpl,
+        r_nplda TYPE RANGE OF mhis-nplda,
+        v_var   TYPE slis_vari,
+      END OF ts_parameter.
+
+    "--- Removed v_pmo / v_npmo from ts_parameter ---
+    "--- No longer needed since flow is combined    ---
+
+    TYPES:
+      BEGIN OF ts_aufk,
+        aufnr TYPE aufk-aufnr,
+        auart TYPE aufk-auart,
+        erdat TYPE aufk-erdat,
+        idat2 TYPE aufk-idat2,
+        vaplz TYPE aufk-vaplz,
+        kostl TYPE aufk-kostl,
+        objnr TYPE aufk-objnr,
+        werks TYPE aufk-werks,
+        ktext TYPE aufk-ktext,
+        ernam TYPE aufk-ernam,
+        del   TYPE flag,
+      END OF ts_aufk.
+
+    TYPES:
+      BEGIN OF ts_afih,
+        aufnr     TYPE afih-aufnr,
+        iwerk     TYPE afih-iwerk,
+        ingpr     TYPE afih-ingpr,
+        priok     TYPE afih-priok,
+        iloan     TYPE afih-iloan,
+        ilart     TYPE afih-ilart,
+        addat     TYPE afih-addat,
+        warpl     TYPE afih-warpl,
+        abnum     TYPE afih-abnum,
+        wapos     TYPE afih-wapos,
+        lacd_date TYPE afih-lacd_date,
+      END OF ts_afih.
+
+    TYPES:
+      BEGIN OF ts_afko,
+        aufnr TYPE afko-aufnr,
+        gstri TYPE afko-gstri,
+        getri TYPE afko-getri,
+        rueck TYPE afko-rueck,
+        rmzhl TYPE afko-rmzhl,
+        gstrs TYPE afko-gstrs,
+        gltrs TYPE afko-gltrs,
+      END OF ts_afko.
+
+    TYPES:
+      BEGIN OF ts_afru,
+        rueck TYPE afru-rueck,
+        rmzhl TYPE afru-rmzhl,
+        budat TYPE afru-budat,
+        ernam TYPE afru-ernam,
+        aufnr TYPE afru-aufnr,
+        aueru TYPE afru-aueru,
+        learr TYPE afru-learr,
+      END OF ts_afru.
+
+    TYPES:
+      BEGIN OF ts_mhio,
+        warpl TYPE mhio-warpl,
+        abnum TYPE mhio-abnum,
+        wppos TYPE mhio-wppos,
+        aufnr TYPE mhio-aufnr,
+        del   TYPE flag,
+      END OF ts_mhio.
+
+    TYPES:
+      BEGIN OF ts_mhis,
+        warpl TYPE mhis-warpl,
+        abnum TYPE mhis-abnum,
+        zaehl TYPE mhis-zaehl,
+        nplda TYPE mhis-nplda,
+        del   TYPE flag,
+      END OF ts_mhis.
+
+    TYPES:
+      BEGIN OF ts_iloa,
+        iloan TYPE iloa-iloan,
+        tplnr TYPE iloa-tplnr,
+      END OF ts_iloa.
+
+    TYPES:
+      BEGIN OF ts_t001w,
+        werks TYPE t001w-werks,
+        name1 TYPE t001w-name1,
+      END OF ts_t001w.
+
+    CLASS-DATA gs_variant TYPE disvariant.
+    CLASS-DATA gv_program TYPE sy-cprog.
+
+    "--------------------------------------------------------------------
+    " NEW — Combined get/build replacing the 4 old PMO/NPMO methods
+    "--------------------------------------------------------------------
+    METHODS get_data
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+      EXPORTING
+        !et_aufk      TYPE STANDARD TABLE
+        !et_afih      TYPE STANDARD TABLE
+        !et_afko      TYPE STANDARD TABLE
+        !et_afru      TYPE STANDARD TABLE
+        !et_jcds_rel  TYPE STANDARD TABLE
+        !et_jcds_teco TYPE STANDARD TABLE
+        !et_mhio      TYPE STANDARD TABLE
+        !et_mhis      TYPE STANDARD TABLE
+        !et_iloa      TYPE STANDARD TABLE
+        !et_t001w     TYPE STANDARD TABLE.
+
+    METHODS build_data
+      IMPORTING
+        !is_parameter TYPE ts_parameter
+        !it_aufk      TYPE STANDARD TABLE
+        !it_afih      TYPE STANDARD TABLE
+        !it_afko      TYPE STANDARD TABLE
+        !it_afru      TYPE STANDARD TABLE
+        !it_jcds_rel  TYPE STANDARD TABLE
+        !it_jcds_teco TYPE STANDARD TABLE
+        !it_mhio      TYPE STANDARD TABLE
+        !it_mhis      TYPE STANDARD TABLE
+        !it_iloa      TYPE STANDARD TABLE
+        !it_t001w     TYPE STANDARD TABLE
+      EXPORTING
+        !et_result    TYPE STANDARD TABLE.
+
+    "--------------------------------------------------------------------
+    " Kept — unchanged methods
+    "--------------------------------------------------------------------
+    METHODS validations
+      IMPORTING
+        !is_paramater TYPE ts_parameter
+      EXPORTING
+        !ev_success   TYPE flag.
+
+    METHODS refresh_golbals.
+
+    METHODS zif_a2d_model_selection~select_result
+        REDEFINITION.
+    METHODS zif_a2d_view_alv~get_alv_column_attribute
+        REDEFINITION.
+    METHODS zif_a2d_view_alv~get_alv_layout_attribute
+        REDEFINITION.
+    METHODS zif_a2d_view_alv~handle_hotspot_click
+        REDEFINITION.
+    METHODS zif_a2d_view_report~get_report_attribute
+        REDEFINITION.
+    METHODS zif_a2d_view_report~modify_selection_screen
+        REDEFINITION.
+
+  PROTECTED SECTION.
+
+  PRIVATE SECTION.
+    CLASS-DATA gv_missing_auth TYPE flag.
+
+ENDCLASS.
