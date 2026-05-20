@@ -1,9 +1,227 @@
-TYPES:
-  BEGIN OF ts_jcds,
-    objnr TYPE jcds-objnr,
-    stat  TYPE jcds-stat,
-    udate TYPE jcds-udate,
-    utime TYPE jcds-utime,
-    usnam TYPE jcds-usnam,
-    inact TYPE jcds-inact,
-  END OF ts_jcds.
+  METHOD get_data.
+
+    CLEAR: et_aufk, et_afih, et_afko, et_afru,
+           et_mhio, et_mhis,
+           et_iloa, gv_missing_auth,
+           et_t001w, et_jcds_rel, et_jcds_teco.
+
+    DATA lt_report TYPE STANDARD TABLE OF zzi_a2r_wo_report WITH EMPTY KEY.
+
+    "--------------------------------------------------------------------
+    " Single CDS SELECT — mandatory filter only in WHERE
+    " Everything else applied as DELETE after
+    "--------------------------------------------------------------------
+    SELECT aufnr, auart, erdat, idat2, vaplz, kostl, objnr,
+           werks, werks_name, ktext, ernam,
+           iwerk, ingpr, priok, ilart, addat, lacd_date, tplnr,
+           gstri, getri, gstrs, gltrs,
+           warpl, abnum, wppos, zaehl, nplda,
+           budat, conf_ernam,
+           teco_udate, teco_usnam,
+           rel_udate,  rel_usnam
+      FROM zzi_a2r_wo_report
+      INTO TABLE @lt_report
+      WHERE iwerk IN @is_parameter-r_iwerk.  "mandatory
+
+    CHECK lt_report IS NOT INITIAL.
+
+    "--------------------------------------------------------------------
+    " Optional range filters — applied in ABAP
+    "--------------------------------------------------------------------
+    IF is_parameter-r_aufnr IS NOT INITIAL.
+      DELETE lt_report WHERE aufnr NOT IN is_parameter-r_aufnr.
+    ENDIF.
+    IF is_parameter-r_auart IS NOT INITIAL.
+      DELETE lt_report WHERE auart NOT IN is_parameter-r_auart.
+    ENDIF.
+    IF is_parameter-r_erdat IS NOT INITIAL.
+      DELETE lt_report WHERE erdat NOT IN is_parameter-r_erdat.
+    ENDIF.
+    IF is_parameter-r_getri IS NOT INITIAL.
+      DELETE lt_report WHERE getri NOT IN is_parameter-r_getri.
+    ENDIF.
+    IF is_parameter-r_gstri IS NOT INITIAL.
+      DELETE lt_report WHERE gstri NOT IN is_parameter-r_gstri.
+    ENDIF.
+    IF is_parameter-r_ingpr IS NOT INITIAL.
+      DELETE lt_report WHERE ingpr NOT IN is_parameter-r_ingpr.
+    ENDIF.
+    IF is_parameter-r_priok IS NOT INITIAL.
+      DELETE lt_report WHERE priok NOT IN is_parameter-r_priok.
+    ENDIF.
+    IF is_parameter-r_tplnr IS NOT INITIAL.
+      DELETE lt_report WHERE tplnr NOT IN is_parameter-r_tplnr.
+    ENDIF.
+    IF is_parameter-r_warpl IS NOT INITIAL.
+      DELETE lt_report WHERE warpl NOT IN is_parameter-r_warpl.
+    ENDIF.
+    IF is_parameter-r_nplda IS NOT INITIAL.
+      DELETE lt_report WHERE nplda NOT IN is_parameter-r_nplda.
+    ENDIF.
+    IF is_parameter-r_idat2 IS NOT INITIAL.
+      DELETE lt_report WHERE idat2 NOT IN is_parameter-r_idat2.
+    ENDIF.
+    IF is_parameter-r_vaplz IS NOT INITIAL.
+      DELETE lt_report WHERE vaplz NOT IN is_parameter-r_vaplz.
+    ENDIF.
+    IF is_parameter-r_kostl IS NOT INITIAL.
+      DELETE lt_report WHERE kostl NOT IN is_parameter-r_kostl.
+    ENDIF.
+    IF is_parameter-r_ilart IS NOT INITIAL.
+      DELETE lt_report WHERE ilart NOT IN is_parameter-r_ilart.
+    ENDIF.
+
+    CHECK lt_report IS NOT INITIAL.
+
+    SORT lt_report by aufnr
+                      wppos ASCENDING.
+
+    DELETE ADJACENT DUPLICATES FROM lt_report
+      COMPARING aufnr.
+
+    "--------------------------------------------------------------------
+    " Authority check
+    "--------------------------------------------------------------------
+    DATA lt_report_auth TYPE STANDARD TABLE OF zzi_a2r_wo_report
+                         WITH EMPTY KEY.
+
+    LOOP AT lt_report INTO DATA(ls_auth).
+      AUTHORITY-CHECK OBJECT 'I_IWERK'
+        ID 'TCD'   FIELD 'ZA2R_WO_CONF'
+        ID 'IWERK' FIELD ls_auth-iwerk.
+      IF sy-subrc = 0.
+        APPEND ls_auth TO lt_report_auth.
+      ELSE.
+        gv_missing_auth = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    lt_report = lt_report_auth.
+    CHECK lt_report IS NOT INITIAL.
+
+    "--------------------------------------------------------------------
+    " Map into export structures
+    "--------------------------------------------------------------------
+    DATA lt_aufk      TYPE STANDARD TABLE OF ts_aufk  WITH EMPTY KEY.
+    DATA lt_afih      TYPE STANDARD TABLE OF ts_afih  WITH EMPTY KEY.
+    DATA lt_afko      TYPE STANDARD TABLE OF ts_afko  WITH EMPTY KEY.
+    DATA lt_afru      TYPE STANDARD TABLE OF ts_afru  WITH EMPTY KEY.
+    DATA lt_mhio      TYPE STANDARD TABLE OF ts_mhio  WITH EMPTY KEY.
+    DATA lt_mhis      TYPE STANDARD TABLE OF ts_mhis  WITH EMPTY KEY.
+    DATA lt_iloa      TYPE STANDARD TABLE OF ts_iloa  WITH EMPTY KEY.
+    DATA lt_t001w     TYPE STANDARD TABLE OF ts_t001w WITH EMPTY KEY.
+    DATA lt_jcds_teco TYPE STANDARD TABLE OF jcds     WITH EMPTY KEY.
+    DATA lt_jcds_rel  TYPE STANDARD TABLE OF jcds     WITH EMPTY KEY.
+
+    LOOP AT lt_report INTO DATA(ls_row).
+
+      "--- AUFK ---
+      APPEND VALUE ts_aufk(
+        aufnr = ls_row-aufnr
+        auart = ls_row-auart
+        erdat = ls_row-erdat
+        idat2 = ls_row-idat2
+        vaplz = ls_row-vaplz
+        kostl = ls_row-kostl
+        objnr = ls_row-objnr
+        werks = ls_row-werks
+        ktext = ls_row-ktext
+        ernam = ls_row-ernam ) TO lt_aufk.
+
+      "--- AFIH ---
+      APPEND VALUE ts_afih(
+        aufnr     = ls_row-aufnr
+        iwerk     = ls_row-iwerk
+        ingpr     = ls_row-ingpr
+        priok     = ls_row-priok
+        ilart     = ls_row-ilart
+        addat     = ls_row-addat
+        lacd_date = ls_row-lacd_date ) TO lt_afih.
+
+      "--- AFKO ---
+      APPEND VALUE ts_afko(
+        aufnr = ls_row-aufnr
+        gstri = ls_row-gstri
+        getri = ls_row-getri
+        gstrs = ls_row-gstrs
+        gltrs = ls_row-gltrs ) TO lt_afko.
+
+      "--- AFRU (only if confirmation exists) ---
+      IF ls_row-budat IS NOT INITIAL.
+        APPEND VALUE ts_afru(
+          aufnr = ls_row-aufnr
+          budat = ls_row-budat
+          ernam = ls_row-conf_ernam ) TO lt_afru.
+      ENDIF.
+
+      "--- MHIO (only if order came from a maintenance plan) ---
+      IF ls_row-warpl IS NOT INITIAL.
+        APPEND VALUE ts_mhio(
+          warpl = ls_row-warpl
+          abnum = ls_row-abnum
+          wppos = ls_row-wppos
+          aufnr = ls_row-aufnr ) TO lt_mhio.
+      ENDIF.
+
+      "--- MHIS — deduplicate by warpl + abnum ---
+      IF ls_row-warpl IS NOT INITIAL.
+        READ TABLE lt_mhis WITH KEY warpl = ls_row-warpl
+                                    abnum = ls_row-abnum
+             TRANSPORTING NO FIELDS.
+        IF sy-subrc <> 0.
+          APPEND VALUE ts_mhis(
+            warpl = ls_row-warpl
+            abnum = ls_row-abnum
+            zaehl = ls_row-zaehl
+            nplda = ls_row-nplda ) TO lt_mhis.
+        ENDIF.
+      ENDIF.
+
+      "--- ILOA ---
+      APPEND VALUE ts_iloa(
+        tplnr = ls_row-tplnr ) TO lt_iloa.
+
+      "--- T001W — deduplicate by plant ---
+      READ TABLE lt_t001w WITH KEY werks = ls_row-werks
+           TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        APPEND VALUE ts_t001w(
+          werks = ls_row-werks
+          name1 = ls_row-werks_name ) TO lt_t001w.
+      ENDIF.
+
+      "--- JCDS TECO ---
+      IF ls_row-teco_udate IS NOT INITIAL.
+        APPEND VALUE jcds(
+          objnr = ls_row-objnr
+          stat  = 'I0045'
+          udate = ls_row-teco_udate
+          usnam = ls_row-teco_usnam ) TO lt_jcds_teco.
+      ENDIF.
+
+      "--- JCDS REL ---
+      IF ls_row-rel_udate IS NOT INITIAL.
+        APPEND VALUE jcds(
+          objnr = ls_row-objnr
+          stat  = 'I0002'
+          udate = ls_row-rel_udate
+          usnam = ls_row-rel_usnam ) TO lt_jcds_rel.
+      ENDIF.
+
+    ENDLOOP.
+
+    "--------------------------------------------------------------------
+    " Export
+    "--------------------------------------------------------------------
+    et_aufk      = lt_aufk.
+    et_afih      = lt_afih.
+    et_afko      = lt_afko.
+    et_afru      = lt_afru.
+    et_mhio      = lt_mhio.
+    et_mhis      = lt_mhis.
+    et_iloa      = lt_iloa.
+    et_t001w     = lt_t001w.
+    et_jcds_teco = lt_jcds_teco.
+    et_jcds_rel  = lt_jcds_rel.
+
+  ENDMETHOD.
