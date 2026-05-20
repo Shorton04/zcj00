@@ -1,346 +1,244 @@
-METHOD build_data.
-  DATA: lt_aufk        TYPE STANDARD TABLE OF ts_aufk,
-        lt_afih        TYPE STANDARD TABLE OF ts_afih,
-        lt_afko        TYPE STANDARD TABLE OF ts_afko,
-        lt_afru        TYPE STANDARD TABLE OF ts_afru,
-        lt_jcds        TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
-        lt_jcds_rel    TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
-        lt_jcds_teco   TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
-        lt_jcds_tmp    TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
-        lt_jcds_stat   TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds NOT jcds
-        lt_mhio        TYPE STANDARD TABLE OF ts_mhio,
-        lt_mhis        TYPE STANDARD TABLE OF ts_mhis,
-        lt_iloa        TYPE STANDARD TABLE OF ts_iloa,
-        lt_t001w       TYPE STANDARD TABLE OF ts_t001w,
-        lt_tj02t       TYPE STANDARD TABLE OF tj02t,
-        lt_tj02t_i     TYPE STANDARD TABLE OF tj02t,
-        lt_tj02t_e     TYPE STANDARD TABLE OF tj02t,
-        lt_tj02        TYPE STANDARD TABLE OF tj02,
-        ls_aufk        TYPE ts_aufk,
-        ls_afih        TYPE ts_afih,
-        ls_afko        TYPE ts_afko,
-        ls_afru        TYPE ts_afru,
-        ls_mhio        TYPE ts_mhio,
-        ls_mhis        TYPE ts_mhis,
-        ls_iloa        TYPE ts_iloa,
-        ls_t001w       TYPE ts_t001w,
-        ls_tj02t       TYPE tj02t,
-        ls_jcds        TYPE ts_jcds,                     "← ts_jcds NOT jcds
-        ls_result      TYPE ts_result,
-        lv_objnr       TYPE jsto-objnr,
-        lv_incl_status TYPE flag,
-        lv_excl_status TYPE flag,
-        rt_tj02t       TYPE RANGE OF tj02t-istat,
-        lrs_tj02t      LIKE LINE OF rt_tj02t.
+METHOD get_data.
 
-  CLEAR et_result.
+  CLEAR: et_aufk, et_afih,      et_afko,
+         et_afru, et_jcds_rel,  et_jcds_teco,
+         et_jcds, et_mhio,      et_mhis,
+         et_iloa, et_t001w,     gv_missing_auth.
 
-  lt_aufk      = it_aufk.
-  lt_afih      = it_afih.
-  lt_afko      = it_afko.
-  lt_afru      = it_afru.
-  lt_jcds      = it_jcds.
-  lt_mhio      = it_mhio.
-  lt_mhis      = it_mhis.
-  lt_iloa      = it_iloa.
-  lt_t001w     = it_t001w.
-  lt_jcds_rel  = it_jcds_rel.
-  lt_jcds_teco = it_jcds_teco.
+  DATA lt_report    TYPE STANDARD TABLE OF zi_wo_report WITH EMPTY KEY.
+  DATA lt_jcds      TYPE STANDARD TABLE OF ts_jcds WITH EMPTY KEY.
+  DATA lt_jcds_teco TYPE STANDARD TABLE OF ts_jcds WITH EMPTY KEY.
+  DATA lt_jcds_rel  TYPE STANDARD TABLE OF ts_jcds WITH EMPTY KEY.
+  DATA lt_aufk      TYPE STANDARD TABLE OF ts_aufk  WITH EMPTY KEY.
+  DATA lt_afih      TYPE STANDARD TABLE OF ts_afih  WITH EMPTY KEY.
+  DATA lt_afko      TYPE STANDARD TABLE OF ts_afko  WITH EMPTY KEY.
+  DATA lt_afru      TYPE STANDARD TABLE OF ts_afru  WITH EMPTY KEY.
+  DATA lt_mhio      TYPE STANDARD TABLE OF ts_mhio  WITH EMPTY KEY.
+  DATA lt_mhis      TYPE STANDARD TABLE OF ts_mhis  WITH EMPTY KEY.
+  DATA lt_iloa      TYPE STANDARD TABLE OF ts_iloa  WITH EMPTY KEY.
+  DATA lt_t001w     TYPE STANDARD TABLE OF ts_t001w WITH EMPTY KEY.
 
   "--------------------------------------------------------------------
-  " Sort for BINARY SEARCH
+  " CDS SELECT — used only for filtering and mapping core fields
+  " JCDS TECO/REL will be fetched separately below
   "--------------------------------------------------------------------
-  SORT: lt_aufk      BY aufnr,
-        lt_afih      BY aufnr,
-        lt_afko      BY aufnr,
-        lt_afru      BY aufnr,
-        lt_mhio      BY aufnr,
-        lt_mhis      BY warpl abnum,
-        lt_iloa      BY iloan,
-        lt_t001w     BY werks,
-        lt_jcds      BY objnr stat,
-        lt_jcds_rel  BY objnr,
-        lt_jcds_teco BY objnr.
+  SELECT aufnr, auart, erdat, idat2, vaplz, kostl, objnr,
+         werks, werks_name, ktext, ernam,
+         iwerk, ingpr, priok, ilart, addat, lacd_date, tplnr,
+         gstri, getri, gstrs, gltrs,
+         warpl, abnum, wppos, zaehl, nplda,
+         budat, conf_ernam
+    FROM zi_wo_report
+    INTO TABLE @lt_report
+    WHERE iwerk IN @is_parameter-r_iwerk.
+
+  CHECK lt_report IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " Resolve include/exclude status filter texts
+  " Optional range filters
   "--------------------------------------------------------------------
-  IF is_parameter-r_stati IS NOT INITIAL.
-    SELECT * FROM tj02t INTO TABLE lt_tj02t_i
-      WHERE txt04 IN is_parameter-r_stati
-        AND spras = 'E'.
+  IF is_parameter-r_aufnr IS NOT INITIAL.
+    DELETE lt_report WHERE aufnr NOT IN is_parameter-r_aufnr.
+  ENDIF.
+  IF is_parameter-r_auart IS NOT INITIAL.
+    DELETE lt_report WHERE auart NOT IN is_parameter-r_auart.
+  ENDIF.
+  IF is_parameter-r_erdat IS NOT INITIAL.
+    DELETE lt_report WHERE erdat NOT IN is_parameter-r_erdat.
+  ENDIF.
+  IF is_parameter-r_getri IS NOT INITIAL.
+    DELETE lt_report WHERE getri NOT IN is_parameter-r_getri.
+  ENDIF.
+  IF is_parameter-r_gstri IS NOT INITIAL.
+    DELETE lt_report WHERE gstri NOT IN is_parameter-r_gstri.
+  ENDIF.
+  IF is_parameter-r_ingpr IS NOT INITIAL.
+    DELETE lt_report WHERE ingpr NOT IN is_parameter-r_ingpr.
+  ENDIF.
+  IF is_parameter-r_priok IS NOT INITIAL.
+    DELETE lt_report WHERE priok NOT IN is_parameter-r_priok.
+  ENDIF.
+  IF is_parameter-r_tplnr IS NOT INITIAL.
+    DELETE lt_report WHERE tplnr NOT IN is_parameter-r_tplnr.
+  ENDIF.
+  IF is_parameter-r_warpl IS NOT INITIAL.
+    DELETE lt_report WHERE warpl NOT IN is_parameter-r_warpl.
+  ENDIF.
+  IF is_parameter-r_nplda IS NOT INITIAL.
+    DELETE lt_report WHERE nplda NOT IN is_parameter-r_nplda.
+  ENDIF.
+  IF is_parameter-r_idat2 IS NOT INITIAL.
+    DELETE lt_report WHERE idat2 NOT IN is_parameter-r_idat2.
+  ENDIF.
+  IF is_parameter-r_vaplz IS NOT INITIAL.
+    DELETE lt_report WHERE vaplz NOT IN is_parameter-r_vaplz.
+  ENDIF.
+  IF is_parameter-r_kostl IS NOT INITIAL.
+    DELETE lt_report WHERE kostl NOT IN is_parameter-r_kostl.
+  ENDIF.
+  IF is_parameter-r_ilart IS NOT INITIAL.
+    DELETE lt_report WHERE ilart NOT IN is_parameter-r_ilart.
   ENDIF.
 
-  IF is_parameter-r_state IS NOT INITIAL.
-    SELECT * FROM tj02t INTO TABLE lt_tj02t_e
-      WHERE txt04 IN is_parameter-r_state
-        AND spras = 'E'.
-  ENDIF.
+  CHECK lt_report IS NOT INITIAL.
 
-  LOOP AT lt_tj02t_i INTO DATA(ls_tj02t_tmp).
-    lrs_tj02t-sign   = 'I'.
-    lrs_tj02t-option = 'EQ'.
-    TRANSLATE ls_tj02t_tmp-istat TO UPPER CASE.
-    lrs_tj02t-low = ls_tj02t_tmp-istat.
-    APPEND lrs_tj02t TO rt_tj02t.
+  "--------------------------------------------------------------------
+  " Deduplicate — one row per work order
+  "--------------------------------------------------------------------
+  SORT lt_report BY aufnr wppos ASCENDING.
+  DELETE ADJACENT DUPLICATES FROM lt_report COMPARING aufnr.
+
+  CHECK lt_report IS NOT INITIAL.
+
+  "--------------------------------------------------------------------
+  " Authority check
+  "--------------------------------------------------------------------
+  DATA lt_report_auth TYPE STANDARD TABLE OF zi_wo_report
+                       WITH EMPTY KEY.
+
+  LOOP AT lt_report INTO DATA(ls_auth).
+    AUTHORITY-CHECK OBJECT 'I_IWERK'
+      ID 'TCD'   FIELD 'ZIW123'
+      ID 'IWERK' FIELD ls_auth-iwerk.
+    IF sy-subrc = 0.
+      APPEND ls_auth TO lt_report_auth.
+    ELSE.
+      gv_missing_auth = abap_true.
+    ENDIF.
   ENDLOOP.
 
-  "--------------------------------------------------------------------
-  " Fetch TJ02T once for all statuses in JCDS
-  "--------------------------------------------------------------------
-  IF lt_jcds IS NOT INITIAL.
-    lt_jcds_stat = lt_jcds.
-    SORT lt_jcds_stat BY stat.
-    DELETE ADJACENT DUPLICATES FROM lt_jcds_stat COMPARING stat.
-
-    SELECT * FROM tj02t INTO TABLE lt_tj02t
-      FOR ALL ENTRIES IN lt_jcds_stat
-        WHERE istat = lt_jcds_stat-stat
-          AND spras IN ( sy-langu, 'E' ).
-
-    SORT lt_tj02t BY spras istat.
-  ENDIF.
+  lt_report = lt_report_auth.
+  CHECK lt_report IS NOT INITIAL.
 
   "--------------------------------------------------------------------
-  " Main loop — one entry per work order
+  " Map CDS result into export structures
   "--------------------------------------------------------------------
-  LOOP AT lt_aufk INTO ls_aufk.
-
-    CLEAR: ls_result,      ls_afih,
-           ls_afko,        ls_afru,
-           ls_iloa,        ls_t001w,
-           lt_jcds_tmp,    lt_tj02,
-           lv_incl_status, lv_excl_status.
+  LOOP AT lt_report INTO DATA(ls_row).
 
     "--- AUFK ---
-    ls_result-aufnr_wo         = ls_aufk-aufnr.
-    ls_result-auart            = ls_aufk-auart.
-    ls_result-idat2            = ls_aufk-idat2.
-    ls_result-vaplz            = ls_aufk-vaplz.
-    ls_result-kostl_wo         = ls_aufk-kostl.
-    ls_result-ktext            = ls_aufk-ktext.
-    ls_result-werks            = ls_aufk-werks.
-    ls_result-ernam_entered_by = ls_aufk-ernam.
-    ls_result-erdat_created_on = ls_aufk-erdat.
-
-    "--- T001W ---
-    READ TABLE lt_t001w INTO ls_t001w
-      WITH KEY werks = ls_aufk-werks BINARY SEARCH.
-    IF sy-subrc = 0.
-      ls_result-werks_dec = ls_t001w-name1.
-    ENDIF.
+    APPEND VALUE ts_aufk(
+      aufnr = ls_row-aufnr
+      auart = ls_row-auart
+      erdat = ls_row-erdat
+      idat2 = ls_row-idat2
+      vaplz = ls_row-vaplz
+      kostl = ls_row-kostl
+      objnr = ls_row-objnr
+      werks = ls_row-werks
+      ktext = ls_row-ktext
+      ernam = ls_row-ernam ) TO lt_aufk.
 
     "--- AFIH ---
-    READ TABLE lt_afih INTO ls_afih
-      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
-    CHECK sy-subrc = 0.
-
-    ls_result-priok          = ls_afih-priok.
-    ls_result-addat          = ls_afih-addat.
-    ls_result-ingpr          = ls_afih-ingpr.
-    ls_result-ilart          = ls_afih-ilart.
-    ls_result-final_due_date = ls_afih-lacd_date.
-
-    "--- ILOA ---
-    READ TABLE lt_iloa INTO ls_iloa
-      WITH KEY iloan = ls_afih-iloan BINARY SEARCH.
-    IF sy-subrc = 0.
-      CALL FUNCTION 'CONVERSION_EXIT_TPLNR_OUTPUT'
-        EXPORTING
-          input  = ls_iloa-tplnr
-        IMPORTING
-          output = ls_result-tplnr.
-    ENDIF.
+    APPEND VALUE ts_afih(
+      aufnr     = ls_row-aufnr
+      iwerk     = ls_row-iwerk
+      ingpr     = ls_row-ingpr
+      priok     = ls_row-priok
+      ilart     = ls_row-ilart
+      addat     = ls_row-addat
+      lacd_date = ls_row-lacd_date ) TO lt_afih.
 
     "--- AFKO ---
-    READ TABLE lt_afko INTO ls_afko
-      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
-    CHECK sy-subrc = 0.
+    APPEND VALUE ts_afko(
+      aufnr = ls_row-aufnr
+      gstri = ls_row-gstri
+      getri = ls_row-getri
+      gstrs = ls_row-gstrs
+      gltrs = ls_row-gltrs ) TO lt_afko.
 
-    ls_result-getri = ls_afko-getri.
-    ls_result-gstri = ls_afko-gstri.
-    ls_result-gstrs = ls_afko-gstrs.
-    ls_result-gltrs = ls_afko-gltrs.
+    "--- AFRU ---
+    IF ls_row-budat IS NOT INITIAL.
+      APPEND VALUE ts_afru(
+        aufnr = ls_row-aufnr
+        budat = ls_row-budat
+        ernam = ls_row-conf_ernam ) TO lt_afru.
+    ENDIF.
 
-    "--- MHIO/MHIS (PMO only, blank for NPMO) ---
-    READ TABLE lt_mhio INTO ls_mhio
-      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
-    IF sy-subrc = 0.
-      ls_result-warpl = ls_mhio-warpl.
-      ls_result-abnum = ls_mhio-abnum.
+    "--- MHIO (PMO only) ---
+    IF ls_row-warpl IS NOT INITIAL.
+      APPEND VALUE ts_mhio(
+        warpl = ls_row-warpl
+        abnum = ls_row-abnum
+        wppos = ls_row-wppos
+        aufnr = ls_row-aufnr ) TO lt_mhio.
+    ENDIF.
 
-      READ TABLE lt_mhis INTO ls_mhis
-        WITH KEY warpl = ls_mhio-warpl
-                 abnum = ls_mhio-abnum BINARY SEARCH.
-      IF sy-subrc = 0.
-        ls_result-nplda = ls_mhis-nplda.
-        ls_result-zaehl = ls_mhis-zaehl.
+    "--- MHIS — deduplicate ---
+    IF ls_row-warpl IS NOT INITIAL.
+      READ TABLE lt_mhis WITH KEY warpl = ls_row-warpl
+                                  abnum = ls_row-abnum
+           TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        APPEND VALUE ts_mhis(
+          warpl = ls_row-warpl
+          abnum = ls_row-abnum
+          zaehl = ls_row-zaehl
+          nplda = ls_row-nplda ) TO lt_mhis.
       ENDIF.
     ENDIF.
 
-    "--------------------------------------------------------------------
-    " System Status — collect all active I-statuses for this order
-    "--------------------------------------------------------------------
-    LOOP AT lt_jcds INTO ls_jcds
-      WHERE objnr = ls_aufk-objnr.
-      IF ls_jcds-stat+0(1) = 'I'.
-        APPEND ls_jcds TO lt_jcds_tmp.
-      ENDIF.
-    ENDLOOP.
+    "--- ILOA ---
+    APPEND VALUE ts_iloa(
+      tplnr = ls_row-tplnr ) TO lt_iloa.
 
-    IF lt_jcds_tmp IS NOT INITIAL.
-
-      SELECT * FROM tj02 INTO TABLE lt_tj02
-        FOR ALL ENTRIES IN lt_jcds_tmp
-          WHERE istat = lt_jcds_tmp-stat
-            AND nodis = abap_false.
-
-      LOOP AT lt_jcds_tmp INTO ls_jcds.
-
-        CLEAR ls_tj02t.
-
-        "--- Skip display-suppressed statuses ---
-        READ TABLE lt_tj02 WITH KEY istat = ls_jcds-stat
-             TRANSPORTING NO FIELDS.
-        CHECK sy-subrc = 0.
-
-        "--- Include status filter ---
-        IF is_parameter-r_stati IS NOT INITIAL.
-          READ TABLE lt_tj02t_i WITH KEY istat = ls_jcds-stat
-               TRANSPORTING NO FIELDS.
-          IF sy-subrc = 0.
-            lv_incl_status = abap_true.
-          ENDIF.
-        ELSE.
-          lv_incl_status = abap_true.
-        ENDIF.
-
-        "--- Exclude status filter ---
-        IF is_parameter-r_state IS NOT INITIAL.
-          READ TABLE lt_tj02t_e WITH KEY istat = ls_jcds-stat
-               TRANSPORTING NO FIELDS.
-          IF sy-subrc = 0.
-            lv_excl_status = abap_true.
-            EXIT.
-          ENDIF.
-        ENDIF.
-
-        "--- Status text — logon language first, English fallback ---
-        READ TABLE lt_tj02t INTO ls_tj02t
-          WITH KEY spras = sy-langu
-                   istat = ls_jcds-stat BINARY SEARCH.
-        IF sy-subrc <> 0.
-          READ TABLE lt_tj02t INTO ls_tj02t
-            WITH KEY spras = 'E'
-                     istat = ls_jcds-stat BINARY SEARCH.
-        ENDIF.
-
-        CHECK ls_tj02t-txt04 IS NOT INITIAL.
-
-        "--- Build concatenated status string ---
-        IF ls_result-txt04 IS INITIAL.
-          ls_result-txt04 = ls_tj02t-txt04.
-        ELSE.
-          CONCATENATE ls_result-txt04
-                      ls_tj02t-txt04
-                 INTO ls_result-txt04
-            SEPARATED BY '/'.
-        ENDIF.
-
-      ENDLOOP.
-
-    ELSE.
-      "--- No statuses found — treat as include satisfied
-      "    so order still appears if no filter entered    ---
-      IF is_parameter-r_stati IS INITIAL.
-        lv_incl_status = abap_true.
-      ENDIF.
+    "--- T001W — deduplicate ---
+    READ TABLE lt_t001w WITH KEY werks = ls_row-werks
+         TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0.
+      APPEND VALUE ts_t001w(
+        werks = ls_row-werks
+        name1 = ls_row-werks_name ) TO lt_t001w.
     ENDIF.
-
-    "--- Apply status filter result ---
-    CHECK lv_incl_status = abap_true
-      AND lv_excl_status = abap_false.
-
-    "--------------------------------------------------------------------
-    " AFRU — Confirmation date and user
-    "--------------------------------------------------------------------
-    READ TABLE lt_afru INTO ls_afru
-      WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
-    IF sy-subrc = 0.
-      ls_result-budat = ls_afru-budat.
-      ls_result-ernam = ls_afru-ernam.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " Ref <> Act Start
-    "--------------------------------------------------------------------
-    IF ls_afih-addat <> ls_afko-gstri.
-      ls_result-ref_act_start = 'Yes'.
-    ELSE.
-      ls_result-ref_act_start = 'No'.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " Act <> Planned
-    "--------------------------------------------------------------------
-    IF ls_afko-getri IS INITIAL
-      OR ls_afko-getri > ls_result-nplda.
-      ls_result-act_planned = 'Yes'.
-    ELSE.
-      ls_result-act_planned = 'No'.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " CNF <> Act End
-    "--------------------------------------------------------------------
-    CLEAR ls_result-cnf_act_end.
-    IF ls_afru-budat    IS NOT INITIAL
-      AND ls_afko-getri IS NOT INITIAL.
-      ls_result-cnf_act_end = ls_afru-budat - ls_afko-getri.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " TECO <> Actual End
-    "--------------------------------------------------------------------
-    CLEAR ls_result-teco_actual_end.
-    IF ls_aufk-idat2    IS NOT INITIAL
-      AND ls_afko-getri IS NOT INITIAL.
-      ls_result-teco_actual_end = ls_aufk-idat2 - ls_afko-getri.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " TECO By — latest JCDS I0045
-    "--------------------------------------------------------------------
-    CLEAR lt_jcds_tmp.
-    LOOP AT lt_jcds_teco INTO ls_jcds
-      WHERE objnr = ls_aufk-objnr.
-      APPEND ls_jcds TO lt_jcds_tmp.
-    ENDLOOP.
-    SORT lt_jcds_tmp BY udate DESCENDING
-                        utime DESCENDING.
-    READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
-    IF sy-subrc = 0.
-      ls_result-usnam = ls_jcds-usnam.
-    ENDIF.
-
-    "--------------------------------------------------------------------
-    " Released By / On — latest JCDS I0002
-    "--------------------------------------------------------------------
-    CLEAR lt_jcds_tmp.
-    LOOP AT lt_jcds_rel INTO ls_jcds
-      WHERE objnr = ls_aufk-objnr.
-      APPEND ls_jcds TO lt_jcds_tmp.
-    ENDLOOP.
-    SORT lt_jcds_tmp BY udate DESCENDING
-                        utime DESCENDING.
-    READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
-    IF sy-subrc = 0.
-      ls_result-usnam_rel_by = ls_jcds-usnam.
-      ls_result-udate        = ls_jcds-udate.
-    ENDIF.
-
-    APPEND ls_result TO et_result.
 
   ENDLOOP.
+
+  "--------------------------------------------------------------------
+  " Fetch ALL JCDS records directly from DB using AUFK objnr
+  " This replaces mapping from CDS which only had latest per stat
+  "--------------------------------------------------------------------
+  IF lt_aufk IS NOT INITIAL.
+
+    "--- All active statuses (for TXT04 display) ---
+    SELECT objnr, stat, udate, utime, usnam, inact
+      FROM jcds
+      INNER JOIN @lt_aufk AS aufk ON aufk~objnr = jcds~objnr
+      INTO CORRESPONDING FIELDS OF TABLE @lt_jcds
+      WHERE inact = @abap_false.
+
+    "--- TECO history (I0045) — all records, BUILD_DATA picks latest ---
+    LOOP AT lt_jcds INTO DATA(ls_jcds_all).
+      IF ls_jcds_all-stat = 'I0045'.
+        APPEND VALUE ts_jcds(
+          objnr = ls_jcds_all-objnr
+          stat  = ls_jcds_all-stat
+          udate = ls_jcds_all-udate
+          utime = ls_jcds_all-utime
+          usnam = ls_jcds_all-usnam ) TO lt_jcds_teco.
+      ELSEIF ls_jcds_all-stat = 'I0002'.
+        APPEND VALUE ts_jcds(
+          objnr = ls_jcds_all-objnr
+          stat  = ls_jcds_all-stat
+          udate = ls_jcds_all-udate
+          utime = ls_jcds_all-utime
+          usnam = ls_jcds_all-usnam ) TO lt_jcds_rel.
+      ENDIF.
+    ENDLOOP.
+
+  ENDIF.
+
+  "--------------------------------------------------------------------
+  " Export
+  "--------------------------------------------------------------------
+  et_aufk      = lt_aufk.
+  et_afih      = lt_afih.
+  et_afko      = lt_afko.
+  et_afru      = lt_afru.
+  et_jcds      = lt_jcds.
+  et_mhio      = lt_mhio.
+  et_mhis      = lt_mhis.
+  et_iloa      = lt_iloa.
+  et_t001w     = lt_t001w.
+  et_jcds_teco = lt_jcds_teco.
+  et_jcds_rel  = lt_jcds_rel.
 
 ENDMETHOD.
