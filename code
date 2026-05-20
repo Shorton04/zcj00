@@ -3,10 +3,11 @@ METHOD build_data.
         lt_afih        TYPE STANDARD TABLE OF ts_afih,
         lt_afko        TYPE STANDARD TABLE OF ts_afko,
         lt_afru        TYPE STANDARD TABLE OF ts_afru,
-        lt_jcds        TYPE STANDARD TABLE OF ts_jcds,
-        lt_jcds_rel    TYPE STANDARD TABLE OF ts_jcds,
-        lt_jcds_teco   TYPE STANDARD TABLE OF ts_jcds,
-        lt_jcds_tmp    TYPE STANDARD TABLE OF ts_jcds,
+        lt_jcds        TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
+        lt_jcds_rel    TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
+        lt_jcds_teco   TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
+        lt_jcds_tmp    TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds
+        lt_jcds_stat   TYPE STANDARD TABLE OF ts_jcds,   "← ts_jcds NOT jcds
         lt_mhio        TYPE STANDARD TABLE OF ts_mhio,
         lt_mhis        TYPE STANDARD TABLE OF ts_mhis,
         lt_iloa        TYPE STANDARD TABLE OF ts_iloa,
@@ -15,8 +16,6 @@ METHOD build_data.
         lt_tj02t_i     TYPE STANDARD TABLE OF tj02t,
         lt_tj02t_e     TYPE STANDARD TABLE OF tj02t,
         lt_tj02        TYPE STANDARD TABLE OF tj02,
-        lt_status      TYPE STANDARD TABLE OF jstat,
-        lt_status_tmp  TYPE STANDARD TABLE OF jstat,
         ls_aufk        TYPE ts_aufk,
         ls_afih        TYPE ts_afih,
         ls_afko        TYPE ts_afko,
@@ -26,8 +25,7 @@ METHOD build_data.
         ls_iloa        TYPE ts_iloa,
         ls_t001w       TYPE ts_t001w,
         ls_tj02t       TYPE tj02t,
-        ls_jcds        TYPE jcds,
-        ls_status      TYPE jstat,
+        ls_jcds        TYPE ts_jcds,                     "← ts_jcds NOT jcds
         ls_result      TYPE ts_result,
         lv_objnr       TYPE jsto-objnr,
         lv_incl_status TYPE flag,
@@ -41,7 +39,7 @@ METHOD build_data.
   lt_afih      = it_afih.
   lt_afko      = it_afko.
   lt_afru      = it_afru.
-  lt_jcds      = it_jcds.        "← ALL active statuses
+  lt_jcds      = it_jcds.
   lt_mhio      = it_mhio.
   lt_mhis      = it_mhis.
   lt_iloa      = it_iloa.
@@ -60,7 +58,7 @@ METHOD build_data.
         lt_mhis      BY warpl abnum,
         lt_iloa      BY iloan,
         lt_t001w     BY werks,
-        lt_jcds      BY objnr stat,   "← sort for fast WHERE loop
+        lt_jcds      BY objnr stat,
         lt_jcds_rel  BY objnr,
         lt_jcds_teco BY objnr.
 
@@ -88,11 +86,9 @@ METHOD build_data.
   ENDLOOP.
 
   "--------------------------------------------------------------------
-  " Fetch TJ02T for ALL statuses found in JCDS — done once here
+  " Fetch TJ02T once for all statuses in JCDS
   "--------------------------------------------------------------------
   IF lt_jcds IS NOT INITIAL.
-    "--- Get unique stats to avoid duplicate SELECT ---
-    DATA lt_jcds_stat TYPE STANDARD TABLE OF jcds WITH EMPTY KEY.
     lt_jcds_stat = lt_jcds.
     SORT lt_jcds_stat BY stat.
     DELETE ADJACENT DUPLICATES FROM lt_jcds_stat COMPARING stat.
@@ -110,11 +106,11 @@ METHOD build_data.
   "--------------------------------------------------------------------
   LOOP AT lt_aufk INTO ls_aufk.
 
-    CLEAR: ls_result,   ls_afih,
-           ls_afko,     ls_afru,
-           ls_iloa,     ls_t001w,
-           lt_jcds_tmp, lt_status,
-           lt_status_tmp.
+    CLEAR: ls_result,      ls_afih,
+           ls_afko,        ls_afru,
+           ls_iloa,        ls_t001w,
+           lt_jcds_tmp,    lt_tj02,
+           lv_incl_status, lv_excl_status.
 
     "--- AUFK ---
     ls_result-aufnr_wo         = ls_aufk-aufnr.
@@ -166,7 +162,7 @@ METHOD build_data.
     ls_result-gstrs = ls_afko-gstrs.
     ls_result-gltrs = ls_afko-gltrs.
 
-    "--- MHIO/MHIS (PMO only) ---
+    "--- MHIO/MHIS (PMO only, blank for NPMO) ---
     READ TABLE lt_mhio INTO ls_mhio
       WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
     IF sy-subrc = 0.
@@ -183,24 +179,17 @@ METHOD build_data.
     ENDIF.
 
     "--------------------------------------------------------------------
-    " System Status — build TXT04 string from ALL active statuses
-    " Uses lt_jcds (all statuses) instead of only TECO/REL
+    " System Status — collect all active I-statuses for this order
     "--------------------------------------------------------------------
-    CLEAR: lv_incl_status, lv_excl_status,
-           lt_status,      lt_status_tmp,
-           lt_tj02,        lt_jcds_tmp.
-
-    "--- Collect all active statuses for this order from JCDS ---
     LOOP AT lt_jcds INTO ls_jcds
       WHERE objnr = ls_aufk-objnr.
-      "--- Only system statuses (prefix I) ---
       IF ls_jcds-stat+0(1) = 'I'.
         APPEND ls_jcds TO lt_jcds_tmp.
       ENDIF.
     ENDLOOP.
 
     IF lt_jcds_tmp IS NOT INITIAL.
-      "--- Get TJ02 to check nodis flag (display suppressed) ---
+
       SELECT * FROM tj02 INTO TABLE lt_tj02
         FOR ALL ENTRIES IN lt_jcds_tmp
           WHERE istat = lt_jcds_tmp-stat
@@ -210,7 +199,7 @@ METHOD build_data.
 
         CLEAR ls_tj02t.
 
-        "--- Skip if display suppressed ---
+        "--- Skip display-suppressed statuses ---
         READ TABLE lt_tj02 WITH KEY istat = ls_jcds-stat
              TRANSPORTING NO FIELDS.
         CHECK sy-subrc = 0.
@@ -236,7 +225,7 @@ METHOD build_data.
           ENDIF.
         ENDIF.
 
-        "--- Get status text (logon language first, fallback English) ---
+        "--- Status text — logon language first, English fallback ---
         READ TABLE lt_tj02t INTO ls_tj02t
           WITH KEY spras = sy-langu
                    istat = ls_jcds-stat BINARY SEARCH.
@@ -248,7 +237,7 @@ METHOD build_data.
 
         CHECK ls_tj02t-txt04 IS NOT INITIAL.
 
-        "--- Concatenate with / separator ---
+        "--- Build concatenated status string ---
         IF ls_result-txt04 IS INITIAL.
           ls_result-txt04 = ls_tj02t-txt04.
         ELSE.
@@ -259,14 +248,21 @@ METHOD build_data.
         ENDIF.
 
       ENDLOOP.
+
+    ELSE.
+      "--- No statuses found — treat as include satisfied
+      "    so order still appears if no filter entered    ---
+      IF is_parameter-r_stati IS INITIAL.
+        lv_incl_status = abap_true.
+      ENDIF.
     ENDIF.
 
-    "--- Skip if status filter not satisfied ---
+    "--- Apply status filter result ---
     CHECK lv_incl_status = abap_true
       AND lv_excl_status = abap_false.
 
     "--------------------------------------------------------------------
-    " AFRU — Confirmation
+    " AFRU — Confirmation date and user
     "--------------------------------------------------------------------
     READ TABLE lt_afru INTO ls_afru
       WITH KEY aufnr = ls_aufk-aufnr BINARY SEARCH.
