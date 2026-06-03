@@ -34,32 +34,35 @@ LOOP AT lt_wbs_car INTO ls_wbs.
   "----------------------------------------------------------
   " DERIVE WBS_UP using stufe from lt_wbs_car
   "----------------------------------------------------------
-  DATA lv_up_posid TYPE char24.
+  DATA lv_up_posid  TYPE char24.
   DATA lv_cur_stufe TYPE pstufe.
   DATA lv_posid_len TYPE i.
   CLEAR: lv_up_posid, lv_cur_stufe.
 
-  " Get stufe of current entry from lt_wbs_car
   lv_cur_stufe = ls_wbs-stufe.
   lv_posid_len = strlen( ls_wbs-posid ).
 
-  " Find parent = stufe - 1 whose posid is prefix of current
+  " First try to find parent in lt_wbs_car
   LOOP AT lt_wbs_car INTO DATA(ls_parent_wbs)
     WHERE stufe = lv_cur_stufe - 1.
-    DATA(lv_parent_len) = strlen( ls_parent_wbs-posid ).
-    IF ls_wbs-posid(lv_parent_len) = ls_parent_wbs-posid.
-      lv_up_posid = ls_parent_wbs-posid.
+    DATA(lv_parent_posid_clean) = ls_parent_wbs-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_parent_posid_clean WITH ''.
+    DATA(lv_parent_len) = strlen( lv_parent_posid_clean ).
+    IF ls_wbs-posid(lv_parent_len) = lv_parent_posid_clean.
+      lv_up_posid = lv_parent_posid_clean.
       EXIT.
     ENDIF.
   ENDLOOP.
 
-  " If not found in lt_wbs_car, fallback to it_wbs_items
+  " Fallback to it_wbs_items if not found in lt_wbs_car
   IF lv_up_posid IS INITIAL.
     LOOP AT it_wbs_items INTO DATA(ls_parent_esr)
       WHERE stufe = lv_cur_stufe - 1.
-      DATA(lv_esr_len) = strlen( ls_parent_esr-posid ).
-      IF ls_wbs-posid(lv_esr_len) = ls_parent_esr-posid.
-        lv_up_posid = ls_parent_esr-posid.
+      DATA(lv_esr_posid_clean) = ls_parent_esr-posid.
+      REPLACE ALL OCCURRENCES OF '.' IN lv_esr_posid_clean WITH ''.
+      DATA(lv_esr_len) = strlen( lv_esr_posid_clean ).
+      IF ls_wbs-posid(lv_esr_len) = lv_esr_posid_clean.
+        lv_up_posid = lv_esr_posid_clean.
         EXIT.
       ENDIF.
     ENDLOOP.
@@ -112,8 +115,8 @@ LOOP AT lt_wbs_car INTO ls_wbs.
   IF is_header-zunifier_proj = 'X'.
     CLEAR: ls_te_wbs, ls_extensionin.
 
-    ls_te_wbs-wbs_element        = ls_wbs-posid.
-    ls_te_wbs-zunifier_proj      = 'X'.
+    ls_te_wbs-wbs_element            = ls_wbs-posid.
+    ls_te_wbs-zunifier_proj          = 'X'.
 
     ls_extensionin-structure         = 'BAPI_TE_WBS_ELEMENT'.
     ls_extensionin-valuepart1        = ls_te_wbs.
