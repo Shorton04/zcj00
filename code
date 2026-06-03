@@ -1,41 +1,95 @@
 LOOP AT lt_wbs_car INTO ls_wbs.
 
   CLEAR ls_wbs_celement.
-  
-  " ... your field assignments ...
 
-  " Derive parent prefix from posid (e.g. PC000884023 -> PC00088402 is parent)
-  " Siblings share the same length and same characters up to last digit group
-  DATA lv_elem_len TYPE i.
-  DATA lv_parent_prefix TYPE char24.
-  
-  lv_elem_len = strlen( ls_wbs-posid ).
-  
-  " Find last sibling: same length, less than current posid
+  REPLACE ALL OCCURRENCES OF '.' IN ls_wbs-posid WITH ''.
+
+  "----------------------------------------------------------
+  " WBS ELEMENT
+  "----------------------------------------------------------
+  ls_wbs_celement-wbs_element = ls_wbs-posid.
+
+  "----------------------------------------------------------
+  " BASIC FIELDS
+  "----------------------------------------------------------
+  ls_wbs_celement-description      = ls_wbs-post1.
+  ls_wbs_celement-company_code     = is_header-bukrs.
+  ls_wbs_celement-profit_ctr       = is_header-prctr.
+  ls_wbs_celement-controlling_area = is_header-vkokr.
+  ls_wbs_celement-plant            = is_header-werks.
+
+  ls_wbs_celement-wbs_planning_element = abap_true.
+  ls_wbs_celement-inv_reason           = is_header-izwek.
+  ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
+  ls_wbs_celement-proj_type            = ls_wbs-prart.
+  ls_wbs_celement-responsible_no       = is_header-vernr.
+
+  ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+  ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+  ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+  ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+  ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
+  "----------------------------------------------------------
+  " DERIVE WBS_UP FROM POSID (strip last 2 chars)
+  "----------------------------------------------------------
+  DATA(lv_up_posid) = ls_wbs-posid.
+  DATA(lv_posid_len) = strlen( lv_up_posid ).
+  lv_up_posid = lv_up_posid(lv_posid_len - 2).
+
+  CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+    EXPORTING input  = lv_up_posid
+    IMPORTING output = lv_up_posid.
+
+  ls_wbs_celement-wbs_up = lv_up_posid.
+
+  "----------------------------------------------------------
+  " DERIVE WBS_LEFT (last sibling before current)
+  "----------------------------------------------------------
   DATA lv_insert_idx TYPE i.
   CLEAR lv_insert_idx.
 
   LOOP AT lt_wbs_celement INTO DATA(ls_check).
-    IF strlen( ls_check-wbs_element ) = lv_elem_len
+    IF strlen( ls_check-wbs_element ) = lv_posid_len
     AND ls_check-wbs_element < ls_wbs_celement-wbs_element.
       lv_insert_idx = sy-tabix.
     ENDIF.
   ENDLOOP.
 
+  IF lv_insert_idx > 0.
+    READ TABLE lt_wbs_celement INTO DATA(ls_left_sibling) INDEX lv_insert_idx.
+    IF sy-subrc = 0.
+      DATA(lv_left_posid) = ls_left_sibling-wbs_element.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+        EXPORTING input  = lv_left_posid
+        IMPORTING output = lv_left_posid.
+      ls_wbs_celement-wbs_left = lv_left_posid.
+    ENDIF.
+  ENDIF.
+
+  "----------------------------------------------------------
+  " INSERT AFTER LAST SIBLING
+  "----------------------------------------------------------
   IF lv_insert_idx = 0.
     APPEND ls_wbs_celement TO lt_wbs_celement.
   ELSE.
     INSERT ls_wbs_celement INTO lt_wbs_celement INDEX lv_insert_idx + 1.
   ENDIF.
 
-  " extensionin
+  "----------------------------------------------------------
+  " EXTENSIONIN
+  "----------------------------------------------------------
   IF is_header-zunifier_proj = 'X'.
     CLEAR: ls_te_wbs, ls_extensionin.
+
     ls_te_wbs-wbs_element        = ls_wbs-posid.
     ls_te_wbs-zunifier_proj      = 'X'.
-    ls_extensionin-structure     = 'BAPI_TE_WBS_ELEMENT'.
-    ls_extensionin-valuepart1    = ls_te_wbs.
+
+    ls_extensionin-structure         = 'BAPI_TE_WBS_ELEMENT'.
+    ls_extensionin-valuepart1        = ls_te_wbs.
     ls_extensionin-valuepart2+50(01) = ls_te_wbs-zunifier_proj.
+
     APPEND ls_extensionin TO lt_extensionin.
   ENDIF.
 
