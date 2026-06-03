@@ -1,32 +1,34 @@
-READ TABLE lt_phris_hier_used INTO DATA(ls_phris_hier_t)
-    WITH KEY target_posid = ls_wbs-posid.
-IF sy-subrc <> 0.
+LOOP AT it_wbs_car INTO ls_car_filter
+    WHERE wert2 IS NOT INITIAL
+    AND wert2 <> 0.
 
-  " Calculate parent posid by stripping last character
-  DATA lv_parent_posid TYPE ps_posid.
-  DATA lv_len          TYPE i.
+  READ TABLE it_phris_hier ASSIGNING <fs_phris>
+  WITH KEY target_posid = ls_car_filter-posid.
+  IF sy-subrc = 0.
+    APPEND <fs_phris> TO lt_phris_hier_used.
+  ELSE.
+    " Manually inserted WBS - build hierarchy entry dynamically
+    DATA lv_p_len  TYPE i.
+    DATA ls_new_hier TYPE zsa2r_wbshier.
 
-  lv_len = strlen( ls_wbs-posid ) - 1.
-  lv_parent_posid = ls_wbs-posid(lv_len).   " Now lv_len is a variable, valid syntax
+    lv_p_len = strlen( ls_car_filter-posid ) - 1.
 
-  IF lv_parent_posid IS INITIAL.
-    MESSAGE e000(zmsg_a2r) WITH 'PRHIS hierarchy mapping not found'(m24).
-    RETURN.
+    ls_new_hier-target_posid = ls_car_filter-posid.
+    ls_new_hier-wbs_up       = ls_car_filter-posid(lv_p_len). " e.g. PC000874023 → PC00087402
+
+    " Find left sibling
+    DATA lv_left TYPE ps_posid.
+    DATA lv_s_len TYPE i.
+    LOOP AT it_wbs_items INTO DATA(ls_sib2).
+      lv_s_len = strlen( ls_sib2-posid ) - 1.
+      IF ls_sib2-posid(lv_s_len) = ls_new_hier-wbs_up
+        AND ls_sib2-posid < ls_car_filter-posid.
+        lv_left = ls_sib2-posid.
+      ENDIF.
+    ENDLOOP.
+
+    ls_new_hier-wbs_left = lv_left.
+    APPEND ls_new_hier TO lt_phris_hier_used.
   ENDIF.
 
-  " Find LEFT sibling (closest preceding sibling under same parent)
-  DATA lv_left_posid TYPE ps_posid.
-  DATA lv_sib_len    TYPE i.
-  LOOP AT it_wbs_items INTO DATA(ls_sib).
-    lv_sib_len = strlen( ls_sib-posid ) - 1.
-    IF ls_sib-posid(lv_sib_len) = lv_parent_posid
-      AND ls_sib-posid < ls_wbs-posid.
-      lv_left_posid = ls_sib-posid.
-    ENDIF.
-  ENDLOOP.
-
-  ls_phris_hier_t-target_posid = ls_wbs-posid.
-  ls_phris_hier_t-wbs_up       = lv_parent_posid.
-  ls_phris_hier_t-wbs_left     = lv_left_posid.
-
-ENDIF.
+ENDLOOP.
