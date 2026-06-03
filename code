@@ -1,8 +1,13 @@
 READ TABLE lt_phris_hier_used INTO DATA(ls_phris_hier_t)
     WITH KEY target_posid = ls_wbs-posid.
 IF sy-subrc <> 0.
-  " Dynamically build hierarchy for manually inserted WBS
-  DATA(lv_parent_posid) = ls_wbs-posid(strlen( ls_wbs-posid ) - 1).
+
+  " Calculate parent posid by stripping last character
+  DATA lv_parent_posid TYPE ps_posid.
+  DATA lv_len          TYPE i.
+
+  lv_len = strlen( ls_wbs-posid ) - 1.
+  lv_parent_posid = ls_wbs-posid(lv_len).   " Now lv_len is a variable, valid syntax
 
   IF lv_parent_posid IS INITIAL.
     MESSAGE e000(zmsg_a2r) WITH 'PRHIS hierarchy mapping not found'(m24).
@@ -10,9 +15,11 @@ IF sy-subrc <> 0.
   ENDIF.
 
   " Find LEFT sibling (closest preceding sibling under same parent)
-  DATA(lv_left_posid) = VALUE ps_posid( ).
+  DATA lv_left_posid TYPE ps_posid.
+  DATA lv_sib_len    TYPE i.
   LOOP AT it_wbs_items INTO DATA(ls_sib).
-    IF ls_sib-posid(strlen( ls_sib-posid ) - 1) = lv_parent_posid
+    lv_sib_len = strlen( ls_sib-posid ) - 1.
+    IF ls_sib-posid(lv_sib_len) = lv_parent_posid
       AND ls_sib-posid < ls_wbs-posid.
       lv_left_posid = ls_sib-posid.
     ENDIF.
@@ -21,4 +28,5 @@ IF sy-subrc <> 0.
   ls_phris_hier_t-target_posid = ls_wbs-posid.
   ls_phris_hier_t-wbs_up       = lv_parent_posid.
   ls_phris_hier_t-wbs_left     = lv_left_posid.
+
 ENDIF.
