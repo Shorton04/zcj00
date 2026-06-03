@@ -1,232 +1,432 @@
-* ====================================================================
-* Version...........: 1.0
-* Program...........: ZCJ00 Cockpit
-* Transaction Code..: ZA2R_ZCJ00
-* Author............: EV92123
-* -------------------------------------------------------------------
-* Description.......: Result Print out for Maintenance Order
-* -------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 02/16/25  EV92123   D30K912694         Initialized class
-* ====================================================================
-  METHOD if_swf_flex_ifs_run_appl_step~before_creation_callback.
-    DATA: lt_l1 TYPE hpa_t_bname,
-          lt_l2 TYPE hpa_t_bname.
-    DATA(lo_container) = io_context->get_workflow_container( ).
-    CHECK lo_container IS BOUND.
-    "set the approver based from config table -> level 1 and 2
-    CASE to_upper( io_next_activity->get_name( ) ).
-      WHEN 'APPROVAL_LEVEL 1'.
-        TRY.
-            lo_container->get( EXPORTING name = 'appr_level1'(t01) IMPORTING value = lt_l1 ).
-            lo_container->set( EXPORTING name = 'APPROVER_T' value = lt_l1 ).
-          CATCH cx_swf_cnt_cont_access_denied " Container Must Not Be Changed
-                cx_swf_cnt_elem_access_denied " Element Must Not Be Changed
-                cx_swf_cnt_elem_not_found     " Element does not exist
-                cx_swf_cnt_container.         " Exception in the Container Service
-            RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-              EXPORTING
-                textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-        ENDTRY.
-      WHEN 'APPROVAL_LEVEL 2'.
-        TRY.
-            lo_container->get( EXPORTING name = 'appr_level2'(t02) IMPORTING value = lt_l2 ).
-            lo_container->set( EXPORTING name = 'APPROVER_T' value = lt_l2 ).
-          CATCH cx_swf_cnt_cont_access_denied " Container Must Not Be Changed
-                cx_swf_cnt_elem_access_denied " Element Must Not Be Changed
-                cx_swf_cnt_elem_not_found     " Element does not exist
-                cx_swf_cnt_container.         " Exception in the Container Service
-            RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-              EXPORTING
-                textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-        ENDTRY.
-      WHEN OTHERS.
-        RETURN.
-    ENDCASE.
-  ENDMETHOD.
+  METHOD create_car_wbs_b1.
 
+    DATA: ls_wbs             TYPE zta2r_wbsitem,
+          lt_wbs_sorted      TYPE STANDARD TABLE OF zta2r_wbsitem,
+          lt_return          TYPE TABLE OF bapiret2,
+          ls_return          TYPE bapiret2,
+          lt_wbs_celement    TYPE TABLE OF bapi_bus2054_new,
+          ls_wbs_celement    TYPE bapi_bus2054_new,
+          lv_error           TYPE char1,
+          lv_pspid_setc      TYPE char24,
+          lv_vkokr_setc      TYPE char24,
+          lv_esr_pspid       TYPE ps_pspid,
+          lt_phris_hier_used TYPE ztt_a2r_wbshier,
+          ls_car_filter      TYPE zta2r_wbsitem,
+          lt_extensionin     TYPE TABLE OF bapiparex,
+          ls_extensionin     TYPE bapiparex,
+          ls_te_wbs          TYPE bapi_te_wbs_element
+*          ls_wbs_created     TYPE zta2r_wbsitem
+*          lt_wbs_created     TYPE STANDARD TABLE OF zta2r_wbsitem
+          .
+    DATA lt_messages TYPE ztt_a2r_wbsmsg.
 
-* ====================================================================
-* Version...........: 1.0
-* Program...........: ZCJ00 Cockpit
-* Transaction Code..: ZA2R_ZCJ00
-* Author............: EV92123
-* -------------------------------------------------------------------
-* Description.......: Result Print out for Maintenance Order
-* -------------------------------------------------------------------
-* Modification list.:
-* Date      Author    TR Number          Description
-* 02/16/26  EV92123   D30K912694         Initialized class
-* ====================================================================
-  METHOD if_swf_flex_ifs_run_appl~result_callback.
-    DATA:
-      lo_instance   TYPE REF TO zcl_a2r_wbs_builder,
-      ls_header     TYPE zta2r_wbshdr,
-      lt_wbsitem    TYPE STANDARD TABLE OF zta2r_wbsitem WITH DEFAULT KEY,
-      lt_wbscar     TYPE ztt_a2r_wbsitem,
-      lt_wbshier    TYPE ztt_a2r_wbshier,
-      lt_wbsunclose TYPE ztt_a2r_wbsunclose,
-      lv_response   TYPE char1.
+    FIELD-SYMBOLS: <fs_phris> TYPE zsa2r_wbshier.
 
-    CONSTANTS:
-      lc_appr   TYPE char7 VALUE 'APPROVE',
-      lc_apprd  TYPE char8 VALUE 'APPROVED',
-      lc_reject TYPE char6 VALUE 'REJECT',
-      lc_rejctd TYPE char8 VALUE 'REJECTED',
-      lc_a1     TYPE char2 VALUE 'A1', "Create Project
-      lc_b1     TYPE char2 VALUE 'B1', "CAR
-      lc_b2     TYPE char2 VALUE 'B2', "Budget Distribution
-      lc_b3     TYPE char2 VALUE 'B3', "Critical Changes
-      lc_e1     TYPE char2 VALUE 'E1'  "UNClose
-      .
+    rv_success = abap_false.
 
-    ev_decision_reason = VALUE #( ).
-    ev_outcome = VALUE #( ).
+    IF it_wbs_car IS INITIAL.
+      RETURN.
+    ENDIF.
 
-* get WF result
-    DATA(ls_result) = io_result->get_result( ).
+    "------------------------------------------------------------
+    " STEP 1: Get existing ESR project/WBS level 1
+    "------------------------------------------------------------
+    READ TABLE it_wbs_items INTO DATA(ls_esr_root) WITH KEY stufe = 1.
+    IF sy-subrc <> 0.
+      MESSAGE e000(zmsg_a2r) WITH 'Existing ESR level 1 not found'(m23).
+      RETURN.
+    ENDIF.
 
-    TRY.
-        DATA(lv_appr_result) = to_upper( ls_result-result ).
-      CATCH cx_sy_itab_line_not_found.
-        RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-          EXPORTING
-            textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-    ENDTRY.
+    REPLACE ALL OCCURRENCES OF '.' IN ls_esr_root-posid WITH ''.
 
-* get WF container
-    DATA(lo_container) = io_context->get_workflow_container( ).
+    lv_esr_pspid = ls_esr_root-posid.
 
-    TRY.
-        lo_container->get( EXPORTING name = 'WBSHeader' IMPORTING value = ls_header ).
-        DATA(lv_request_type) = ls_header-z_reqtype.
+    "------------------------------------------------------------
+    " STEP 2: Initialize BAPI
+    "------------------------------------------------------------
+    CALL FUNCTION 'BAPI_PS_INITIALIZATION'.
 
-      CATCH cx_swf_cnt_cont_access_denied " Container Must Not Be Changed
-            cx_swf_cnt_elem_access_denied " Element Must Not Be Changed
-            cx_swf_cnt_elem_not_found     " Element does not exist
-            cx_swf_cnt_container.         " Exception in the Container Service
-        RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-          EXPORTING
-            textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-    ENDTRY.
+    "------------------------------------------------------------
+    " STEP 3: Sort full structure in hierarchy order
+    " it_wbs_items = ESR existing + CAR appended
+    "------------------------------------------------------------
+    lt_wbs_sorted = it_wbs_items.
 
-*        IF leading_object->result = c_approved.
-*
-*    ENDIF.
+    CLEAR: lt_wbs_celement,lt_phris_hier_used.
+**    IF is_header-ernam = 'HQ75177'.
+    ##INTO_OK      LOOP AT it_wbs_car INTO ls_car_filter
 
-    IF lv_appr_result = lc_appr. "'APPROVE'
-      lo_instance = NEW zcl_a2r_wbs_builder( ).
-      CASE lv_request_type.
-        WHEN lc_b1. "'B1'   "CAR
-          TRY.
-              lo_container->get( EXPORTING name = 'WBSCar' IMPORTING value = lt_wbscar ).
-              lo_container->get( EXPORTING name = 'WBSHier' IMPORTING value = lt_wbshier ).
+            WHERE wert2 IS NOT INITIAL
+            AND wert2 <> 0.
 
-            CATCH cx_swf_cnt_cont_access_denied " Container Must Not Be Changed
-                  cx_swf_cnt_elem_access_denied " Element Must Not Be Changed
-                  cx_swf_cnt_elem_not_found     " Element does not exist
-                  cx_swf_cnt_container.         " Exception in the Container Service
-              RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-                EXPORTING
-                  textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-          ENDTRY.
-
-          SELECT * FROM zta2r_wbsitem
-            INTO TABLE @lt_wbsitem
-            WHERE zreq_num EQ @ls_header-zreq_num.
-          IF sy-subrc EQ 0.
-            lo_instance->create_car_wbs_b1(
-              EXPORTING
-                is_header     = ls_header
-                it_wbs_items  = lt_wbsitem
-                it_wbs_car    = lt_wbscar
-                it_phris_hier = lt_wbshier
-              IMPORTING
-                rv_success    = lv_response
-            ).
-            IF lv_response EQ abap_true.
-              UPDATE zta2r_wbshdr
-                  SET request_status       = lc_apprd
-                      zapproved_by         = ls_result-actor
-                      zrequest_approved_on = sy-datum
-                      pspid                = ls_header-pspid
-                  WHERE zreq_num = ls_header-zreq_num.
-              CLEAR lv_response.
-            ENDIF.
-          ENDIF.
-
-        WHEN lc_b2. "'B2'   "Budget Distribution
-          lv_response = lo_instance->budget_distribution( is_header = ls_header ).
-          IF lv_response EQ abap_true.
-            UPDATE zta2r_wbshdr
-                SET request_status       = lc_apprd
-                    zapproved_by         = ls_result-actor
-                    zrequest_approved_on = sy-datum
-                    pspid                = ls_header-pspid
-                WHERE zreq_num = ls_header-zreq_num.
-            CLEAR lv_response.
-          ENDIF.
-
-        WHEN lc_b3. "'B3'.   "Critical Changes
-          lv_response = lo_instance->crit_change( is_header = ls_header ).
-          IF lv_response EQ abap_true.
-            UPDATE zta2r_wbshdr
-                SET request_status       = lc_apprd
-                    zapproved_by         = ls_result-actor
-                    zrequest_approved_on = sy-datum
-                    pspid                = ls_header-pspid
-                WHERE zreq_num = ls_header-zreq_num.
-            CLEAR lv_response.
-          ENDIF.
-
-        WHEN lc_a1. "Project Creation
-          lv_response = lo_instance->create_project_cj20n(
-            EXPORTING
-              is_header = ls_header
-          ).
-
-        WHEN lc_e1. "Project Creation
-
-          TRY.
-              lo_container->get( EXPORTING name = 'WBSUnclose' IMPORTING value = lt_wbsunclose ).
-
-              lv_response = lo_instance->unclose_wbs_status(
-                iv_req_num     = ls_header-zreq_num
-                it_wbs_unclose = lt_wbsunclose ).
-
-            CATCH cx_swf_cnt_cont_access_denied " Container Must Not Be Changed
-                  cx_swf_cnt_elem_access_denied " Element Must Not Be Changed
-                  cx_swf_cnt_elem_not_found     " Element does not exist
-                  cx_swf_cnt_container.         " Exception in the Container Service
-              RAISE EXCEPTION TYPE cx_swf_flex_ifs_run_exception
-                EXPORTING
-                  textid = VALUE scx_t100key( msgid = sy-msgid msgno = sy-msgno attr1 = sy-msgv1 attr2 = sy-msgv2 ).
-          ENDTRY.
-
-        WHEN OTHERS.
-          RETURN.
-      ENDCASE.
-
-      " update table for the approver decision -> approved
-      IF lv_response EQ abap_true.
-        UPDATE zta2r_wbshdr
-            SET request_status       = lc_apprd
-                zapproved_by         = ls_result-actor
-                zrequest_approved_on = sy-datum
-            WHERE zreq_num = ls_header-zreq_num.
+      READ TABLE it_phris_hier ASSIGNING <fs_phris>
+      WITH KEY target_posid = ls_car_filter-posid.
+      IF sy-subrc = 0.
+        APPEND <fs_phris> TO lt_phris_hier_used.
       ENDIF.
 
-      ev_outcome = 'Approve'.
+    ENDLOOP.
+**    ENDIF.
 
-    ELSEIF lv_appr_result = lc_reject. "'REJECT'
-      " update table for the approver decision -> rejected
-      UPDATE zta2r_wbshdr
-        SET request_status       = lc_rejctd
-            zrejected_by         = ls_result-actor
-            zrequest_rejected_on = sy-datum
-      WHERE zreq_num = ls_header-zreq_num.
+    LOOP AT it_wbs_car INTO ls_wbs.
 
-        ev_outcome = 'Rejected'.
+      IF ls_wbs-wert2 = 0 OR ls_wbs-wert2 IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      REPLACE ALL OCCURRENCES OF '.' IN ls_wbs-posid WITH ''.
+
+      CLEAR: ls_wbs_celement.
+
+      "Find current row position in full structure
+      READ TABLE lt_wbs_sorted TRANSPORTING NO FIELDS
+        WITH KEY posid = ls_wbs-posid.
+
+*      lv_index = sy-tabix.
+
+      "----------------------------------------------------------
+      " WBS ELEMENT
+      " already prepared in gt_wbs_car like PC000533022
+      "----------------------------------------------------------
+      ls_wbs_celement-wbs_element = ls_wbs-posid.
+
+      "----------------------------------------------------------
+      " BASIC FIELDS
+      "----------------------------------------------------------
+      ls_wbs_celement-description      = ls_wbs-post1.
+      ls_wbs_celement-company_code     = is_header-bukrs.
+      ls_wbs_celement-profit_ctr       = is_header-prctr.
+      ls_wbs_celement-controlling_area = is_header-vkokr.
+      ls_wbs_celement-plant            = is_header-werks.
+
+      ls_wbs_celement-wbs_planning_element = abap_true.
+      ls_wbs_celement-inv_reason           = is_header-izwek.
+      ls_wbs_celement-respsbl_cctr         = ls_wbs-kostl.
+      ls_wbs_celement-proj_type            = ls_wbs-prart.
+      ls_wbs_celement-responsible_no       = is_header-vernr.
+
+      ls_wbs_celement-wbs_basic_start_date     = is_header-plfaz.
+      ls_wbs_celement-wbs_basic_finish_date    = is_header-plsez.
+      ls_wbs_celement-wbs_forecast_start_date  = is_header-plfaz.
+      ls_wbs_celement-wbs_forecast_finish_date = is_header-plsez.
+
+      ls_wbs_celement-wbs_account_assignment_element = abap_true.
+
+
+*      IF is_header-ernam = 'HQ75177'.
+      READ TABLE lt_phris_hier_used INTO DATA(ls_phris_hier_t)
+          WITH KEY target_posid = ls_wbs-posid.
+      IF sy-subrc <> 0.
+        MESSAGE e000(zmsg_a2r) WITH 'PRHIS hierarchy mapping not found'(m24).
+        RETURN.
+      ENDIF.
+*
+      DATA(lv_up_int_t) = ls_phris_hier_t-wbs_up.
+      IF lv_up_int_t IS NOT INITIAL.
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+          EXPORTING
+            input  = lv_up_int_t
+          IMPORTING
+            output = lv_up_int_t.
+      ENDIF.
+
+*      DATA(lv_left_int_t) = ls_phris_hier_t-wbs_left.
+*      IF lv_left_int_t IS NOT INITIAL.
+*        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+*          EXPORTING
+*            input  = lv_left_int_t
+*          IMPORTING
+*            output = lv_left_int_t.
+*      ENDIF.
+      DATA(lv_left_int_t) = ls_phris_hier_t-wbs_left.
+      DATA(lv_left_check) = lv_left_int_t.
+
+      IF lv_left_check IS NOT INITIAL.
+
+*        "Normalize format (important if POSID has no dots)
+*        REPLACE ALL OCCURRENCES OF '.' IN lv_left_check WITH ''.
+
+        "Check if LEFT exists in WBS items
+        READ TABLE it_wbs_items TRANSPORTING NO FIELDS
+          WITH KEY posid = lv_left_check.
+
+        IF sy-subrc = 0.
+          " Valid → convert
+          CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+            EXPORTING
+              input  = lv_left_int_t
+            IMPORTING
+              output = lv_left_int_t.
+        ELSE.
+          "Invalid → clear
+          CLEAR lv_left_int_t.
+        ENDIF.
+
+      ENDIF.
+
+      ls_wbs_celement-wbs_up   = lv_up_int_t.
+      ls_wbs_celement-wbs_left = lv_left_int_t.
+
+*      ELSE.
+*        READ TABLE it_phris_hier INTO DATA(ls_phris_hier)
+*        WITH KEY target_posid = ls_wbs-posid.
+*        IF sy-subrc <> 0.
+*          MESSAGE e000(zmsg_a2r) WITH 'PRHIS hierarchy mapping not found'(m24).
+*          RETURN.
+*        ENDIF.
+*
+*        DATA(lv_up_int) = ls_phris_hier-wbs_up.
+*        IF lv_up_int IS NOT INITIAL.
+*          CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+*            EXPORTING
+*              input  = lv_up_int
+*            IMPORTING
+*              output = lv_up_int.
+*        ENDIF.
+*
+*        DATA(lv_left_int) = ls_phris_hier-wbs_left.
+*        IF lv_left_int IS NOT INITIAL.
+*          CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+*            EXPORTING
+*              input  = lv_left_int
+*            IMPORTING
+*              output = lv_left_int.
+*        ENDIF.
+*
+*        ls_wbs_celement-wbs_up   = lv_up_int.
+*        ls_wbs_celement-wbs_left = lv_left_int.
+*      ENDIF.
+
+      APPEND ls_wbs_celement TO lt_wbs_celement.
+
+      IF is_header-zunifier_proj = 'X'.
+        CLEAR: ls_te_wbs, ls_extensionin.
+
+        ls_te_wbs-wbs_element   = ls_wbs-posid.
+        ls_te_wbs-zunifier_proj = 'X'.
+
+        ls_extensionin-structure  = 'BAPI_TE_WBS_ELEMENT'.
+        ls_extensionin-valuepart1 = ls_te_wbs.
+        ls_extensionin-valuepart2+50(01) = ls_te_wbs-zunifier_proj.
+
+        APPEND ls_extensionin TO lt_extensionin.
+      ENDIF.
+
+    ENDLOOP.
+
+    "------------------------------------------------------------
+    " STEP 4: Create CAR WBS only
+    " Existing ESR project already exists
+    "------------------------------------------------------------
+    IF lt_wbs_celement IS NOT INITIAL.
+
+      CLEAR lt_return.
+
+      CALL FUNCTION 'BAPI_BUS2054_CREATE_MULTI'
+        EXPORTING
+          i_project_definition = lv_esr_pspid
+        TABLES
+          it_wbs_element       = lt_wbs_celement
+          extensionin          = lt_extensionin
+          et_return            = lt_return.
+
+      process_bapi_messages(
+      EXPORTING
+        it_return = lt_return
+        iv_reqnum = is_header-zreq_num
+        iv_process = 'Create CAR'
+        CHANGING
+          ct_messages = lt_messages
+          ).
+
+
+      LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+        lv_error = 'X'.
+        EXIT.
+      ENDLOOP.
+
+      IF lv_error = 'X'.
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+        UPDATE zta2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = is_header-zreq_num.
+        COMMIT WORK AND WAIT.
+        MESSAGE e000(zmsg_a2r) WITH 'B1 CAR WBS creation failed'(m25).
+        RETURN.
+      ENDIF.
+
     ENDIF.
+
+    "------------------------------------------------------------
+    " STEP 5: PRECOMMIT
+    "------------------------------------------------------------
+    CLEAR lt_return.
+
+    CALL FUNCTION 'BAPI_PS_PRECOMMIT'
+      TABLES
+        et_return = lt_return.
+
+    process_bapi_messages(
+    EXPORTING
+      it_return = lt_return
+      iv_reqnum = is_header-zreq_num
+      iv_process = 'Create CAR'
+      CHANGING
+        ct_messages = lt_messages
+        ).
+
+
+
+    LOOP AT lt_return TRANSPORTING NO FIELDS WHERE type CA 'EA'.
+      lv_error = 'X'.
+      EXIT.
+    ENDLOOP.
+
+    IF lv_error = 'X'.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      UPDATE zta2r_wbshdr
+      SET request_status = 'ERROR'
+      WHERE zreq_num = is_header-zreq_num.
+      COMMIT WORK AND WAIT.
+      MESSAGE e000(zmsg_a2r) WITH 'B1 WBS precommit failed'(m26).
+      RETURN.
+    ENDIF.
+
+    "------------------------------------------------------------
+    " STEP 6: COMMIT
+    "------------------------------------------------------------
+    CLEAR ls_return.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait   = 'X'
+      IMPORTING
+        return = ls_return.
+
+    IF ls_return-type CA 'EA'.
+      MESSAGE ID ls_return-id TYPE 'E' NUMBER ls_return-number
+        WITH ls_return-message_v1 ls_return-message_v2.
+      RETURN.
+    ENDIF.
+
+    WAIT UP TO 1 SECONDS.
+
+    "------------------------------------------------------------
+    " STEP 7: Update created CAR internal numbers
+    "------------------------------------------------------------
+*    IF 1 = 0.
+*      LOOP AT it_wbs_car INTO ls_wbs.
+*
+*        CLEAR ls_wbs_created.
+*        ls_wbs_created = ls_wbs.
+*
+*        SELECT SINGLE pspnr
+*          INTO @ls_wbs_created-posnr
+*          FROM prps
+*          WHERE posid = @ls_wbs-posid.
+*
+*        UPDATE zta2r_wbsitem
+*          SET posnr = @ls_wbs_created-posnr,
+*              posid = @ls_wbs_created-posid
+*          WHERE zreq_num = @is_header-zreq_num
+*            AND posid    = @ls_wbs-posid.
+*
+*        APPEND ls_wbs_created TO lt_wbs_created.
+*
+*      ENDLOOP.
+*    ELSE.
+
+    TYPES ty_itab TYPE zta2r_wbsitem WITH INDICATORS ind.
+    DATA lt_update TYPE STANDARD TABLE OF ty_itab.
+    SELECT pspnr, posid
+      FROM prps
+      FOR ALL ENTRIES IN @it_wbs_car
+      WHERE posid = @it_wbs_car-posid
+      INTO TABLE @DATA(lt_prps).
+    IF sy-subrc = 0.
+      ##INTO_OK        LOOP AT it_wbs_car INTO ls_wbs.
+        DATA(ls_prps) = VALUE #( lt_prps[ posid = ls_wbs-posid ] OPTIONAL ).
+        IF ls_prps IS NOT INITIAL.
+          APPEND VALUE #(
+            zreq_num = is_header-zreq_num
+            posid    = ls_wbs-posid
+            posnr    = ls_prps-pspnr
+            ind      = VALUE #( posid = '01' posnr = '01' ) " Flags for update
+          ) TO lt_update.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    UPDATE zta2r_wbsitem FROM TABLE @lt_update INDICATORS SET STRUCTURE ind.
+*    ENDIF.
+
+    lv_vkokr_setc = is_header-vkokr.
+    lv_pspid_setc = is_header-pspid.
+
+    change_project_b2(
+  EXPORTING
+    iv_pspid  = is_header-pspid
+    is_header = is_header
+  IMPORTING
+    et_return = lt_return
+    CHANGING
+      ct_messages = lt_messages
+      ).
+
+    change_wbs_b2(
+   EXPORTING
+     iv_pspid     = is_header-pspid
+     it_wbs_items = it_wbs_items
+   IMPORTING
+     et_return    = lt_return
+     CHANGING
+       ct_messages = lt_messages
+       ).
+
+
+    settlement_rule(
+    EXPORTING
+      iv_vkokr = lv_vkokr_setc
+      iv_pspid = lv_pspid_setc
+      CHANGING
+          ct_messages = lt_messages
+                     ).
+
+    DATA(lv_check) = set_blkd_status_for_higher_wbs(
+    EXPORTING
+      it_wbs_items = it_wbs_car
+      CHANGING
+          ct_messages = lt_messages
+    ).
+
+
+* Assign plan values -> CJ40
+    lv_check = assign_plan_values(
+    EXPORTING
+      is_header    = is_header
+      it_wbs_items = it_wbs_items
+      CHANGING
+          ct_messages = lt_messages
+    ).
+
+* Assign budget -> CJ30
+    lv_check = assign_budget_cj30(
+    EXPORTING
+      is_header    = is_header
+      it_wbs_items = it_wbs_items
+      CHANGING
+          ct_messages = lt_messages
+    ).
+
+    IF lt_messages IS NOT INITIAL.
+      get_error_handler(
+      is_header = is_header
+      it_msg = lt_messages
+      ).
+
+    ENDIF.
+
+    ev_errors = xsdbool( line_exists( lt_messages[ type = 'E' ] ) ).
+    rv_success = lv_check.
+
   ENDMETHOD.
