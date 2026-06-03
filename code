@@ -32,15 +32,44 @@ LOOP AT lt_wbs_car INTO ls_wbs.
   ls_wbs_celement-wbs_account_assignment_element = abap_true.
 
   "----------------------------------------------------------
-  " DERIVE WBS_UP FROM POSID (strip last 2 chars)
+  " DERIVE WBS_UP using stufe from lt_wbs_car
   "----------------------------------------------------------
-  DATA(lv_up_posid) = ls_wbs-posid.
-  DATA(lv_posid_len) = strlen( lv_up_posid ).
-  lv_up_posid = lv_up_posid(lv_posid_len - 2).
+  DATA lv_up_posid TYPE char24.
+  DATA lv_cur_stufe TYPE pstufe.
+  DATA lv_posid_len TYPE i.
+  CLEAR: lv_up_posid, lv_cur_stufe.
 
-  CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
-    EXPORTING input  = lv_up_posid
-    IMPORTING output = lv_up_posid.
+  " Get stufe of current entry from lt_wbs_car
+  lv_cur_stufe = ls_wbs-stufe.
+  lv_posid_len = strlen( ls_wbs-posid ).
+
+  " Find parent = stufe - 1 whose posid is prefix of current
+  LOOP AT lt_wbs_car INTO DATA(ls_parent_wbs)
+    WHERE stufe = lv_cur_stufe - 1.
+    DATA(lv_parent_len) = strlen( ls_parent_wbs-posid ).
+    IF ls_wbs-posid(lv_parent_len) = ls_parent_wbs-posid.
+      lv_up_posid = ls_parent_wbs-posid.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+  " If not found in lt_wbs_car, fallback to it_wbs_items
+  IF lv_up_posid IS INITIAL.
+    LOOP AT it_wbs_items INTO DATA(ls_parent_esr)
+      WHERE stufe = lv_cur_stufe - 1.
+      DATA(lv_esr_len) = strlen( ls_parent_esr-posid ).
+      IF ls_wbs-posid(lv_esr_len) = ls_parent_esr-posid.
+        lv_up_posid = ls_parent_esr-posid.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+  IF lv_up_posid IS NOT INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_INPUT'
+      EXPORTING input  = lv_up_posid
+      IMPORTING output = lv_up_posid.
+  ENDIF.
 
   ls_wbs_celement-wbs_up = lv_up_posid.
 
