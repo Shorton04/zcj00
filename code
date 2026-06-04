@@ -1,24 +1,3 @@
-FORM save_wf_rejection_comments.
-
-  DATA: lo_wflog   TYPE REF TO zcl_a2r_wbs_workflow_log,
-        lv_success TYPE abap_bool.
-
-  CREATE OBJECT lo_wflog.
-
-  lv_success = lo_wflog->save_rejection_comments(
-                 iv_zreq_num = gs_header-zreq_num ).
-
-  IF lv_success = abap_true.
-    MESSAGE 'Rejection reasons saved.' TYPE 'S'.
-  ELSE.
-    MESSAGE 'No rejection comments found.' TYPE 'I'.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
 @AbapCatalog.viewEnhancementCategory: [#NONE]
 @AccessControl.authorizationCheck: #NOT_REQUIRED
 @EndUserText.label: 'Workflow Status for ZCJ00'
@@ -29,10 +8,12 @@ ENDFORM.
     sizeCategory: #S,
     dataClass: #MIXED
 }
-define view entity ZC_A2R_WORKFLOWSTATUS 
-     as select from I_WorkflowStatusDetails as task
-     left outer join I_WorkflowStatusOverview as workflow
-        on workflow.WorkflowInternalID = task.WorkflowInternalID
+define view entity ZC_A2R_WORKFLOWSTATUS
+  as select from I_WorkflowStatusDetails as task
+    left outer join I_WorkflowStatusOverview as workflow
+      on workflow.WorkflowInternalID = task.WorkflowInternalID
+    left outer join zta2r_wbshdr as hdr
+      on hdr.top_wi_id = task.WorkflowInternalID
 {
     key task.WorkflowTaskInternalID,
     task.WorkflowInternalID,
@@ -40,16 +21,20 @@ define view entity ZC_A2R_WORKFLOWSTATUS
     task.WorkflowTaskDefinition,
     task.WorkflowTaskProcessor,
     task.WorkflowTaskProcessorRole,
-    task.WrkflwTskCreationUTCDateTime as taskCreationUTCDateTime,
-    task.WrkflwTskCompletionUTCDateTime as taskCompletionUTCDateTime,
+    task.WrkflwTskCreationUTCDateTime       as taskCreationUTCDateTime,
+    task.WrkflwTskCompletionUTCDateTime     as taskCompletionUTCDateTime,
     task.WorkflowTaskStepType,
-    task.WorkflowScenarioDefinition as taskWorkflowScenarioDefinition,
-    task.WorkflowScenarioDefinitionVers as taskWorkflowScenarioDefVers,
+    task.WorkflowScenarioDefinition         as taskWorkflowScenarioDefinition,
+    task.WorkflowScenarioDefinitionVers     as taskWorkflowScenarioDefVers,
     workflow.WorkflowExternalStatus,
-    workflow.WorkflowScenarioDefinition as wfWorkflowScenarioDefinition,
+    workflow.WorkflowScenarioDefinition     as wfWorkflowScenarioDefinition,
     workflow.WorkflowScenarioDefinitionVers as wfWorkflowScenarioDefVers,
-    workflow.WrkflwTskCreationUTCDateTime as wfCreationUTCDateTime,
+    workflow.WrkflwTskCreationUTCDateTime   as wfCreationUTCDateTime,
     workflow.WrkflwTskCompletionUTCDateTime as wfCompletionUTCDateTime,
     workflow.NmbrOfCmpltdWrkflwDialogTasks,
-    workflow.NmbrOfActiveWrkflwDialogTasks
+    workflow.NmbrOfActiveWrkflwDialogTasks,
+
+    "Rejection reasons from ZTA2R_WBSHDR
+    hdr.rej_reason1                         as RejectionReason1,
+    hdr.rej_reason2                         as RejectionReason2
 }
