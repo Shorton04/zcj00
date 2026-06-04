@@ -6,7 +6,7 @@ CLASS zcl_a2r_wbs_workflow_log DEFINITION
   PUBLIC SECTION.
 
     METHODS save_rejection_comments
-      IMPORTING iv_zreq_num TYPE zta2r_wbshdr-zreq_num
+      IMPORTING iv_zreq_num  TYPE zta2r_wbshdr-zreq_num
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
   PRIVATE SECTION.
@@ -18,74 +18,68 @@ CLASS zcl_a2r_wbs_workflow_log DEFINITION
         wi_text    TYPE swr_wihdr-wi_text,
         agent      TYPE string,
         status     TYPE string,
-        created_on TYPE sww_wiid,  "use sww_cd or sy-datum type if needed
-        created_at TYPE sww_wiid,
+        created_on TYPE sww_cd,
+        created_at TYPE sww_ct,
         comment    TYPE string,
       END OF ty_wflog,
       ty_t_wflog TYPE STANDARD TABLE OF ty_wflog WITH DEFAULT KEY.
 
-    DATA gv_top_wi_id TYPE sww_wiid.
-
     METHODS get_top_wi_id
-      IMPORTING iv_zreq_num      TYPE zta2r_wbshdr-zreq_num
-      RETURNING VALUE(rv_wi_id)  TYPE sww_wiid.
+      IMPORTING iv_zreq_num     TYPE zta2r_wbshdr-zreq_num
+      RETURNING VALUE(rv_wi_id) TYPE sww_wiid.
 
     METHODS get_workflow_log
       IMPORTING iv_top_wi_id  TYPE sww_wiid
       RETURNING VALUE(rt_log) TYPE ty_t_wflog.
 
     METHODS read_single_wi_log
-      IMPORTING iv_wi_id        TYPE sww_wiid
-      RETURNING VALUE(rs_wflog) TYPE ty_wflog.
+      IMPORTING iv_wi_id          TYPE sww_wiid
+                iv_top_wi_id      TYPE sww_wiid
+      RETURNING VALUE(rs_wflog)   TYPE ty_wflog.
 
     METHODS get_wi_comment
-      IMPORTING iv_wi_id         TYPE sww_wiid
-      RETURNING VALUE(rv_comment) TYPE string.
+      IMPORTING iv_wi_id            TYPE sww_wiid
+      RETURNING VALUE(rv_comment)   TYPE string.
 
 ENDCLASS.
 
 
 CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
 
-*----------------------------------------------------------------------*
-* PUBLIC: Main entry point — retrieves comments and saves to ZA2R_WBSHDR
-*----------------------------------------------------------------------*
   METHOD save_rejection_comments.
 
     DATA: lt_wflog     TYPE ty_t_wflog,
           lv_top_wi_id TYPE sww_wiid,
           lv_reason1   TYPE zde_rej_reason,
-          lv_reason2   TYPE zde_rej_reason.
+          lv_reason2   TYPE zde_rej_reason,
+          lv_count     TYPE i.
 
     rv_success = abap_false.
 
-    "-- Get top workitem ID for the request
     lv_top_wi_id = get_top_wi_id( iv_zreq_num ).
     IF lv_top_wi_id IS INITIAL.
       RETURN.
     ENDIF.
 
-    gv_top_wi_id = lv_top_wi_id.
-
-    "-- Retrieve full workflow log with comments
     lt_wflog = get_workflow_log( lv_top_wi_id ).
     IF lt_wflog IS INITIAL.
       RETURN.
     ENDIF.
 
-    "-- Collect up to 2 rejection comments from approval steps
-    DATA(lv_count) = 0.
+    lv_count = 0.
+
     LOOP AT lt_wflog ASSIGNING FIELD-SYMBOL(<ls_log>)
       WHERE comment IS NOT INITIAL.
 
       lv_count = lv_count + 1.
+
       CASE lv_count.
         WHEN 1.
           lv_reason1 = <ls_log>-comment(255).
         WHEN 2.
           lv_reason2 = <ls_log>-comment(255).
         WHEN OTHERS.
-          EXIT. "-- Only store first two comments
+          EXIT.
       ENDCASE.
 
     ENDLOOP.
@@ -94,7 +88,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    "-- Update ZA2R_WBSHDR with rejection reasons
     UPDATE zta2r_wbshdr
       SET rej_reason1 = lv_reason1,
           rej_reason2 = lv_reason2
@@ -107,9 +100,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
   ENDMETHOD.
 
 
-*----------------------------------------------------------------------*
-* PRIVATE: Get the top-level workflow workitem ID for a request number
-*----------------------------------------------------------------------*
   METHOD get_top_wi_id.
 
     CLEAR rv_wi_id.
@@ -124,9 +114,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
   ENDMETHOD.
 
 
-*----------------------------------------------------------------------*
-* PRIVATE: Get full workflow log (top WI + all children)
-*----------------------------------------------------------------------*
   METHOD get_workflow_log.
 
     DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
@@ -138,13 +125,14 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
 
     CLEAR rt_log.
 
-    "-- Read top workitem itself
-    ls_wflog = read_single_wi_log( iv_top_wi_id ).
+    ls_wflog = read_single_wi_log(
+                 iv_wi_id     = iv_top_wi_id
+                 iv_top_wi_id = iv_top_wi_id ).
+
     IF ls_wflog-wi_id IS NOT INITIAL.
       APPEND ls_wflog TO rt_log.
     ENDIF.
 
-    "-- Read all child workitems
     CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
       EXPORTING
         workitem_id    = iv_top_wi_id
@@ -159,14 +147,19 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
         message_struct = lt_message_struc.
 
     LOOP AT lt_worklist INTO ls_worklist.
+
       CLEAR ls_wflog.
-      ls_wflog = read_single_wi_log( ls_worklist-wi_id ).
+
+      ls_wflog = read_single_wi_log(
+                   iv_wi_id     = ls_worklist-wi_id
+                   iv_top_wi_id = iv_top_wi_id ).
+
       IF ls_wflog-wi_id IS NOT INITIAL.
         APPEND ls_wflog TO rt_log.
       ENDIF.
+
     ENDLOOP.
 
-    "-- Deduplicate and sort by creation time
     SORT rt_log BY wi_id.
     DELETE ADJACENT DUPLICATES FROM rt_log COMPARING wi_id.
     SORT rt_log BY created_on created_at wi_id.
@@ -174,9 +167,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
   ENDMETHOD.
 
 
-*----------------------------------------------------------------------*
-* PRIVATE: Read header + comment for a single workitem
-*----------------------------------------------------------------------*
   METHOD read_single_wi_log.
 
     DATA: ls_header        TYPE swr_wihdr,
@@ -204,23 +194,23 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
     ENDIF.
 
     rs_wflog-wi_id      = ls_header-wi_id.
-    rs_wflog-top_wi_id  = gv_top_wi_id.
+    rs_wflog-top_wi_id  = iv_top_wi_id.
     rs_wflog-wi_text    = ls_header-wi_text.
     rs_wflog-created_on = ls_header-wi_cd.
     rs_wflog-created_at = ls_header-wi_ct.
 
-    "-- Prefer name over technical ID for agent
-    rs_wflog-agent = COND #(
-      WHEN ls_header-wi_aa_name IS NOT INITIAL THEN ls_header-wi_aa_name
-      WHEN ls_header-wi_aagent  IS NOT INITIAL THEN ls_header-wi_aagent
-      ELSE space ).
+    IF ls_header-wi_aa_name IS NOT INITIAL.
+      rs_wflog-agent = ls_header-wi_aa_name.
+    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+      rs_wflog-agent = ls_header-wi_aagent.
+    ENDIF.
 
-    "-- Prefer status text over raw status key
-    rs_wflog-status = COND #(
-      WHEN ls_header-statustext IS NOT INITIAL THEN ls_header-statustext
-      ELSE ls_header-wi_stat ).
+    IF ls_header-statustext IS NOT INITIAL.
+      rs_wflog-status = ls_header-statustext.
+    ELSE.
+      rs_wflog-status = ls_header-wi_stat.
+    ENDIF.
 
-    "-- Only fetch comment for real human approval steps
     IF rs_wflog-wi_text    CP 'WBS Approval*'
    AND rs_wflog-agent      IS NOT INITIAL
    AND rs_wflog-agent      NS 'IF On-prem'
@@ -235,9 +225,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
   ENDMETHOD.
 
 
-*----------------------------------------------------------------------*
-* PRIVATE: Read the latest approver comment from SAPoffice attachments
-*----------------------------------------------------------------------*
   METHOD get_wi_comment.
 
     DATA: lt_attachments   TYPE STANDARD TABLE OF swr_object,
@@ -259,7 +246,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
 
     CLEAR rv_comment.
 
-    "-- Fetch only comment-semantic attachments
     CALL FUNCTION 'SAP_WAPI_GET_ATTACHMENTS'
       EXPORTING
         workitem_id           = iv_wi_id
@@ -277,14 +263,13 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    "-- Loop all "Approver Comments" attachments; keep the latest non-empty one
     LOOP AT lt_attachments INTO ls_attachment
       WHERE def_attrib = 'Approver Comments'
          OR object_typ = 'CM'.
 
-      CLEAR: lt_parts, lv_part, lv_doc_id, lt_objhead, lt_objcont, lv_text.
+      CLEAR: lt_parts, lv_part, lv_doc_id,
+             lt_objhead, lt_objcont, lv_text.
 
-      "-- Extract the document ID from OBJECT_ID (2nd space-delimited token)
       SPLIT ls_attachment-object_id AT space INTO TABLE lt_parts.
       DELETE lt_parts WHERE table_line IS INITIAL.
 
@@ -295,7 +280,6 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
 
       lv_doc_id = lv_part.
 
-      "-- Read SAPoffice document content
       ls_filter-send_info  = space.
       ls_filter-no_content = space.
       ls_filter-rec_list   = space.
@@ -317,16 +301,19 @@ CLASS zcl_a2r_wbs_workflow_log IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      "-- Concatenate all content lines into a single string
-      LOOP AT lt_objcont INTO ls_objcont WHERE line IS NOT INITIAL.
+      LOOP AT lt_objcont INTO ls_objcont
+        WHERE line IS NOT INITIAL.
+
         IF lv_text IS INITIAL.
           lv_text = ls_objcont-line.
         ELSE.
-          lv_text = lv_text && cl_abap_char_utilities=>newline && ls_objcont-line.
+          lv_text = lv_text
+                 && cl_abap_char_utilities=>newline
+                 && ls_objcont-line.
         ENDIF.
+
       ENDLOOP.
 
-      "-- Keep the latest non-empty comment (later loop = newer attachment)
       IF lv_text IS NOT INITIAL.
         rv_comment = lv_text.
       ENDIF.
