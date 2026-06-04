@@ -1,15 +1,66 @@
-METHOD your_existing_method.
+METHOD read_single_wi_log.
 
-  DATA: lo_wflog   TYPE REF TO zcl_a2r_wbs_workflow_log,
-        lv_success TYPE abap_bool.
+    DATA: ls_header        TYPE swr_wihdr,
+          lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+          lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+          lv_return_code   TYPE sy-subrc.
 
-  lo_wflog = NEW zcl_a2r_wbs_workflow_log( ).
+    CLEAR rs_wflog.
 
-  lv_success = lo_wflog->save_rejection_comments(
-                 iv_zreq_num = iv_zreq_num ).
+    CALL FUNCTION 'SAP_WAPI_GET_HEADER'
+      EXPORTING
+        workitem_id         = iv_wi_id
+        user                = sy-uname
+        language            = sy-langu
+        translate_texts     = abap_true
+      IMPORTING
+        workitem_attributes = ls_header
+        return_code         = lv_return_code
+      TABLES
+        message_lines       = lt_message_lines
+        message_struct      = lt_message_struc.
 
-  IF lv_success = abap_false.
-    " handle no comments found
-  ENDIF.
+    IF lv_return_code <> 0.
+      RETURN.
+    ENDIF.
+
+    " Populate agent first so we can check it before proceeding
+    IF ls_header-wi_aa_name IS NOT INITIAL.
+      rs_wflog-agent = ls_header-wi_aa_name.
+    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+      rs_wflog-agent = ls_header-wi_aagent.
+    ENDIF.
+
+    " Skip system/interface/RFC agents completely
+    " Return empty rs_wflog so caller ignores this workitem
+    IF rs_wflog-agent CS 'IF On-prem'
+    OR rs_wflog-agent CS 'Workflow'
+    OR rs_wflog-agent CS 'RFC'
+    OR rs_wflog-agent CS 'S/4HANA'.
+      CLEAR rs_wflog.
+      RETURN.
+    ENDIF.
+
+    " Only process WBS Approval human steps
+    IF ls_header-wi_text NP 'WBS Approval*'.
+      CLEAR rs_wflog.
+      RETURN.
+    ENDIF.
+
+    " Populate remaining fields only for valid human approval steps
+    rs_wflog-wi_id      = ls_header-wi_id.
+    rs_wflog-top_wi_id  = iv_top_wi_id.
+    rs_wflog-wi_text    = ls_header-wi_text.
+    rs_wflog-created_on = ls_header-wi_cd.
+    rs_wflog-created_at = ls_header-wi_ct.
+
+    IF ls_header-statustext IS NOT INITIAL.
+      rs_wflog-status = ls_header-statustext.
+    ELSE.
+      rs_wflog-status = ls_header-wi_stat.
+    ENDIF.
+
+    " Fetch comment only for valid human approval steps
+    rs_wflog-comment = get_wi_comment( iv_wi_id ).
 
 ENDMETHOD.
