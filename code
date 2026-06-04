@@ -15,3 +15,41 @@ FORM save_wf_rejection_comments.
   ENDIF.
 
 ENDFORM.
+
+
+
+
+@AbapCatalog.viewEnhancementCategory: [#NONE]
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Workflow Status for ZCJ00'
+@Metadata.ignorePropagatedAnnotations: true
+@VDM.viewType: #CONSUMPTION
+@ObjectModel.usageType:{
+    serviceQuality: #X,
+    sizeCategory: #S,
+    dataClass: #MIXED
+}
+define view entity ZC_A2R_WORKFLOWSTATUS 
+     as select from I_WorkflowStatusDetails as task
+     left outer join I_WorkflowStatusOverview as workflow
+        on workflow.WorkflowInternalID = task.WorkflowInternalID
+{
+    key task.WorkflowTaskInternalID,
+    task.WorkflowInternalID,
+    task.WorkflowTaskExternalStatus,
+    task.WorkflowTaskDefinition,
+    task.WorkflowTaskProcessor,
+    task.WorkflowTaskProcessorRole,
+    task.WrkflwTskCreationUTCDateTime as taskCreationUTCDateTime,
+    task.WrkflwTskCompletionUTCDateTime as taskCompletionUTCDateTime,
+    task.WorkflowTaskStepType,
+    task.WorkflowScenarioDefinition as taskWorkflowScenarioDefinition,
+    task.WorkflowScenarioDefinitionVers as taskWorkflowScenarioDefVers,
+    workflow.WorkflowExternalStatus,
+    workflow.WorkflowScenarioDefinition as wfWorkflowScenarioDefinition,
+    workflow.WorkflowScenarioDefinitionVers as wfWorkflowScenarioDefVers,
+    workflow.WrkflwTskCreationUTCDateTime as wfCreationUTCDateTime,
+    workflow.WrkflwTskCompletionUTCDateTime as wfCompletionUTCDateTime,
+    workflow.NmbrOfCmpltdWrkflwDialogTasks,
+    workflow.NmbrOfActiveWrkflwDialogTasks
+}
