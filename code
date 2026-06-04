@@ -1,40 +1,15 @@
-@AbapCatalog.viewEnhancementCategory: [#NONE]
-@AccessControl.authorizationCheck: #NOT_REQUIRED
-@EndUserText.label: 'Workflow Status for ZCJ00'
-@Metadata.ignorePropagatedAnnotations: true
-@VDM.viewType: #CONSUMPTION
-@ObjectModel.usageType:{
-    serviceQuality: #X,
-    sizeCategory: #S,
-    dataClass: #MIXED
-}
-define view entity ZC_A2R_WORKFLOWSTATUS
-  as select from I_WorkflowStatusDetails as task
-    left outer join I_WorkflowStatusOverview as workflow
-      on workflow.WorkflowInternalID = task.WorkflowInternalID
-    left outer join zta2r_wbshdr as hdr
-      on hdr.top_wi_id = task.WorkflowInternalID
-{
-    key task.WorkflowTaskInternalID,
-    task.WorkflowInternalID,
-    task.WorkflowTaskExternalStatus,
-    task.WorkflowTaskDefinition,
-    task.WorkflowTaskProcessor,
-    task.WorkflowTaskProcessorRole,
-    task.WrkflwTskCreationUTCDateTime       as taskCreationUTCDateTime,
-    task.WrkflwTskCompletionUTCDateTime     as taskCompletionUTCDateTime,
-    task.WorkflowTaskStepType,
-    task.WorkflowScenarioDefinition         as taskWorkflowScenarioDefinition,
-    task.WorkflowScenarioDefinitionVers     as taskWorkflowScenarioDefVers,
-    workflow.WorkflowExternalStatus,
-    workflow.WorkflowScenarioDefinition     as wfWorkflowScenarioDefinition,
-    workflow.WorkflowScenarioDefinitionVers as wfWorkflowScenarioDefVers,
-    workflow.WrkflwTskCreationUTCDateTime   as wfCreationUTCDateTime,
-    workflow.WrkflwTskCompletionUTCDateTime as wfCompletionUTCDateTime,
-    workflow.NmbrOfCmpltdWrkflwDialogTasks,
-    workflow.NmbrOfActiveWrkflwDialogTasks,
+METHOD your_existing_method.
 
-    "Rejection reasons from ZTA2R_WBSHDR
-    hdr.rej_reason1                         as RejectionReason1,
-    hdr.rej_reason2                         as RejectionReason2
-}
+  DATA: lo_wflog   TYPE REF TO zcl_a2r_wbs_workflow_log,
+        lv_success TYPE abap_bool.
+
+  lo_wflog = NEW zcl_a2r_wbs_workflow_log( ).
+
+  lv_success = lo_wflog->save_rejection_comments(
+                 iv_zreq_num = iv_zreq_num ).
+
+  IF lv_success = abap_false.
+    " handle no comments found
+  ENDIF.
+
+ENDMETHOD.
