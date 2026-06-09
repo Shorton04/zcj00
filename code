@@ -1,66 +1,86 @@
-METHOD read_single_wi_log.
-
-    DATA: ls_header        TYPE swr_wihdr,
-          lt_message_lines TYPE STANDARD TABLE OF swr_messag,
-          lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
-          lv_return_code   TYPE sy-subrc.
-
-    CLEAR rs_wflog.
-
-    CALL FUNCTION 'SAP_WAPI_GET_HEADER'
-      EXPORTING
-        workitem_id         = iv_wi_id
-        user                = sy-uname
-        language            = sy-langu
-        translate_texts     = abap_true
-      IMPORTING
-        workitem_attributes = ls_header
-        return_code         = lv_return_code
-      TABLES
-        message_lines       = lt_message_lines
-        message_struct      = lt_message_struc.
-
-    IF lv_return_code <> 0.
-      RETURN.
+    "--------------------------------------------------------------------
+    " Latest TECO <> Actual End  (renamed from teco_actual_end)
+    "--------------------------------------------------------------------
+    CLEAR ls_result-latest_teco_act_end.
+    IF ls_aufk-idat2    IS NOT INITIAL
+      AND ls_afko-getri IS NOT INITIAL.
+      ls_result-latest_teco_act_end =
+          ls_aufk-idat2 - ls_afko-getri.
     ENDIF.
 
-    " Populate agent first so we can check it before proceeding
-    IF ls_header-wi_aa_name IS NOT INITIAL.
-      rs_wflog-agent = ls_header-wi_aa_name.
-    ELSEIF ls_header-wi_aagent IS NOT INITIAL.
-      rs_wflog-agent = ls_header-wi_aagent.
+    "--------------------------------------------------------------------
+    " Latest TECO By / Earliest TECO Date / Earliest TECO By
+    "--------------------------------------------------------------------
+    CLEAR lt_jcds_tmp.
+    LOOP AT lt_jcds_teco INTO ls_jcds
+      WHERE objnr = ls_aufk-objnr.
+      APPEND ls_jcds TO lt_jcds_tmp.
+    ENDLOOP.
+
+    IF lt_jcds_tmp IS NOT INITIAL.
+
+      "--- Latest TECO By (renamed from usnam) ---
+      SORT lt_jcds_tmp BY udate DESCENDING
+                          utime DESCENDING.
+      READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+      IF sy-subrc = 0.
+        ls_result-latest_teco_by = ls_jcds-usnam.
+      ENDIF.
+
+      "--- Earliest TECO Date and By ---
+      SORT lt_jcds_tmp BY udate ASCENDING
+                          utime ASCENDING.
+      READ TABLE lt_jcds_tmp INTO ls_jcds INDEX 1.
+      IF sy-subrc = 0.
+        ls_result-earliest_teco_date = ls_jcds-udate.
+        ls_result-earliest_teco_by   = ls_jcds-usnam.
+      ENDIF.
+
+      "--- Earliest TECO <> Actual End ---
+      CLEAR ls_result-earliest_teco_act_end.
+      IF ls_result-earliest_teco_date IS NOT INITIAL
+        AND ls_afko-getri             IS NOT INITIAL.
+        ls_result-earliest_teco_act_end =
+            ls_result-earliest_teco_date - ls_afko-getri.
+      ENDIF.
+
     ENDIF.
 
-    " Skip system/interface/RFC agents completely
-    " Return empty rs_wflog so caller ignores this workitem
-    IF rs_wflog-agent CS 'IF On-prem'
-    OR rs_wflog-agent CS 'Workflow'
-    OR rs_wflog-agent CS 'RFC'
-    OR rs_wflog-agent CS 'S/4HANA'.
-      CLEAR rs_wflog.
-      RETURN.
-    ENDIF.
 
-    " Only process WBS Approval human steps
-    IF ls_header-wi_text NP 'WBS Approval*'.
-      CLEAR rs_wflog.
-      RETURN.
-    ENDIF.
 
-    " Populate remaining fields only for valid human approval steps
-    rs_wflog-wi_id      = ls_header-wi_id.
-    rs_wflog-top_wi_id  = iv_top_wi_id.
-    rs_wflog-wi_text    = ls_header-wi_text.
-    rs_wflog-created_on = ls_header-wi_cd.
-    rs_wflog-created_at = ls_header-wi_ct.
 
-    IF ls_header-statustext IS NOT INITIAL.
-      rs_wflog-status = ls_header-statustext.
-    ELSE.
-      rs_wflog-status = ls_header-wi_stat.
-    ENDIF.
+      "--- EXISTING: IDAT2 — update label to Latest TECO Date ---
+      WHEN 'IDAT2'.
+        cv_label_short  = 'LTeco.Dt'(030).
+        cv_label_medium = 'Latest TECO Date'(031).
+        cv_label_long   = 'Latest TECO Date'(031).
 
-    " Fetch comment only for valid human approval steps
-    rs_wflog-comment = get_wi_comment( iv_wi_id ).
+      "--- EXISTING: USNAM — rename to LATEST_TECO_BY ---
+      WHEN 'LATEST_TECO_BY'.
+        cv_label_short  = 'LTeco.By'(032).
+        cv_label_medium = 'Latest TECO By'(033).
+        cv_label_long   = 'Latest TECO By User'(033).
 
-ENDMETHOD.
+      "--- EXISTING: TECO_ACTUAL_END — rename to LATEST_TECO_ACT_END ---
+      WHEN 'LATEST_TECO_ACT_END'.
+        cv_label_short  = 'LTeco-End'(082).
+        cv_label_medium = 'LTeco-Act End'(083).
+        cv_label_long   = 'Latest TECO - Actual End'(084).
+
+      "--- NEW: Earliest TECO Date ---
+      WHEN 'EARLIEST_TECO_DATE'.
+        cv_label_short  = 'ETeco.Dt'(085).
+        cv_label_medium = 'Earliest TECO Date'(086).
+        cv_label_long   = 'Earliest TECO Date'(086).
+
+      "--- NEW: Earliest TECO By ---
+      WHEN 'EARLIEST_TECO_BY'.
+        cv_label_short  = 'ETeco.By'(087).
+        cv_label_medium = 'Earliest TECO By'(088).
+        cv_label_long   = 'Earliest TECO By User'(088).
+
+      "--- NEW: Earliest TECO <> Actual End ---
+      WHEN 'EARLIEST_TECO_ACT_END'.
+        cv_label_short  = 'ETeco-End'(089).
+        cv_label_medium = 'ETeco-Act End'(090).
+        cv_label_long   = 'Earliest TECO - Actual End'(091).
