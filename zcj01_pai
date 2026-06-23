@@ -1,108 +1,350 @@
 *&---------------------------------------------------------------------*
-*& Include ZTR_A2R_WBSZCJ01_PAI
-*& Process After Input Modules
+*& Include          ZTR_A2R_WBSZCJ01_PAI
 *&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Module USER_COMMAND_0200 INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0200 INPUT.
+  DATA: gv_ok_code TYPE sy-ucomm.
+
+  gv_ok_code = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code.
+    WHEN 'F4_POSNR'.
+*      PERFORM f4_im_number CHANGING gv_p_posnr.
+
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      PERFORM free_tree_control.
+      LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+    WHEN 'CANCEL'.
+      PERFORM free_tree_control.
+      LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+    WHEN 'EXIT'.
+      PERFORM free_tree_control.
+      LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      " Validation
+      IF gv_p_pspid IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill IM Number' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_post1 IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Project Description' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_verna IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Person Responsible' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_plsez IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Finish Date' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_plsez <= sy-datum.
+        MESSAGE e000(zmsg_a2r) WITH 'Finish Date is less than from the current Date' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_prctr IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Profit Center' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_kostl IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Cost Center' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_profl IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Project Profile' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      IF gv_p_pspid IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Fill Project Template' ##NO_TEXT.
+        RETURN.
+      ENDIF.
+
+      " Validate and go to Screen 100
+      gv_req_type = 'A1'.
+      gs_header-z_reqtype = 'A1'.
+      PERFORM validate_screen1.
+      IF sy-subrc = 0.
+        PERFORM free_tree_control.
+        PERFORM prepare_screen2.
+
+        CALL SCREEN 100.
+      ENDIF.
+  ENDCASE.
+ENDMODULE.
 
 *&---------------------------------------------------------------------*
 *& Module USER_COMMAND_0100 INPUT
 *&---------------------------------------------------------------------*
 MODULE user_command_0100 INPUT.
-  DATA: lv_ok_code TYPE sy-ucomm.
+  DATA: gv_ok_code1 TYPE sy-ucomm.
 
-  lv_ok_code = sy-ucomm.
+  gv_ok_code1 = sy-ucomm.
   CLEAR sy-ucomm.
 
-  CASE lv_ok_code.
-    WHEN 'NEXT' OR 'ENTER'.
-      PERFORM validate_screen1.
-      IF sy-subrc = 0.
-        PERFORM prepare_screen2.
-        CALL SCREEN 200.
+  PERFORM set_screen USING gs_header.
+  PERFORM get_text.
+
+  CASE gv_ok_code1.
+    WHEN 'ENTER' OR ''.
+
+    WHEN 'SAVE'. " save entry as DRAFT
+      IF gv_disp_req = abap_false.
+        PERFORM get_text.
+        PERFORM save_request.
       ENDIF.
 
-    WHEN 'BACK' OR 'EXIT' OR 'CANCEL'.
-      LEAVE TO SCREEN 0.
+    WHEN 'SOP'. " call SOP link
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
 
-    WHEN 'PREVIEW'.
-      PERFORM show_template_preview USING p_pspid.
+    WHEN 'CHECK'. " execute screen validation
+      PERFORM get_text.
+      PERFORM validate_screen2 USING abap_false.
 
-  ENDCASE.
-ENDMODULE.
+    WHEN 'WFLOG'. " WF Logs
+      PERFORM show_workflow_log.
 
-*&---------------------------------------------------------------------*
-*& Module USER_COMMAND_0200 INPUT
-*&---------------------------------------------------------------------*
-MODULE user_command_0200 INPUT.
-  DATA: lv_ok_code TYPE sy-ucomm.
+    WHEN 'SUBMIT'. " send for approval
+      gv_on_submit = abap_true.
 
-  lv_ok_code = sy-ucomm.
-  CLEAR sy-ucomm.
+      " get text for remarks
+      PERFORM get_text.
 
-  CASE lv_ok_code.
-    WHEN 'SAVE'.
-      PERFORM save_request.
+      " execute screen validation before submit/saving
+      PERFORM validate_screen2 USING abap_false.
 
-    WHEN 'CHECK'.
-      PERFORM check_data.
+      CASE gv_req_type.
+        WHEN 'B3'.
+          PERFORM submit_b3.                "Critical Changes
+        WHEN 'B2'.
+          PERFORM submit_b2.                "Budget Distribution
+        WHEN 'B1'.
+          PERFORM submit_b1.                "CAR
+        WHEN 'E1'.
+          PERFORM submit_e1.                "Unclose WBS
+        WHEN OTHERS.
+          PERFORM submit_direct_creation.   "Create Project A1
+      ENDCASE.
 
-    WHEN 'SUBMIT'.
-      PERFORM check_data.
-      IF sy-subrc = 0.
-        PERFORM submit_request.
-      ENDIF.
 
-    WHEN 'TOTALUP'.
-      PERFORM total_up_budget.
+    WHEN 'UPLD'. " upload file
+      PERFORM upload.
 
-    WHEN 'ADDROW'.
+    WHEN 'DWNLD'. " dowwnload file
+      PERFORM download.
+
+    WHEN 'TOTALUP'. " total up approved budget
+      PERFORM total_up_wbs_tc.
+
+      PERFORM b3_level1.
+
+    WHEN 'ADDROW'. " add row in WBS info
       PERFORM add_wbs_row.
 
-    WHEN 'DELROW'.
+    WHEN 'DELROW'. " delete row in WBS info
       PERFORM delete_wbs_rows.
 
-    WHEN 'ATTACH'.
+    WHEN 'ATTCH'. " add attachment before submit
       PERFORM handle_attachments.
+      CLEAR gv_rw_mode.
+      gv_rw_mode = 'E'.
+      PERFORM start_gos USING    gs_header-zreq_num
+                                 gv_rw_mode
+                        CHANGING go_gos.
 
     WHEN 'BACK'.
-      LEAVE TO SCREEN 100.
+      CLEAR: gv_im_posid_display,
+             gv_im_posid_user,
+             gv_u_im_posid.
+      CLEAR gv_p_req_num.
+      gv_header_initialized = abap_false.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
 
     WHEN 'EXIT' OR 'CANCEL'.
-      LEAVE TO SCREEN 0.
+      CLEAR: gv_im_posid_display,
+             gv_im_posid_user,
+             gv_u_im_posid.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO TRANSACTION 'ZA2R_ZCJ00'.
 
   ENDCASE.
 ENDMODULE.
 
 *&---------------------------------------------------------------------*
-*& Module MODIFY_TABLE_CONTROL INPUT
+*& Module VALIDATE_POSNR INPUT
 *&---------------------------------------------------------------------*
-MODULE modify_table_control INPUT.
-  " Update table when user changes values
-  MODIFY gt_wbs_display FROM gs_wbs_display INDEX tc_wbs-current_line.
+MODULE validate_posnr INPUT.
+
+  DATA: gv_posnr_numeric TYPE im_posnr,
+        gv_input_char    TYPE char20,
+        gv_posid         TYPE im_posid.
+
+  IF gv_p_posnr IS NOT INITIAL.
+
+
+    " Save original input
+    gv_input_char = gv_p_posnr.
+
+    " Remove leading spaces and convert to uppercase
+    CONDENSE gv_input_char NO-GAPS.
+    TRANSLATE gv_input_char TO UPPER CASE.
+
+    " STEP 1: Try to find as POSID (user-friendly format like "PR02")
+    " This handles when user types PR02 instead of 00000011
+    gv_posid = gv_input_char.
+
+    SELECT SINGLE posnr FROM impr
+      INTO @gv_posnr_numeric
+      WHERE posnr = @gv_posnr_numeric
+      AND posid = @gv_posid.
+
+    IF sy-subrc = 0.
+      " Found via POSID - use the POSNR we got
+      gv_p_posnr = gv_posnr_numeric.
+    ELSE.
+      " STEP 2: Not found as POSID, try as POSNR with leading zeros
+      " Apply ALPHA conversion to add leading zeros
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = gv_input_char
+        IMPORTING
+          output = gv_posnr_numeric.
+
+      " Validate this POSNR exists
+      SELECT SINGLE posnr FROM impr
+        INTO @DATA(gv_check)
+        WHERE posnr = @gv_posnr_numeric.
+
+      IF sy-subrc = 0.
+        " Found as POSNR
+        gv_p_posnr = gv_posnr_numeric.
+      ELSE.
+        " Not found in either format
+        MESSAGE e002 WITH gv_input_char. " IM Number not found
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    " Load data if POSNR changed
+    IF gv_p_posnr <> gv_posnr_old.
+      PERFORM get_im_data USING gv_p_posnr.
+      gv_posnr_old = gv_p_posnr.
+    ENDIF.
+
+
+  ENDIF.
+
 ENDMODULE.
+
+
 
 *&---------------------------------------------------------------------*
 *& Form PREPARE_SCREEN2
 *&---------------------------------------------------------------------*
 FORM prepare_screen2.
+  DATA gv_error          TYPE abap_bool.
 
-  " Get additional IM data
-  PERFORM get_additional_im_data USING p_posnr.
+  "Always get IM data (safe, doesn't overwrite screen2 edits)
+  PERFORM get_additional_im_data USING gv_p_posnr.
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gv_display_reqnum = gv_gos_reqnum.
+  ENDIF.
 
-  " Copy template structure
+  IF gv_display_reqnum = 0.
+    CLEAR gv_display_reqnum.
+  ENDIF.
+
+  "Initialize screen2 ONCE only
+  IF gv_header_initialized = abap_true.
+    RETURN.
+  ENDIF.
+
+  IF gv_disp_req = abap_true.
+    gv_req_type = gs_header-z_reqtype.
+  ENDIF.
+
+  "------------------------------------------------------------
+  "FIRST ENTRY ONLY
+  "------------------------------------------------------------
+
+  "=============================
+  "EDIT SAVED REQUEST (F1)
+  "=============================
+  IF gv_edit_mode = abap_true.
+
+    "At this point, caller already loaded:
+    " - gs_header from zta2r_WBSHDR
+    " - gt_wbs_items from zta2r_WBSITEM
+    "So DO NOT rebuild anything from template.
+*    PERFORM refresh_gt_wbs_items_from_db USING gv_loaded_reqnum.
+
+    PERFORM convert_to_display.
+    PERFORM set_wbs_default_values.  "only fills INITIAL values (safe)
+
+    "IMPORTANT: Do NOT call populate_header_structure in edit mode
+    "because it may overwrite DB header values (erdat/ernam etc.)
+
+    gv_header_initialized = abap_true.
+    RETURN.
+
+  ENDIF.
+
+  IF gv_request_type = 'B1'.
+
+    PERFORM load_b1_project_and_car_wbs.
+
+    PERFORM convert_to_display.
+    PERFORM set_wbs_default_values.
+
+    gv_header_initialized = abap_true.
+    RETURN.
+
+  ENDIF.
+  IF go_builder IS INITIAL.
+    "if you normally create it elsewhere, keep this defensive guard
+    CREATE OBJECT go_builder.  "adjust constructor if needed
+  ENDIF.
+  "=============================
+  "CREATE MODE (A1)
+  "=============================
+
+  " Build WBS items in correct PRHIS order
+  CLEAR gt_wbs_items.
   CALL METHOD go_builder->copy_template_structure
     EXPORTING
-      iv_pspid     = p_pspid
+      iv_pspid     = gv_p_pspid
+      iv_kostl     = gv_p_kostl
     CHANGING
       ct_wbs_items = gt_wbs_items.
 
-  " Convert to display format
   PERFORM convert_to_display.
-
-  " Set default values
   PERFORM set_wbs_default_values.
-
-  " Initialize header
   PERFORM populate_header_structure.
+  PERFORM validate_approver_matrix CHANGING gv_error.
+
+  gv_header_initialized = abap_true.
 
 ENDFORM.
 
@@ -111,7 +353,7 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM get_additional_im_data USING iv_posnr TYPE im_posnr.
 
-  SELECT SINGLE bukrs werks izwek usr008
+  SELECT SINGLE bukrs werks izwek usr08
     FROM impr
     INTO (gv_bukrs, gv_werks, gv_izwek, gv_usr008)
     WHERE posnr = iv_posnr.
@@ -125,19 +367,42 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *& Form CONVERT_TO_DISPLAY
 *&---------------------------------------------------------------------*
+
 FORM convert_to_display.
 
-  REFRESH gt_wbs_display.
+  DATA gv_posid_external TYPE ps_posid.
+
+  FREE gt_wbs_display.
 
   LOOP AT gt_wbs_items INTO gs_wbs_item.
+    CLEAR: gs_wbs_display, gv_posid_external.
+    IF gv_raw_data = abap_true AND gs_wbs_item-stufe = 1.
+      gv_p_post1              = gs_wbs_item-post1.
+    ENDIF.
     gs_wbs_display-stufe = gs_wbs_item-stufe.
-    gs_wbs_display-posid = gs_wbs_item-posid.
     gs_wbs_display-post1 = gs_wbs_item-post1.
     gs_wbs_display-kostl = gs_wbs_item-kostl.
+    gs_wbs_display-posnr = gs_wbs_item-posnr.
     gs_wbs_display-zapproved_budg = gs_wbs_item-wert2.
     gs_wbs_display-zbudget_check = gs_wbs_item-zbudget_check.
+    gs_wbs_display-bukrs = gs_wbs_item-bukrs.
     gs_wbs_display-imprf = gs_wbs_item-imprf.
     gs_wbs_display-prart = gs_wbs_item-prart.
+
+    IF gs_wbs_item-posid IS NOT INITIAL.
+      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
+        EXPORTING
+          input  = gs_wbs_item-posid
+        IMPORTING
+          output = gv_posid_external
+        EXCEPTIONS
+          OTHERS = 1.
+
+      gs_wbs_display-posid = COND #( WHEN sy-subrc = 0 AND gv_posid_external IS NOT INITIAL
+                                     THEN gv_posid_external
+                                     ELSE gs_wbs_item-posid ).
+    ENDIF.
+
     APPEND gs_wbs_display TO gt_wbs_display.
   ENDLOOP.
 
@@ -149,40 +414,96 @@ ENDFORM.
 FORM set_wbs_default_values.
 
   LOOP AT gt_wbs_display INTO gs_wbs_display.
-    " Set cost center from header
-    gs_wbs_display-kostl = p_kostl.
 
-    " Set budget check for level 1
-    IF gs_wbs_display-stufe = 1.
+    IF gv_p_post1 IS INITIAL AND gs_wbs_display-stufe = 1.
+      gv_p_post1 = gs_wbs_display-post1.
+    ENDIF.
+
+    "Default KOSTL only if empty (don't overwrite user edit)
+    IF gs_wbs_display-kostl IS INITIAL.
+      gs_wbs_display-kostl = gv_p_kostl.
+    ENDIF.
+
+    "Budget check default for STUFE=1 only if initial
+    IF gs_wbs_display-stufe = 1 AND gs_wbs_display-zbudget_check IS INITIAL.
       gs_wbs_display-zbudget_check = gc_x.
-      gs_wbs_display-post1 = p_post1.
+    ENDIF.
+
+    "Level 1 description = to Proj description
+    IF gs_wbs_display-stufe = 1.
+      gs_wbs_display-post1 = gv_p_post1.
     ENDIF.
 
     MODIFY gt_wbs_display FROM gs_wbs_display.
+
   ENDLOOP.
 
 ENDFORM.
+
 
 *&---------------------------------------------------------------------*
 *& Form POPULATE_HEADER_STRUCTURE
 *&---------------------------------------------------------------------*
 FORM populate_header_structure.
 
-  gs_header-posnr = p_posnr.
-  gs_header-prnam = p_prnam.
-  gs_header-pspnr = p_post1.
-  gs_header-vernr = p_verna.
-  gs_header-plsez = p_plsez.
-  gs_header-bukrs = gv_bukrs.
-  gs_header-werks = gv_werks.
-  gs_header-prctr = p_prctr.
-  gs_header-kostl = p_kostl.
-  gs_header-izwek = gv_izwek.
-  gs_header-zunifier_proj = p_usr10.
-  gs_header-usr008 = gv_usr008.
-  gs_header-ernam = sy-uname.
-  gs_header-zz_request_type = gv_request_type.
-  gs_header-erdat = sy-datum.
+  IF gs_header-posnr IS INITIAL.
+    gs_header-posnr = gv_p_posnr.
+  ENDIF.
+  IF gs_header-prnam IS INITIAL.
+    gs_header-prnam = gv_p_prnam.
+  ENDIF.
+  IF gv_gjahr        IS INITIAL.
+    gv_gjahr        = gv_p_gjahr.
+  ENDIF.
+  IF gs_header-erdat IS INITIAL.
+    gs_header-erdat = sy-datum.
+  ENDIF.
+  IF gs_header-bukrs IS INITIAL.
+    gs_header-bukrs = gv_bukrs.
+  ENDIF.
+  IF gs_header-werks IS INITIAL.
+    gs_header-werks = gv_werks.
+  ENDIF.
+  IF gs_header-izwek IS INITIAL.
+    gs_header-izwek = gv_izwek.
+  ENDIF.
+  IF gs_header-profl IS INITIAL.
+    gs_header-profl = gv_p_profl.
+  ENDIF.
+  IF gs_header-zunifier_proj IS INITIAL.
+    gs_header-zunifier_proj = gv_p_usr10_c.
+  ENDIF.
+  IF gs_header-usr008 IS INITIAL. gs_header-usr008 = gv_usr008. ENDIF.
+  IF gs_header-ernam IS INITIAL.
+    gs_header-ernam = sy-uname.
+  ENDIF.
+  IF gs_header-z_reqtype IS INITIAL.
+    gs_header-z_reqtype = gv_request_type.
+  ENDIF.
+
+  " User-editable fields: only auto-populate if user never edited them
+  IF gv_u_post1 IS INITIAL AND gs_header-post1 IS INITIAL.
+    gs_header-post1 = gv_p_post1.
+  ENDIF.
+  IF gv_u_vernr IS INITIAL AND gs_header-vernr IS INITIAL.
+    gs_header-vernr = gv_p_verna.
+  ENDIF.
+  IF gv_u_plsez IS INITIAL AND gs_header-plsez IS INITIAL.
+    gs_header-plsez = gv_p_plsez.
+  ENDIF.
+  IF gv_u_prctr IS INITIAL AND gs_header-prctr IS INITIAL.
+    gs_header-prctr = gv_p_prctr.
+  ENDIF.
+  IF gv_u_kostl IS INITIAL AND gs_header-kostl IS INITIAL.
+    gs_header-kostl = gv_p_kostl.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+  IF gv_im_posid_display IS INITIAL.
+    PERFORM get_im_posid_for_display USING gv_p_posnr CHANGING gv_im_posid_display.
+  ENDIF.
 
 ENDFORM.
 
@@ -191,28 +512,95 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM save_request.
 
-  DATA: lv_reqnum TYPE char10.
+  DATA: gv_reqnum TYPE zta2r_wbshdr-zreq_num.
 
-  " Convert display to internal format
-  PERFORM convert_from_display.
+  "Bring screen values back into gs_header/gt_wbs_display
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.  "gt_wbs_display -> gt_wbs_items (must fill WERT2 etc.)
+  PERFORM append_tobe.
 
-  " Update header
-  PERFORM populate_header_structure.
+  "DO NOT call populate_header_structure in edit mode (can overwrite DB audit fields)
+  IF gv_edit_mode <> abap_true.
+    PERFORM populate_header_structure.
+  ELSE.
+    IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+      gs_header-z_remarks = gv_z_remarks.
+    ENDIF.
+  ENDIF.
 
-  " Call builder method
+  "=========================
+  "F1: EDIT SAVED REQUEST
+  "=========================
+  IF gv_edit_mode = abap_true.
+    IF gs_header-zreq_num = 0 OR gs_header-zreq_num IS INITIAL.
+      IF go_builder IS INITIAL.
+        "if you normally create it elsewhere, keep this defensive guard
+        CREATE OBJECT go_builder.  "adjust constructor if needed
+
+        CALL METHOD go_builder->get_next_request_number
+          RECEIVING
+            rv_reqnum = gv_request_number.
+
+
+      ENDIF.
+
+    ENDIF.
+
+    IF gs_header-zreq_num = 0 OR gs_header-zreq_num IS INITIAL.
+      gs_header-zreq_num = gv_request_number.
+    ENDIF.
+
+    gv_reqnum = gs_header-zreq_num.
+
+    PERFORM update_draft_request_db USING gv_reqnum.
+
+    gs_header-waers = gv_project_currency.
+
+    IF gv_gos_reqnum IS NOT INITIAL.
+      gs_header-zreq_num = gv_gos_reqnum.
+    ENDIF.
+
+    CALL METHOD go_builder->save_request
+      EXPORTING
+        is_header    = gs_header
+        it_wbs_items = gt_wbs_items
+        it_wbs_unclose = gt_wbs_unclose
+      RECEIVING
+        rv_reqnum    = gv_reqnum.
+
+    gv_request_number = gv_reqnum.
+    COMMIT WORK AND WAIT.
+    MESSAGE s000(zmsg_a2r) WITH 'Saved Request :'(m33) gv_reqnum.
+    CALL TRANSACTION 'ZA2R_ZCJ00'.
+  ENDIF.
+
+  "=========================
+  "A1: CREATE/SAVE REQUEST
+  "=========================
+  IF go_builder IS INITIAL.
+    "if you normally create it elsewhere, keep this defensive guard
+    CREATE OBJECT go_builder.  "adjust constructor if needed
+  ENDIF.
+  gs_header-waers = gv_project_currency.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gs_header-zreq_num = gv_gos_reqnum.
+  ENDIF.
+
   CALL METHOD go_builder->save_request
     EXPORTING
       is_header    = gs_header
       it_wbs_items = gt_wbs_items
+      it_wbs_unclose = gt_wbs_unclose
     RECEIVING
-      rv_reqnum    = lv_reqnum.
+      rv_reqnum    = gv_reqnum.
 
-  IF lv_reqnum IS NOT INITIAL.
-    gv_request_number = lv_reqnum.
-    MESSAGE s012 WITH lv_reqnum. " Request saved
-    COMMIT WORK.
+  IF gv_reqnum IS NOT INITIAL.
+    gv_request_number = gv_reqnum.
+    MESSAGE s000(zmsg_a2r) WITH gv_reqnum.
+    COMMIT WORK AND WAIT.
   ELSE.
-    MESSAGE e013. " Error saving request
+    MESSAGE e013.
   ENDIF.
 
 ENDFORM.
@@ -220,127 +608,406 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *& Form CHECK_DATA
 *&---------------------------------------------------------------------*
-FORM check_data.
-
-  DATA: lv_error TYPE abap_bool.
-
-  " Convert display to internal
-  PERFORM convert_from_display.
-
-  " Populate header
-  PERFORM populate_header_structure.
-
-  " Mandatory fields
-  PERFORM check_mandatory_fields CHANGING lv_error.
-
-  " Cost center validation
-  PERFORM validate_cost_center USING gs_header-kostl
-                                     gs_header-plsez
-                               CHANGING lv_error.
-
-  " Profit center validation
-  PERFORM validate_profit_center USING gs_header-prctr
-                                       gs_header-plsez
-                                 CHANGING lv_error.
-
-  " CC to PC assignment
-  PERFORM validate_cc_pc_assignment USING gs_header-kostl
-                                          gs_header-prctr
-                                    CHANGING lv_error.
-
-  " IM budget validation
-  PERFORM validate_im_budget CHANGING lv_error.
-
-  " Approver matrix
-  PERFORM validate_approver_matrix USING gs_header-bukrs
-                                         p_profl
-                                         gs_header-zz_request_type
-                                   CHANGING lv_error.
-
-  IF lv_error = abap_true.
-    sy-subrc = 4.
-    MESSAGE e004. " Validation errors found
-  ELSE.
-    sy-subrc = 0.
-    MESSAGE s014. " All validations passed
-  ENDIF.
-
-ENDFORM.
+*FORM check_data.
+*
+*  DATA: gv_error TYPE abap_bool,
+*        gv_kokrs TYPE kokrs.
+*
+*  PERFORM convert_from_display.
+*  PERFORM populate_header_structure.
+*
+*  PERFORM check_mandatory_fields CHANGING gv_error.
+*
+*  SELECT SINGLE kokrs FROM impr INTO gv_kokrs WHERE posnr = gv_p_posnr.
+*
+*  PERFORM validate_cost_center USING gv_kokrs
+*  gs_header-kostl
+*  gs_header-plsez
+*  CHANGING gv_error.
+*
+*  PERFORM validate_profit_center USING gv_kokrs
+*  gs_header-prctr
+*  gs_header-plsez
+*  gs_header-prnam
+*  gs_header-posnr
+*  CHANGING gv_error.
+*
+*  PERFORM validate_cc_pc_assignment USING gv_kokrs
+*  gs_header-kostl
+*  gs_header-prctr
+*  CHANGING gv_error.
+*
+**  PERFORM validate_im_budget CHANGING gv_error.
+*
+*  " get approver from the config table
+*  PERFORM validate_approver_matrix
+*    CHANGING gv_error.
+*
+*  IF gv_error = abap_true.
+*    sy-subrc = 4.
+*    MESSAGE e004.
+*  ELSE.
+*    sy-subrc = 0.
+*    MESSAGE s014.
+*  ENDIF.
+*
+*ENDFORM.
 
 *&---------------------------------------------------------------------*
 *& Form CONVERT_FROM_DISPLAY
 *&---------------------------------------------------------------------*
 FORM convert_from_display.
 
-  REFRESH gt_wbs_items.
+  DATA: gv_posid_internal TYPE ps_posid,
+        gv_vkokr          TYPE zta2r_wbsitem-vkokr.
+
+
+  FREE gt_wbs_items.
 
   LOOP AT gt_wbs_display INTO gs_wbs_display.
-    CLEAR gs_wbs_item.
+    CLEAR: gs_wbs_item, gv_posid_internal.
+
+    " Map from display table to internal table
     gs_wbs_item-stufe = gs_wbs_display-stufe.
-    gs_wbs_item-posid = gs_wbs_display-posid.
     gs_wbs_item-post1 = gs_wbs_display-post1.
     gs_wbs_item-kostl = gs_wbs_display-kostl.
     gs_wbs_item-wert2 = gs_wbs_display-zapproved_budg.
     gs_wbs_item-zbudget_check = gs_wbs_display-zbudget_check.
+    gs_wbs_item-bukrs = gs_wbs_display-bukrs.
+    gs_wbs_item-vkokr = gv_vkokr.
+    gs_wbs_item-posnr = gs_wbs_display-posnr.
     gs_wbs_item-imprf = gs_wbs_display-imprf.
     gs_wbs_item-prart = gs_wbs_display-prart.
-    gs_wbs_item-bukrs = gv_bukrs.
-    APPEND gs_wbs_item TO gt_wbs_items.
-  ENDLOOP.
 
+    " Convert POSID from external back to internal
+*    IF gs_wbs_display-posid IS NOT INITIAL.
+*      PERFORM convert_wbs_posid_to_internal
+*        USING    gs_wbs_display-posid
+*        CHANGING gv_posid_internal.
+*
+*      IF gv_posid_internal IS NOT INITIAL.
+*        gs_wbs_item-posid = gv_posid_internal.
+*      ELSE.
+*        gs_wbs_item-posid = gs_wbs_display-posid.
+*      ENDIF.
+*    ENDIF.
+
+    "  CRITICAL FIX: Convert POSID from external (PC.000001) back to internal (PC000001)
+*    IF gs_wbs_display-posid IS NOT INITIAL.
+*      CALL FUNCTION 'CONVERSION_EXIT_ABPSP_INPUT'
+*        EXPORTING
+*          input  = gs_wbs_display-posid
+*        IMPORTING
+*          output = gv_posid_internal
+*        EXCEPTIONS
+*          OTHERS = 1.
+
+    IF sy-subrc = 0 AND gv_posid_internal IS NOT INITIAL.
+      gs_wbs_item-posid = gv_posid_internal.
+    ELSE.
+      gs_wbs_item-posid = gs_wbs_display-posid.
+    ENDIF.
+*    ENDIF.
+
+    APPEND gs_wbs_item TO gt_wbs_items.
+
+  ENDLOOP.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form SUBMIT_REQUEST
+*& Form UPLOAD
 *&---------------------------------------------------------------------*
-FORM submit_request.
+FORM upload.
 
-  DATA: lv_success TYPE abap_bool.
+  TYPES: BEGIN OF ty_upload,
+           stufe  TYPE zta2r_wbsitem-stufe,
+           pspid  TYPE zta2r_wbsitem-pspid,
+           post1  TYPE zta2r_wbsitem-post1,
+           budget TYPE zta2r_wbsitem-wert2,
+         END OF ty_upload.
 
-  " Convert and populate
-  PERFORM convert_from_display.
-  PERFORM populate_header_structure.
+  DATA: lt_file_data TYPE STANDARD TABLE OF ty_upload,
+        lt_raw_data  TYPE truxs_t_text_data,
+        gv_subrc     LIKE sy-subrc,
+        lt_file      TYPE filetable,
+        l_file       TYPE rlgrap-filename.
 
-  " Set status to pending
-  gs_header-request_status = 'PENDING'.
-
-  " Submit via builder
-  CALL METHOD go_builder->submit_request
+  " Display File Open Dialog control/screen
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
     EXPORTING
-      is_header    = gs_header
-      it_wbs_items = gt_wbs_items
-    RECEIVING
-      rv_success   = lv_success.
+      window_title     = 'Select File' ##NO_TEXT
+      default_filename = '*.XLS'
+      multiselection   = ' '
+    CHANGING
+      file_table       = lt_file
+      rc               = gv_subrc.
 
-  IF lv_success = abap_true.
-    MESSAGE s015 WITH gs_header-zreq_num. " Request submitted
-    COMMIT WORK.
-    LEAVE TO SCREEN 0.
-  ELSE.
-    MESSAGE e016. " Error submitting
+  " Write path on input area
+  READ TABLE lt_file INTO DATA(ls_file) INDEX 1.
+  IF sy-subrc EQ 0.
+    l_file = ls_file-filename.
+
+**  Get Excel file data in internal table.
+    CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+      EXPORTING
+        i_line_header        = 'X'
+        i_tab_raw_data       = lt_raw_data
+        i_filename           = l_file
+      TABLES
+        i_tab_converted_data = lt_file_data
+      EXCEPTIONS
+        conversion_failed    = 1
+        OTHERS               = 2.
+    IF sy-subrc <> 0.
+      CLEAR ls_file.
+    ENDIF.
+  ENDIF.
+
+  IF lt_file_data IS NOT INITIAL.
+    LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_fdata>).
+      READ TABLE lt_file_data INTO DATA(ls_file_data) WITH KEY pspid = <fs_fdata>-pspid.
+      IF sy-subrc = 0.
+        " IF gv_type = 2.
+        IF <fs_fdata>-post1 NE ls_file_data-post1 OR
+           <fs_fdata>-wert2 NE ls_file_data-budget.
+          <fs_fdata>-zchange = 'U'.
+        ENDIF.
+        "ENDIF.
+        <fs_fdata>-stufe = ls_file_data-stufe.
+        <fs_fdata>-pspid = ls_file_data-pspid.
+        <fs_fdata>-post1 = ls_file_data-post1.
+        <fs_fdata>-wert2 = ls_file_data-budget.
+
+      ENDIF.
+    ENDLOOP.
   ENDIF.
 
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form TOTAL_UP_BUDGET
+*& Form DOWNLOAD
 *&---------------------------------------------------------------------*
-FORM total_up_budget.
+FORM download.
 
-  " Convert to internal
-  PERFORM convert_from_display.
+  TYPES: BEGIN OF ty_download,
+           pspid   TYPE zta2r_wbsitem-pspid,
+           zchange TYPE zta2r_wbsitem-zchange,
+           stufe   TYPE zta2r_wbsitem-stufe,
+           post1   TYPE zta2r_wbsitem-post1,
+           budget  TYPE zta2r_wbsitem-zbudget_check,
+         END OF ty_download,
+         BEGIN OF ts_fieldnames,
+           fieldname TYPE char50,
+         END OF ts_fieldnames.
 
-  " Call builder method
-  CALL METHOD go_builder->total_up_budget
+  DATA: ls_download   TYPE ty_download,
+        lt_download   TYPE TABLE OF ty_download,
+        lt_fieldnames TYPE STANDARD TABLE OF ts_fieldnames,
+        ls_fieldnames TYPE ts_fieldnames.
+
+  DATA: gv_action   TYPE i,
+        gv_filename TYPE string,
+        gv_fullpath TYPE string,
+        gv_path     TYPE string.
+
+  "Append header to the Excel file.
+  ls_fieldnames-fieldname = 'Level'(c02).
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'WBS Element'(c03).
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'Description'(c04).
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  ls_fieldnames-fieldname = 'Budget'(c05).
+  APPEND ls_fieldnames TO lt_fieldnames.
+  CLEAR ls_fieldnames.
+
+  LOOP AT gt_wbs_items INTO gs_wbs_item.
+    ls_download-stufe  = gs_wbs_item-stufe.
+    ls_download-post1  = gs_wbs_item-post1.
+    ls_download-pspid  = gs_wbs_item-pspid.
+    ls_download-budget = gs_wbs_item-zbudget_check.
+
+    APPEND ls_download TO lt_download.
+    CLEAR ls_download.
+  ENDLOOP.
+
+  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+    EXPORTING
+      ##NO_TEXT window_title      = 'Please Select the location'
+      ##NO_TEXT default_extension = 'XLSX'
+      default_file_name           = 'Capex_template.xls'
+      file_filter                 = '*.xls'
     CHANGING
-      ct_wbs_items = gt_wbs_items.
+      filename                    = gv_filename
+      path                        = gv_path
+      fullpath                    = gv_fullpath
+      user_action                 = gv_action.
 
-  " Convert back to display
-  PERFORM convert_to_display.
+  IF NOT gv_action IS INITIAL.
+    EXIT.
+  ENDIF.
 
-  MESSAGE s017. " Budget totaled up
+  CALL METHOD cl_gui_frontend_services=>gui_download
+    EXPORTING
+      filename              = gv_filename
+      filetype              = 'ASC'
+      write_field_separator = 'X'
+      fieldnames            = lt_fieldnames
+    CHANGING
+      data_tab              = lt_download.
 
 ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form SUBMIT_REQUEST
+*&---------------------------------------------------------------------*
+*FORM submit_request.
+*
+*  DATA: gv_reqnum        TYPE char10,
+*        gv_appr1         TYPE char8,
+*        gv_appr2         TYPE char8,
+*        gv_auto          TYPE char1,
+*        gv_error_handler TYPE char8,
+*        lt_l1_approvers  TYPE hpa_t_bname,
+*        lt_l2_approvers  TYPE hpa_t_bname,
+*        gv_found         TYPE abap_bool,
+*        gv_success       TYPE abap_bool.
+*
+*  " ═══════════════════════════════════════════════════════════════════
+*  " STEP 1: CONVERT DATA FROM DISPLAY FORMAT TO INTERNAL FORMAT
+*  " ═══════════════════════════════════════════════════════════════════
+*  PERFORM sync_screen_to_header.
+*  PERFORM convert_from_display.
+*  PERFORM populate_header_structure.
+*
+*  " ═══════════════════════════════════════════════════════════════════
+*  " STEP 2: SAVE REQUEST (GETS REQUEST NUMBER)
+*  " ═══════════════════════════════════════════════════════════════════
+*  gv_reqnum = go_builder->save_request(
+*    is_header    = gs_header
+*    it_wbs_items = gt_wbs_items
+*  ).
+*
+*  IF gv_reqnum IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Failed to save request before submit'(m15).
+*    RETURN.
+*  ENDIF.
+*
+*  " Store request number in header
+*  gs_header-zreq_num = gv_reqnum.
+*
+*  " ═══════════════════════════════════════════════════════════════════
+*  " STEP 3: GET APPROVERS FROM CONFIGURATION + HRP1001
+*  " ═══════════════════════════════════════════════════════════════════
+*  gv_found = go_builder->check_approver_matrix(
+*    EXPORTING
+*      iv_bukrs         = gs_header-bukrs      " Company Code (e.g., 'ZX99')
+*      iv_profl         = gs_header-profl      " Project Profile (e.g., 'ZPC0001')
+*      iv_reqtype       = gs_header-z_reqtype  " Request Type (e.g., 'A1')
+*    IMPORTING
+*      ev_auto          = gv_auto              " 'X' if no approvers configured
+*      ev_found = gv_found
+*      et_l1_approvers  = lt_l1_approvers      " VARYF values (e.g., 'USHQ75177')
+*      et_l2_approvers  = lt_l2_approvers
+*  ).
+*
+*  IF gv_found = abap_false.
+*    MESSAGE e000(zmsg_a2r) WITH 'No approver configuration found for'(m08)
+*                                 gs_header-bukrs gs_header-profl.
+*    RETURN.
+*  ENDIF.
+*
+*  " ═══════════════════════════════════════════════════════════════════
+*  " STEP 4: UPDATE STATUS TO PENDING (CRITICAL!)
+*  " ═══════════════════════════════════════════════════════════════════
+*  " This MUST happen BEFORE workflow trigger so the database shows PENDING
+*  UPDATE zta2r_wbshdr
+*  SET request_status = 'pending'
+*  WHERE zreq_num = gv_reqnum.
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE e000(zmsg_a2r) WITH 'Failed to update status to pending for'(m07) gv_reqnum.
+**    ROLLBACK WORK.
+*    RETURN.
+*  ENDIF.
+*
+*  " ✅ CRITICAL: Commit the status change BEFORE triggering workflow
+*  " This ensures workflow can query the request and see status = 'PENDING'
+*  COMMIT WORK AND WAIT.
+*
+*  " Update local header structure
+*  gs_header-request_status = 'pending'.
+*
+*  " ═══════════════════════════════════════════════════════════════════
+*  " STEP 5: TRIGGER WORKFLOW OR AUTO-APPROVE
+*  " ═══════════════════════════════════════════════════════════════════
+*
+*  IF gv_auto = 'x'.
+*    " ───────────────────────────────────────────────────────────────
+*    " AUTO-APPROVAL PATH: No approvers configured
+*    " ───────────────────────────────────────────────────────────────
+*    MESSAGE i000(zmsg_a2r) WITH 'Request' gv_reqnum 'has no approvers - auto-approving' ##NO_TEXT.
+*
+*
+*    " Call create_project directly
+*    gv_success = go_builder->create_project(
+*      is_header    = gs_header
+*      it_wbs_items = gt_wbs_items
+*    ).
+*
+*    IF gv_success = abap_true.
+*      " Project created successfully - mark as APPROVED
+*      UPDATE zta2r_wbshdr
+*        SET request_status = 'APPROVED'
+*            zapproved_by = sy-uname
+*            zrequest_approved_on = sy-datum
+*        WHERE zreq_num = gv_reqnum.
+*
+*      COMMIT WORK.
+*      MESSAGE s000(zmsg_a2r) WITH 'Request'(m20) gv_reqnum 'approved and project created'(m28).
+*      LEAVE TO SCREEN 0.
+*
+*    ELSE.
+*      " Project creation failed - mark as ERROR
+*      UPDATE zta2r_wbshdr
+*        SET request_status = 'ERROR'
+*        WHERE zreq_num = gv_reqnum.
+*
+*      COMMIT WORK.
+*      MESSAGE e000(zmsg_a2r) WITH 'Error creating project for request'(m23) gv_reqnum.
+*      RETURN.
+*    ENDIF.
+*
+*
+*  ELSE.
+*    " ───────────────────────────────────────────────────────────────
+*    " WORKFLOW PATH: Approvers exist, trigger workflow
+*    " ───────────────────────────────────────────────────────────────
+*    gv_success = go_builder->trigger_workflow(
+*      is_header   = gs_header
+*      it_l1_apprv = lt_l1_approvers   " VARYF values (e.g., 'USHQ75177')
+*      it_l2_apprv = lt_l2_approvers
+*    ).
+*
+*
+*    IF gv_success = abap_true.
+*      COMMIT WORK.
+*      MESSAGE s000(zmsg_a2r) WITH 'Request'(m20) gv_reqnum 'submitted for approval'(m24).
+*      LEAVE TO SCREEN 0.
+*
+*    ELSE.
+*      " Workflow trigger failed - rollback and show error
+**      ROLLBACK WORK.
+*      MESSAGE e000(zmsg_a2r) WITH 'Workflow trigger failed for request'(m25) gv_reqnum.
+*      RETURN.
+*    ENDIF.
+*  ENDIF.
+*ENDFORM.
 
 *&---------------------------------------------------------------------*
 *& Form ADD_WBS_ROW
@@ -373,68 +1040,891 @@ ENDFORM.
 *& Form HANDLE_ATTACHMENTS
 *&---------------------------------------------------------------------*
 FORM handle_attachments.
+  IF gv_gos_reqnum IS INITIAL.
+    IF go_builder IS INITIAL.
+      "if you normally create it elsewhere, keep this defensive guard
+      CREATE OBJECT go_builder.  "adjust constructor if needed
+    ENDIF.
+    IF gv_b_reqnum = abap_false.
+      IF gv_req_type <> 'A1'.
+        CLEAR: gs_header-zreq_num,
+               gv_gos_reqnum.
+        gv_b_reqnum = abap_true.
+      ENDIF.
+    ENDIF.
 
-  " Placeholder for attachment handling
-  MESSAGE i020. " Attachment functionality
+    CALL METHOD go_builder->get_next_request_number
+      RECEIVING
+        rv_reqnum = gv_gos_reqnum.
+  ENDIF.
+
+  IF gv_req_type <> 'A1' AND gv_req_type <> 'E1'.
+    gv_b_reqnum = abap_true.
+  ENDIF.
+
+  IF gv_req_type = 'F1'.
+    gv_gos_reqnum = gs_header-zreq_num.
+    gv_b_reqnum = abap_false.
+  ENDIF.
 
 ENDFORM.
 
 *&---------------------------------------------------------------------*
 *& Form CHECK_MANDATORY_FIELDS
 *&---------------------------------------------------------------------*
-FORM check_mandatory_fields CHANGING cv_error TYPE abap_bool.
+*FORM check_mandatory_fields CHANGING cv_error TYPE abap_bool.
+*
+*  IF gs_header-posnr IS INITIAL OR
+*     gs_header-vernr IS INITIAL OR
+*     gs_header-plsez IS INITIAL OR
+*     gs_header-prctr IS INITIAL OR
+*     gs_header-kostl IS INITIAL.
+*    MESSAGE e021. " Fill in all required fields
+*    cv_error = gc_x.
+*  ENDIF.
+*
+*ENDFORM.
 
-  IF gs_header-posnr IS INITIAL OR
-     gs_header-vernr IS INITIAL OR
-     gs_header-plsez IS INITIAL OR
-     gs_header-prctr IS INITIAL OR
-     gs_header-kostl IS INITIAL.
-    MESSAGE e021. " Fill in all required fields
-    cv_error = gc_x.
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form VALIDATE_IM_BUDGET
-*&---------------------------------------------------------------------*
-FORM validate_im_budget CHANGING cv_error TYPE abap_bool.
-
-  DATA: lv_level1_budget TYPE bpge-wlges.
-
-  READ TABLE gt_wbs_items INTO gs_wbs_item
-    WITH KEY stufe = 1.
-
-  IF sy-subrc = 0.
-    lv_level1_budget = gs_wbs_item-wert2.
-
-    IF lv_level1_budget > gv_available_budget.
-      MESSAGE e022. " Budget exceeds available
-      cv_error = gc_x.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
+**&---------------------------------------------------------------------*
+**& Form VALIDATE_IM_BUDGET
+**&---------------------------------------------------------------------*
+*FORM validate_im_budget CHANGING cv_error TYPE abap_bool.
+*
+**  DATA: gv_level1_budget TYPE bpge-wlges.
+**
+**  READ TABLE gt_wbs_items INTO gs_wbs_item
+**    WITH KEY stufe = 1.
+**
+**  IF sy-subrc = 0.
+**    gv_level1_budget = gs_wbs_item-wert2.
+**
+**    IF gv_level1_budget > gv_available_budget.
+**      MESSAGE e022. " Budget exceeds available
+**      cv_error = gc_x.
+**    ENDIF.
+**  ENDIF.
+*
+*ENDFORM.
 
 *&---------------------------------------------------------------------*
 *& Form VALIDATE_APPROVER_MATRIX
 *&---------------------------------------------------------------------*
-FORM validate_approver_matrix USING iv_bukrs TYPE bukrs
-                                    iv_profl TYPE profidproj
-                                    iv_reqtype TYPE ztb_a2r_reqtype-z_reqtype
-                              CHANGING cv_error TYPE abap_bool.
+*FORM validate_approver_matrix_s1 USING    iv_bukrs   TYPE bukrs
+*                                       iv_profl   TYPE profidproj
+*                                       iv_reqtype TYPE zta2r_reqtype-z_reqtype
+*                              CHANGING cv_error   TYPE abap_bool.
+*
+*  DATA: gv_appr1         TYPE char8,
+*        gv_appr2         TYPE char8,
+*        gv_auto          TYPE char1,
+*        gv_error_handler TYPE char8,
+*        gv_found         TYPE abap_bool,
+*        lt_l1_approvers  TYPE hpa_t_bname,
+*        lt_l2_approvers  TYPE hpa_t_bname,
+*        gv_l1_count      TYPE i,
+*        gv_l2_count      TYPE i.
+*
+*  CLEAR cv_error.
+*
+*  " Use the class method to check approver matrix
+*  gv_found = go_builder->check_approver_matrix(
+*    EXPORTING
+*      iv_bukrs         = iv_bukrs
+*      iv_profl         = iv_profl
+*      iv_reqtype       = iv_reqtype
+*    IMPORTING
+*      ev_auto          = gv_auto
+*      ev_found = gv_found
+*      et_l1_approvers  = lt_l1_approvers
+*      et_l2_approvers  = lt_l2_approvers
+*  ).
+*
+*  "  Validation 1: Configuration must exist
+*  IF gv_found = abap_false.
+*    MESSAGE e000(zmsg_a2r) WITH 'No approver configuration found for'(m16)
+*                                 iv_bukrs iv_profl iv_reqtype.
+*    cv_error = abap_true.
+*    RETURN.
+*  ENDIF.
+*
+*  "  Validation 2: Check if auto-approval (no approvers configured)
+*  IF gv_auto = 'X'.
+*    " This is a warning, not an error - request will auto-approve
+*    MESSAGE w000(zmsg_a2r) WITH 'No approvers configured - request auto-approved'(m09).
+*    CLEAR cv_error.  " Not an error condition
+*    RETURN.
+*  ENDIF.
+*
+*  "  Validation 3: Approver positions configured but no users assigned
+*  IF lt_l1_approvers IS INITIAL AND lt_l2_approvers IS INITIAL.
+*    " Approver positions exist in config but no users in HRP1001
+*    MESSAGE e000(zmsg_a2r) WITH 'Approver positions exist but no users in HRP1001'(m10).
+*    cv_error = abap_true.
+*    RETURN.
+*  ENDIF.
+*
+*  "  Success - Approvers found
+*  gv_l1_count = lines( lt_l1_approvers ).
+*  gv_l2_count = lines( lt_l2_approvers ).
+*
+*  MESSAGE s000(zmsg_a2r) WITH 'Approvers found: L1=' gv_l1_count 'L2=' gv_l2_count ##NO_TEXT.
+*  CLEAR cv_error.
+*
+*ENDFORM.
 
-  DATA: ls_config TYPE ztb_a2r_conftab2.
+*MODULE f4_help_im_number INPUT.
+**  PERFORM f4_im_number CHANGING gv_p_posnr.
+*ENDMODULE.
 
-  SELECT SINGLE * FROM ztb_a2r_conftab2
-    INTO ls_config
-    WHERE bukrs = iv_bukrs
-      AND profl = iv_profl
-      AND zz_request_type = iv_reqtype.
+*&---------------------------------------------------------------------*
+*& Module F4_HELP_PERSON_RES INPUT SCREEN 0200
+*&---------------------------------------------------------------------*
+MODULE f4_help_person_res INPUT.
 
-  IF sy-subrc <> 0.
-    MESSAGE e023. " Approver not found in matrix
-    cv_error = gc_x.
+
+  " Get IM responsible persons
+  SELECT DISTINCT vernr, verna
+    FROM tcj04
+    WHERE vernr IS NOT INITIAL
+    ORDER BY verna
+    INTO TABLE @gt_personnel.
+  IF gt_personnel IS INITIAL.
+    MESSAGE i000(zmsg_a2r) WITH 'No IM Responsible Persons Found' ##NO_TEXT.
+    RETURN.
   ENDIF.
 
-ENDFORM.
+  " Display F4
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'VERNR'
+      dynpprog        = sy-cprog
+      dynpnr          = sy-dynnr
+      dynprofield     = 'gv_p_verna'
+      value_org       = 'S'
+      window_title    = 'Select Person Responsible' ##NO_TEXT
+    TABLES
+      value_tab       = gt_personnel
+      return_tab      = lt_return
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+  IF sy-subrc = 0.
+    READ TABLE lt_return INTO ls_return INDEX 1.
+    IF sy-subrc = 0.
+      gv_p_verna = ls_return-fieldval.
+    ENDIF.
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module F4_HELP_PERSON_RES INPUT 0100
+*&---------------------------------------------------------------------*
+MODULE f4_help_person_responsible INPUT.
+
+  " Get IM responsible persons
+  SELECT DISTINCT vernr, verna
+    FROM tcj04
+    WHERE vernr IS NOT INITIAL
+    ORDER BY verna
+    INTO TABLE @gt_personnel.
+  IF sy-subrc <> 0.
+    MESSAGE i000(zmsg_a2r) WITH 'No IM Responsible Persons Found'(m17).
+    RETURN.
+  ENDIF.
+
+
+  " Display F4
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'VERNR'
+      dynpprog        = sy-cprog
+      dynpnr          = sy-dynnr
+      dynprofield     = 'GS_HEADER-VERNR'
+      value_org       = 'S'
+      window_title    = 'Select Person Responsible' ##NO_TEXT
+    TABLES
+      value_tab       = gt_personnel
+      return_tab      = lt_return
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+  IF sy-subrc = 0.
+    READ TABLE lt_return INTO ls_return INDEX 1.
+    IF sy-subrc = 0.
+      gs_header-vernr  = ls_return-fieldval.
+      gv_p_verna          = gs_header-vernr.
+      gv_u_vernr       = abap_true.
+    ENDIF.
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module USER_COMMAND_0400 INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0400 INPUT.
+  PERFORM get_text.
+ENDMODULE.
+
+
+*&---------------------------------------------------------------------*
+*& Module SET_HEADER_DISPLAY_VALUES OUTPUT
+*&---------------------------------------------------------------------*
+MODULE set_header_display_values OUTPUT.
+
+  DATA: gv_reqtype_text     TYPE char40,
+        gv_posnr_for_budget TYPE im_posnr.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gv_display_reqnum = gv_gos_reqnum.
+  ENDIF.
+  " IM position display - derive only if user did not edit
+  IF gv_u_im_posid IS INITIAL.
+    IF gs_header-posnr IS NOT INITIAL.
+      PERFORM get_im_posid_for_display
+        USING    gs_header-posnr
+        CHANGING gv_im_posid_display.
+      gv_posnr_display_done = abap_true.
+    ENDIF.
+  ENDIF.
+
+  " Requestor display
+  IF gs_header-ernam IS NOT INITIAL.
+    PERFORM get_user_fullname
+      USING    gs_header-ernam
+      CHANGING gv_fullname.
+    gv_requestor_display = gv_fullname.
+  ELSE.
+    PERFORM get_user_fullname
+      USING    sy-uname
+      CHANGING gv_fullname.
+    gv_requestor_display = gv_fullname.
+  ENDIF.
+
+  " Request type text
+  IF gs_header-z_reqtype IS NOT INITIAL.
+    PERFORM get_request_type_text
+      USING    gv_req_type
+      CHANGING gv_reqtype_text.
+    gv_reqtype_display = gv_reqtype_text.
+  ELSE.
+    gv_reqtype_display = 'Create'(c01).
+  ENDIF.
+
+  " Budget display
+  IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
+
+    SELECT SINGLE posnr
+      FROM impr
+      INTO @gv_posnr_for_budget
+      "UP TO 1 ROWS
+      WHERE posid = @gv_im_posid_user.
+    "ENDSELECT.
+
+    IF sy-subrc <> 0.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = gv_im_posid_user
+        IMPORTING
+          output = gv_posnr_for_budget.
+
+      SELECT SINGLE posnr
+        FROM impr
+        INTO @gv_check
+        WHERE posnr = @gv_posnr_for_budget.
+
+      IF sy-subrc <> 0.
+        CLEAR gv_posnr_for_budget.
+      ENDIF.
+    ENDIF.
+
+    IF gv_posnr_for_budget IS NOT INITIAL.
+      PERFORM get_available_budget_display
+        USING    gv_posnr_for_budget
+        CHANGING gv_avail_budget_text
+                 gv_available_budget.
+    ELSE.
+      gv_avail_budget_text = 'No'.
+      CLEAR gv_available_budget.
+    ENDIF.
+
+  ELSE.
+
+    IF gs_header-posnr IS NOT INITIAL.
+      PERFORM get_available_budget_display
+        USING    gs_header-posnr
+        CHANGING gv_avail_budget_text
+                 gv_available_budget.
+    ELSE.
+      gv_avail_budget_text = 'No'.
+      CLEAR gv_available_budget.
+    ENDIF.
+
+  ENDIF.
+
+  " Project currency display only
+  IF gs_header-pspnr IS NOT INITIAL.
+    PERFORM get_project_currency
+      USING    gs_header-pspnr
+      CHANGING gv_project_currency.
+  ELSEIF gs_header-bukrs IS NOT INITIAL.
+    SELECT SINGLE waers
+      FROM t001
+      INTO @gv_project_currency
+      WHERE bukrs = @gs_header-bukrs.
+  ENDIF.
+
+  " Restore user-edited values LAST
+  IF gv_u_post1 = abap_true.
+    gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+
+  IF gv_u_bukrs = abap_true.
+    gs_header-bukrs = gs_header_user-bukrs.
+  ENDIF.
+
+  IF gv_u_vernr = abap_true.
+    gs_header-vernr = gs_header_user-vernr.
+  ENDIF.
+
+  IF gv_u_plsez = abap_true.
+    gs_header-plsez = gs_header_user-plsez.
+  ENDIF.
+
+  IF gv_u_werks = abap_true.
+    gs_header-werks = gs_header_user-werks.
+  ENDIF.
+
+  IF gv_u_prctr = abap_true.
+    gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+
+  IF gv_u_prnam = abap_true.
+    gs_header-prnam = gs_header_user-prnam.
+  ENDIF.
+
+  IF gv_u_kostl = abap_true.
+    gs_header-kostl = gs_header_user-kostl.
+  ENDIF.
+
+  IF gv_u_izwek = abap_true.
+    gs_header-izwek = gs_header_user-izwek.
+  ENDIF.
+
+  IF gv_u_zunifier_proj = abap_true.
+    gs_header-zunifier_proj = gs_header_user-zunifier_proj.
+  ENDIF.
+
+  IF gv_u_usr008 = abap_true.
+    gs_header-usr008 = gs_header_user-usr008.
+  ENDIF.
+
+  IF gv_u_im_posid = abap_true.
+    gv_im_posid_display = gv_im_posid_user.
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*MODULE user_command_0300 INPUT.
+*
+*ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module CAPTURE_USER_EDITS INPUT
+*&---------------------------------------------------------------------*
+MODULE capture_user_edits INPUT.
+
+  " Copy current gs_header screen values into shadow structure
+  " These are what the user currently sees/typed on screen
+
+  IF gv_u_post1 = abap_true OR gs_header-post1 <> gs_header_user-post1.
+    gs_header_user-post1 = gs_header-post1.
+    IF gs_header-post1 IS NOT INITIAL.
+      gv_u_post1 = abap_true.
+    ENDIF.
+  ENDIF.
+
+  IF gv_u_vernr = abap_true OR gs_header-vernr <> gs_header_user-vernr.
+    gs_header_user-vernr = gs_header-vernr.
+    IF gs_header-vernr IS NOT INITIAL.
+      gv_u_vernr = abap_true.
+    ENDIF.
+  ENDIF.
+
+  IF gv_u_plsez = abap_true OR gs_header-plsez <> gs_header_user-plsez.
+    gs_header_user-plsez = gs_header-plsez.
+    IF gs_header-plsez IS NOT INITIAL.
+      gv_u_plsez = abap_true.
+    ENDIF.
+  ENDIF.
+
+  IF gv_u_prctr = abap_true OR gs_header-prctr <> gs_header_user-prctr.
+    gs_header_user-prctr = gs_header-prctr.
+    IF gs_header-prctr IS NOT INITIAL.
+      gv_u_prctr = abap_true.
+    ENDIF.
+  ENDIF.
+
+  IF gv_u_kostl = abap_true OR gs_header-kostl <> gs_header_user-kostl.
+    gs_header_user-kostl = gs_header-kostl.
+    IF gs_header-kostl IS NOT INITIAL.
+      gv_u_kostl = abap_true.
+    ENDIF.
+  ENDIF.
+
+  IF gv_u_im_posid = abap_true OR gv_im_posid_display <> gv_im_posid_user.
+    gv_im_posid_user = gv_im_posid_display.
+    IF gv_im_posid_display IS NOT INITIAL.
+      gv_u_im_posid = abap_true.
+
+    ENDIF.
+
+  ENDIF.
+
+  " Capture gv_im_posid_display
+  IF gv_posnr_display_done = abap_true.
+    IF gv_im_posid_display <> gv_im_posid_user
+    OR gv_u_im_posid = abap_true.
+      IF gv_im_posid_display IS NOT INITIAL.
+
+        IF gv_im_posid_display <> gv_im_posid_user.
+          DATA: gv_new_posnr TYPE im_posnr.
+
+          " STEP 1: Check if posid exists in IMPR
+          SELECT SINGLE posnr, prnam, izwek, bukrs, werks, usr08
+            FROM impr
+            INTO @DATA(ls_impr_check)
+            "UP TO 1 ROWS
+            WHERE posid = @gv_im_posid_display.
+          "ENDSELECT.
+
+          IF sy-subrc <> 0.
+            " posid not found in IMPR at all - invalid entry
+            MESSAGE e000(zmsg_a2r) WITH gv_im_posid_display
+                                        'not found in Investment Program'(v40).
+            " Revert to last valid value
+            gv_im_posid_display = gv_im_posid_user.
+            RETURN.
+          ENDIF.
+
+          " STEP 2: Check if posid belongs to the same PRNAM as gs_header-prnam
+          IF gs_header-prnam IS NOT INITIAL
+          AND ls_impr_check-prnam <> gs_header-prnam.
+            " posid exists but belongs to different Investment Program
+            MESSAGE e000(zmsg_a2r) WITH gv_im_posid_display
+                                        'does not belong to program'(v41)
+                                        gs_header-prnam.
+            " Revert to last valid value
+            gv_im_posid_display = gv_im_posid_user.
+            RETURN.
+          ENDIF.
+
+          " STEP 3: Valid - update shadow and reload dependent fields
+          gv_new_posnr        = ls_impr_check-posnr.
+          gv_im_posid_user    = gv_im_posid_display.
+          gv_u_im_posid       = abap_true.
+          gs_header-posnr     = gv_new_posnr.
+
+          " Reload IM dependent global vars
+          gv_izwek  = ls_impr_check-izwek.
+          gv_bukrs  = ls_impr_check-bukrs.
+          gv_werks  = ls_impr_check-werks.
+          gv_usr008 = ls_impr_check-usr08.
+          gs_header-prnam = ls_impr_check-prnam.
+
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0500  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0500 INPUT.
+  DATA: gv_ok_code_500 TYPE sy-ucomm.
+
+  gv_ok_code_500 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_500.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      CLEAR gv_pspnr_sel.
+      PERFORM validate_and_load_display_req USING gv_p_req_num.
+      gv_display_reqnum = gv_p_req_num.
+      gv_req_type = gs_header-z_reqtype.
+*      gv_disp_req = abap_true.
+*      gv_rw_mode = 'D'.
+      IF sy-subrc = 0.
+        IF gv_req_type <> 'E1'.
+          PERFORM free_tree_control.
+          PERFORM prepare_screen2.
+          CALL SCREEN 100.
+        ELSE.
+          PERFORM free_tree_control.
+          PERFORM prepare_screen2.
+          PERFORM populate_wbs_unclose.
+          PERFORM populate_wbs_unclose_status.
+          PERFORM get_data_display.
+          gv_req_type = 'E1'.
+          CALL SCREEN 900.
+        ENDIF.
+      ENDIF.
+
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0600  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0600 INPUT.
+  DATA: gv_ok_code_600 TYPE sy-ucomm.
+
+  gv_ok_code_600 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_600.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      IF gv_pspnr_sel IS INITIAL OR gv_p_req_num IS INITIAL.
+        PERFORM pspid_pspnr.
+      ENDIF.
+
+      IF gv_pspnr_sel IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Enter Project Definition'(m53).
+      ENDIF.
+
+      gv_req_type = 'B3'.
+      PERFORM get_raw_data USING gv_p_pspid_proj.
+      PERFORM get_raw USING gv_p_pspid_proj.
+
+      PERFORM validate_and_load_b3 USING gv_p_req_num.
+      PERFORM get_budgetchk.
+
+      PERFORM free_tree_control.
+      PERFORM prepare_screen2.
+      gv_req_type = 'B3'.
+      CLEAR gs_header-request_status.
+      CALL SCREEN 100.
+
+
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0700  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0700 INPUT.
+  DATA: gv_ok_code_700 TYPE sy-ucomm.
+
+  gv_ok_code_700 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_700.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      gv_req_type = 'B1'.
+      IF gv_pspnr_sel IS INITIAL OR gv_p_req_num IS INITIAL.
+        PERFORM pspid_pspnr.
+      ENDIF.
+
+      IF gv_pspnr_sel IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Enter Project Definition'(m53).
+      ENDIF.
+
+      PERFORM get_raw_data USING gv_p_pspid_proj.
+      PERFORM get_raw USING gv_p_pspid_proj.
+
+      PERFORM validate_and_load_b1 USING gv_p_req_num.
+      PERFORM get_budgetchk.
+
+      PERFORM free_tree_control.
+      PERFORM prepare_screen2_b1.
+      CLEAR gs_header-request_status.
+      CALL SCREEN 100.
+
+
+  ENDCASE.
+
+ENDMODULE.
+
+
+MODULE user_command_0800 INPUT.
+  DATA: gv_ok_code_800 TYPE sy-ucomm.
+
+  gv_ok_code_800 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_800.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      IF gv_pspnr_sel IS INITIAL OR gv_p_req_num IS INITIAL.
+        PERFORM pspid_pspnr.
+      ENDIF.
+
+      IF gv_pspnr_sel IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Enter Project Definition'(m53).
+      ENDIF.
+
+      gv_req_type = 'B2'.
+      PERFORM get_raw_data USING gv_p_pspid_proj.
+      PERFORM get_raw USING gv_p_pspid_proj.
+
+      PERFORM validate_and_load_b2 USING gv_p_req_num.
+      PERFORM get_budgetchk.
+
+
+      PERFORM free_tree_control.
+      PERFORM prepare_screen2.
+      gv_req_type = 'B2'.
+      CLEAR gs_header-request_status.
+      CALL SCREEN 100.
+
+
+  ENDCASE.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0900  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0900 INPUT.
+  DATA: gv_ok_code_900 TYPE sy-ucomm,
+        gv_error       TYPE abap_bool.
+
+  gv_ok_code_900 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_900.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      IF gv_pspnr_sel IS INITIAL OR gv_p_req_num IS INITIAL.
+        PERFORM pspid_pspnr.
+      ENDIF.
+
+      IF gv_pspnr_sel IS INITIAL.
+        MESSAGE e000(zmsg_a2r) WITH 'Enter Project Definition'(m53).
+      ENDIF.
+
+      gv_req_type = 'E1'.
+      gv_display_reqnum = gv_p_req_num.
+      PERFORM get_raw_data USING gv_p_pspid_proj.
+      PERFORM get_raw USING gv_p_pspid_proj.
+
+      PERFORM validate_and_load_e1 USING gv_p_req_num.
+      IF gs_header-zreq_num <> 0.
+        PERFORM get_budgetchk.
+      ENDIF.
+
+      PERFORM free_tree_control.
+      PERFORM prepare_screen2.
+      PERFORM validate_teco_clsd CHANGING gv_error.
+      IF gv_error = gc_x.
+        RETURN.
+      ENDIF.
+      PERFORM populate_wbs_unclose.
+      PERFORM populate_wbs_unclose_status.
+      gv_req_type = 'E1'.
+      CLEAR: gs_header-request_status,
+             gv_p_req_num,
+             gs_header-zreq_num,
+             gv_display_reqnum.
+      CALL SCREEN 904.
+
+
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0501  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0501 INPUT.
+  DATA: gv_ok_code_501 TYPE sy-ucomm.
+
+  gv_ok_code_501 = sy-ucomm.
+  CLEAR sy-ucomm.
+
+  CASE gv_ok_code_501.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      CLEAR gv_pspnr_sel.
+      PERFORM validate_and_load_display_req USING gv_p_req_num.
+      gv_display_reqnum = gv_p_req_num.
+      gv_disp_req = abap_true.
+*      gv_rw_mode = 'D'.
+      IF sy-subrc = 0.
+          IF gv_req_type <> 'E1'.
+            PERFORM free_tree_control.
+            PERFORM prepare_screen2.
+            CALL SCREEN 101.
+          ELSE.
+            PERFORM free_tree_control.
+            PERFORM prepare_screen2.
+            PERFORM populate_wbs_unclose.
+            PERFORM populate_wbs_unclose_status_d.
+            PERFORM get_data_display.
+            gv_req_type = 'E1'.
+            CALL SCREEN 904.
+          ENDIF.
+      ENDIF.
+
+  ENDCASE.
+ENDMODULE.
+
+MODULE user_command_0502 INPUT.
+  DATA: gv_ok_code_502 TYPE sy-ucomm.
+
+  gv_ok_code_502 = sy-ucomm.
+  CLEAR sy-ucomm.
+  " Auto-execute when coming from hotspot
+  IF gv_from_hotspot = abap_true.
+    gv_ok_code_501 = 'NEXT'.
+    gv_disp_req = abap_true.
+    CLEAR gv_from_hotspot.
+  ENDIF.
+
+  CASE gv_ok_code_502.
+    WHEN 'SOP'.
+      CLEAR gv_url.
+      PERFORM sop_link.
+      PERFORM show_dms_link USING gv_url.
+
+    WHEN 'BACK'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'CANCEL'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'EXIT'.
+      CLEAR gv_p_req_num.
+      SET PARAMETER ID 'ZREQN' FIELD space.
+      LEAVE TO SCREEN 0.
+
+    WHEN 'NEXT' OR 'ENTER'.
+      CLEAR gv_pspnr_sel.
+      PERFORM validate_and_load_display_req USING gv_p_req_num.
+      gv_display_reqnum = gv_p_req_num.
+      gv_disp_req = abap_true.
+*      gv_rw_mode = 'D'.
+      IF sy-subrc = 0.
+        IF gv_req_type <> 'E1'.
+          PERFORM free_tree_control.
+          PERFORM prepare_screen2.
+          CALL SCREEN 101.
+        ELSE.
+          PERFORM free_tree_control.
+          PERFORM prepare_screen2.
+          PERFORM populate_wbs_unclose.
+          PERFORM populate_wbs_unclose_status.
+          gv_req_type = 'E1'.
+          CALL SCREEN 904.
+        ENDIF.
+      ENDIF.
+
+  ENDCASE.
+ENDMODULE.
