@@ -1,35 +1,209 @@
 *&---------------------------------------------------------------------*
 *& Include          ZTR_A2R_WBSZCJ01_TOP
 *&---------------------------------------------------------------------*
-TABLES: impr, projs, prps, prpss, tcj41, cepc, csks, bpge.
+TABLES: impr, projs, proj, prps, prpss, tcj41, cepc, csks, bpge.
+
+DATA: gt_im_dropdown TYPE vrm_values.
+
+DATA: gv_start_dynnr TYPE sydynnr.
+DATA gv_reqnum TYPE zta2r_wbshdr-zreq_num.
+DATA: gv_url    TYPE char512,
+      gv_kdef01 TYPE zde_kdef01 VALUE 'ZA2R_ZCJ00_SOP',
+      gv_kdef02 TYPE zde_kdef02 VALUE 'SOP_LINK'.
+
+DATA: gv_disp_req TYPE abap_bool VALUE abap_false,
+      gv_disp_reqnum TYPE zta2r_wbshdr-zreq_num,
+      gv_raw_data TYPE abap_bool VALUE abap_false,
+      gv_disp_req_wbs TYPE abap_bool VALUE abap_false.
+
+*GOS Services
+DATA:go_gos     TYPE REF TO cl_gos_manager,
+     gv_rw_mode TYPE sgs_rwmod VALUE 'D'.
+
+DATA: gv_edit_mode     TYPE abap_bool,
+      gv_validate_u    TYPE abap_bool,
+      gv_loaded_reqnum TYPE zta2r_wbshdr-zreq_num,
+      gv_gos_reqnum    TYPE zta2r_wbshdr-zreq_num,
+      gv_reqnum_text    TYPE zta2r_wbshdr-zreq_num,
+      gv_b_reqnum      TYPE abap_bool VALUE abap_false,
+      gv_wert2         TYPE zta2r_wbsitem-wert2,
+      gv_req_type      TYPE zta2r_wbshdr-z_reqtype.
+
+DATA: gv_requestor_display TYPE char50,      " Full name of requestor
+      gv_reqtype_display   TYPE char20,
+      gv_im_posnr          TYPE im_posnr,
+      gv_on_submit         TYPE abap_bool VALUE abap_false,
+      gv_posnr_display     TYPE im_posid,    " IM POSNR (external format)
+      gv_im_posid_display  TYPE im_posid,      " Request type description (Create/Modify)
+      gv_avail_budget_text TYPE char10,      " Available Budget display (Yes/No)
+      gv_project_currency  TYPE waers.       "Project currency (from PROJ-PWHIE)
+
+DATA: gv_u_post1         TYPE abap_bool,
+      gv_u_vernr         TYPE abap_bool,
+      gv_u_plsez         TYPE abap_bool,
+      gv_u_posid         TYPE abap_bool,
+      gv_u_prctr         TYPE abap_bool,
+      gv_u_kostl         TYPE abap_bool,
+      gv_u_bukrs         TYPE abap_bool,
+      gv_u_werks         TYPE abap_bool,
+      gv_u_prnam         TYPE abap_bool,
+      gv_u_izwek         TYPE abap_bool,
+      gv_u_zunifier_proj TYPE abap_bool,
+      gv_u_usr008        TYPE abap_bool.
 
 *----------------------------------------------------------------------*
 * Type Definitions
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_wbs_display,
-         stufe         TYPE ps_stufe,
-         posid         TYPE ps_posid,
-         post1         TYPE ps_post1,
-         kostl         TYPE kostl,
+         stufe          TYPE ps_stufe,
+         pspid          TYPE ps_pspid,
+         posid          TYPE ps_posid,
+         post1          TYPE ps_post1,
+         kostl          TYPE kostl,
+         posnr          TYPE ps_pspnr,
          zapproved_budg TYPE bpge-wlges,
-         zbudget_check TYPE char1,
-         imprf         TYPE im_profil,
-         prart         TYPE ps_prart,
-         mark          TYPE char1,
-       END OF ty_wbs_display.
+         zbudget_check  TYPE char1,
+         bukrs          TYPE bukrs,
+         imprf          TYPE im_profil,
+         prart          TYPE ps_prart,
+         mark           TYPE char1,
+       END OF ty_wbs_display,
 
-DATA: gv_posnr_old TYPE im_posnr.   " To track changes
+       BEGIN OF ty_prps_u,
+         posid TYPE prps-posid,
+         pspnr TYPE prps-pspnr,
+         objnr TYPE jest-objnr,
+       END OF ty_prps_u,
 
+*       BEGIN OF ty_wbs_unclose,
+*         status             TYPE j_status,
+*         to_be              TYPE j_status,
+*         wbs_level          TYPE ps_stufe,
+*         pspid              TYPE ps_pspid,
+*         wbs_element_code   TYPE ps_posid,
+*         description        TYPE ps_post1,
+*         cost_center_level1 TYPE kostl,
+*         posnr              TYPE ps_pspnr,
+*         approved_budget    TYPE bpge-wlges,
+*         flag_budget_check  TYPE char1,
+*         bukrs              TYPE bukrs,
+*         investment_profile TYPE im_profil,
+*         prart              TYPE ps_prart,
+*         mark               TYPE char1,
+*       END OF ty_wbs_unclose,
+
+       BEGIN OF ty_impr,
+         posnr TYPE impr-posnr,
+         gjahr TYPE impr-gjahr,
+         posid TYPE impr-posid,
+         prnam TYPE impr-prnam,
+         izwek TYPE impr-izwek,
+       END OF ty_impr.
+
+*----------------------------------------------------------------------*
+* Tracking Variables
+*----------------------------------------------------------------------*
+DATA: gv_posnr_old TYPE im_posnr,
+      gv_pspid_old TYPE ps_pspid,
+      gv_display_reqnum TYPE zta2r_wbshdr-zreq_num,
+      gv_display_reqnume1 TYPE zta2r_wbshdr-zreq_num.
+
+*----------------------------------------------------------------------*
+* Selection Screen
+*----------------------------------------------------------------------*
+DATA: gv_p_posnr      TYPE im_posnr,
+      gv_p_posid      TYPE im_posid,
+      gv_p_profl      TYPE profidproj,
+      gv_p_pspid      TYPE projs-pspid,
+      gv_p_pspid_proj TYPE zta2r_wbshdr-pspid,
+      gv_p_pspid_car  TYPE projs-pspid,
+      gv_p_prnam      TYPE im_prnam,
+      gv_p_gjahr      TYPE im_gnjhr,
+      gv_p_post1      TYPE ps_post1,
+      gv_p_verna      TYPE persno,
+      gv_p_plsez      TYPE ps_plsez_chg,
+      gv_p_prctr      TYPE prctr,
+      gv_p_kostl      TYPE kostl,
+      gv_p_usr10      TYPE char1,
+      gv_p_usr10_c    TYPE impr-usr10,
+      gv_p_req_num    TYPE zta2r_wbshdr-zreq_num.
+
+*----------------------------------------------------------------------*
+* Tree Control Objects for Preview (Screen 200)
+*----------------------------------------------------------------------*
+DATA: lo_cont_preview TYPE REF TO cl_gui_custom_container,
+      lo_tree_preview TYPE REF TO cl_gui_column_tree,
+      lv_tree_loaded  TYPE abap_bool.
+
+*----------------------------------------------------------------------*
+* Tree Control Data Structures
+*----------------------------------------------------------------------*
+DATA: ls_hierarchy_header     TYPE treev_hhdr,
+      gt_treev_node           TYPE STANDARD TABLE OF treev_node,
+      gt_treeitm              TYPE STANDARD TABLE OF cnpb_h_treeitm,
+      ls_objects_in_hierarchy TYPE cnpb_h_objects_in_hierarchy,
+      lv_drag_drop_handle     TYPE cnpb_h_drag_drop_handle,
+      lv_hier_col_is_key      TYPE c,
+      lv_enqueue              TYPE char1,
+      gs_objects_in_tree      TYPE cnpb_h_objects_in_hierarchy.
+
+*----------------------------------------------------------------------*
+* Constants for Tree
+*----------------------------------------------------------------------*
+CONSTANTS: gc_hierarchy_short_text    TYPE char12 VALUE 'SHORT_TEXT',
+           gc_hierarchy_technical_key TYPE char12 VALUE 'TECHN_KEY'.
+
+*----------------------------------------------------------------------*
+* Preview Data (fallback if PS functions not available)
+*----------------------------------------------------------------------*
+DATA: gt_preview_data TYPE STANDARD TABLE OF prps,
+      gs_preview_data TYPE prps.
+
+*----------------------------------------------------------------------*
+* Custom Container Name
+*----------------------------------------------------------------------*
+CONSTANTS: gc_tree_container TYPE scrfname VALUE 'CC_TREE_PREVIEW'.
+
+DATA: gv_fullname TYPE char50.
 *----------------------------------------------------------------------*
 * Global Variables - Screen 2
 *----------------------------------------------------------------------*
-DATA: gs_header     TYPE ztb_a2r_wbshdr,
-      gt_wbs_items  TYPE TABLE OF ztb_a2r_wbsitem,
-      gs_wbs_item   TYPE ztb_a2r_wbsitem.
+DATA: gs_header       TYPE zta2r_wbshdr,
+      gt_wbs_items    TYPE STANDARD TABLE OF zta2r_wbsitem,
+      gt_wbs_items_c    TYPE STANDARD TABLE OF zta2r_wbsitem,
+      gs_wbs_item     TYPE zta2r_wbsitem,
+      gs_wbs_item_c     TYPE zta2r_wbsitem,
+      gt_phris_hier   TYPE ztt_a2r_wbshier, "zcl_a2r_wbs_builder=>tt_phris_hier,
+      gt_wbs_car      TYPE ztt_a2r_wbsitem, "zcl_a2r_wbs_builder=>tt_wbscar,
+      gs_wbs_car      TYPE zta2r_wbsitem,
+      gs_wbs_item_old TYPE zta2r_wbsitem,
+      gv_z_remarks    TYPE char255.
+DATA: gv_pspnr_sel     TYPE proj-pspnr,
+      gv_objnr_proj    TYPE jest-objnr,
+      gs_header_old    TYPE zta2r_wbshdr,  "snapshot before edits
+      gt_wbs_items_old TYPE STANDARD TABLE OF zta2r_wbsitem.
 
-DATA: gt_wbs_display TYPE TABLE OF ty_wbs_display,
+
+DATA: gt_wbs_display TYPE STANDARD TABLE OF ty_wbs_display,
       gs_wbs_display TYPE ty_wbs_display.
 
+  TYPES: BEGIN OF ty_wbs_stat,
+           posid TYPE prps-posid,
+           stat  TYPE jest-stat,
+         END OF ty_wbs_stat.
+
+DATA: gt_wbs_unclose TYPE ztt_a2r_wbsunclose,
+      gs_wbs_unclose TYPE zsa2r_wbsunclose.
+
+DATA: gt_prps TYPE STANDARD TABLE OF ty_prps_u,
+      gs_prps TYPE ty_prps_u.
+
+*----------------------------------------------------------------------*
+* Global Variables - WF Data
+*----------------------------------------------------------------------*
+DATA:
+  gt_l1_approvers TYPE hpa_t_bname,
+  gt_l2_approvers TYPE hpa_t_bname.
 *----------------------------------------------------------------------*
 * Global Variables - Additional IM Data
 *----------------------------------------------------------------------*
@@ -38,13 +212,13 @@ DATA: gv_bukrs            TYPE bukrs,
       gv_izwek            TYPE izwek,
       gv_usr008           TYPE dats,
       gv_available_budget TYPE bpge-wlges,
-      gv_request_type     TYPE ztb_a2r_reqtype-z_reqtype,
+      gv_request_type     TYPE zta2r_reqtype-z_reqtype,
       gv_request_number   TYPE char10.
 
 *----------------------------------------------------------------------*
 * Global Objects
 *----------------------------------------------------------------------*
-DATA: go_builder TYPE REF TO ZCL_A2R_WBS_BUILDER.
+DATA: go_builder TYPE REF TO zcl_a2r_wbs_builder.
 
 *----------------------------------------------------------------------*
 * Constants
@@ -54,4 +228,123 @@ CONSTANTS: gc_x TYPE char1 VALUE 'X'.
 *----------------------------------------------------------------------*
 * Table Control
 *----------------------------------------------------------------------*
-CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 200.
+*CONTROLS: tc_wbs TYPE TABLEVIEW USING SCREEN 100.
+
+*----------------------------------------------------------------------*
+* Screen 100 Buttons
+*----------------------------------------------------------------------*
+
+*Cost Center table
+TYPES: BEGIN OF ts_items,
+         mandt         TYPE mandt,
+         zreq_num      TYPE zde_a2r_reqnum,
+         pspid         TYPE ps_pspid,
+         stufe         TYPE ps_stufe,
+         posid         TYPE ps_posid,
+*         zchange       TYPE updkz_d,
+         post1         TYPE ps_post1,
+         pspnr         TYPE ps_pspnr,
+         kostl         TYPE kostl,
+         zbudget_check TYPE char1,
+         bukrs         TYPE bukrs,
+         imprf         TYPE im_profil,
+         prart         TYPE ps_prart,
+         wert2         TYPE bp_wert2,
+       END OF ts_items,
+       BEGIN OF ts_text,
+         text TYPE tdline,
+       END OF ts_text.
+
+DATA: ls_items            TYPE ts_items.
+
+
+*TYPES: tt_phris_hier TYPE STANDARD TABLE OF ty_phris_hier WITH DEFAULT KEY.
+*----------------------------------------------------------------------*
+* Remarks Text
+*----------------------------------------------------------------------*
+
+DATA: go_editor  TYPE REF TO c_textedit_control,
+      gt_text    TYPE STANDARD TABLE OF ts_text,
+      gs_text    TYPE ts_text,
+      gv_remarks TYPE zta2r_wbshdr-z_remarks,
+      gt_lines   TYPE STANDARD TABLE OF string,
+*      lv_line    TYPE string,
+      gv_rlines  TYPE i,
+      gv_dflag   TYPE flag.
+
+*CONSTANTS:
+*  lc_false TYPE i   VALUE 0,
+*  lc_true  TYPE i   VALUE 1.
+
+
+TYPES ty_t_wbs_items TYPE STANDARD TABLE OF zta2r_wbsitem WITH DEFAULT KEY.
+
+
+
+*----------------------------------------------------------------------*
+* F4 Person Responsible
+*----------------------------------------------------------------------*
+TYPES: BEGIN OF ty_pernr_display,
+         vernr TYPE ps_vernr,
+         verna TYPE ps_verna,
+       END OF ty_pernr_display.
+
+DATA: gt_personnel TYPE STANDARD TABLE OF ty_pernr_display,
+      lt_return    TYPE STANDARD TABLE OF ddshretval,
+      ls_return    TYPE ddshretval.
+DATA: gv_header_initialized TYPE abap_bool.
+DATA: gs_header_user        TYPE zta2r_wbshdr,
+      gv_posnr_display_done TYPE abap_bool,
+      gv_u_im_posid         TYPE abap_bool,
+      gv_im_posid_user      TYPE im_posid.
+DATA: gv_gjahr              TYPE im_gnjhr.
+DATA gv_vkokr               TYPE zta2r_wbsitem-vkokr.
+
+
+*----------------------------------------------------------------------*
+* Hotspot
+*----------------------------------------------------------------------*
+DATA: gv_req_num      TYPE zta2r_wbshdr-zreq_num,
+      gv_from_hotspot TYPE abap_bool VALUE abap_false.
+
+
+*---------------------------------------------------------------------*
+* Workflow Log
+*---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_wflog,
+         wi_id      TYPE sww_wiid,
+         top_wi_id  TYPE sww_wiid,
+         wi_text    TYPE char120,
+         agent      TYPE char40,
+         status     TYPE char20,
+         created_on TYPE sydatum,
+         created_at TYPE syuzeit,
+*         completed_on TYPE sydatum,
+*         completed_at TYPE syuzeit,
+         comment    TYPE string,
+       END OF ty_wflog.
+
+TYPES ty_t_wflog TYPE STANDARD TABLE OF ty_wflog WITH DEFAULT KEY.
+
+DATA: gt_wflog TYPE ty_t_wflog,
+      gs_wflog TYPE ty_wflog.
+
+DATA: gv_top_wi_id TYPE sww_wiid.
+
+
+  TYPES: BEGIN OF ty_prps_stat,
+           posid TYPE prps-posid,
+           objnr TYPE prps-objnr,
+           stat  TYPE jest-stat,
+           txt04 TYPE tj02t-txt04,
+         END OF ty_prps_stat.
+
+  TYPES: BEGIN OF ty_posid_range,
+           sign   TYPE c LENGTH 1,
+           option TYPE c LENGTH 2,
+           low    TYPE prps-posid,
+           high   TYPE prps-posid,
+         END OF ty_posid_range.
+
+DATA: gt_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat,
+      gs_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat.
