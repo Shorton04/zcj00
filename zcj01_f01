@@ -1,308 +1,5854 @@
 *&---------------------------------------------------------------------*
-*& Include ZTR_A2R_WBSZCJ01_F01
-*& Form Routines for ZCJ01
+*& Include          ZTR_A2R_WBSZCJ01_F01
 *&---------------------------------------------------------------------*
 
 *&---------------------------------------------------------------------*
-*& Form F4_IM_NUMBER
+*& Form get_im_data
 *&---------------------------------------------------------------------*
-FORM f4_im_number CHANGING cv_posnr TYPE im_posnr.
-
-  DATA: lt_impr   TYPE TABLE OF impr,
-        lt_return TYPE TABLE OF ddshretval,
-        ls_return TYPE ddshretval.
-
-  " Get list of IM positions
-  SELECT posnr prnam gjahr FROM impr
-    INTO CORRESPONDING FIELDS OF TABLE lt_impr
-    UP TO 500 ROWS.
-
-  " Display F4 help
-  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
-    EXPORTING
-      retfield        = 'POSNR'
-      dynpprog        = sy-repid
-      dynpnr          = sy-dynnr
-      dynprofield     = 'P_POSNR'
-      value_org       = 'S'
-    TABLES
-      value_tab       = lt_impr
-      return_tab      = lt_return
-    EXCEPTIONS
-      parameter_error = 1
-      no_values_found = 2
-      OTHERS          = 3.
-
-  IF sy-subrc = 0.
-    READ TABLE lt_return INTO ls_return INDEX 1.
-    IF sy-subrc = 0.
-      cv_posnr = ls_return-fieldval.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*& Form GET_IM_DATA
+*&
 *&---------------------------------------------------------------------*
 FORM get_im_data USING iv_posnr TYPE im_posnr.
-
-  DATA: ls_impr TYPE impr.
-
-  SELECT SINGLE * FROM impr
-    INTO ls_impr
-    WHERE posnr = iv_posnr.
+  DATA: ls_imprs TYPE impr.
+  " Validate posnr exists and get data
+  SELECT SINGLE posnr, gjahr, prnam, izwek, verna,
+                bukrs, kostl, werks, prctr, sizecl, usr08, usr10
+  FROM impr
+  INTO @DATA(ls_impr)
+  WHERE posnr = @iv_posnr.
 
   IF sy-subrc = 0.
-    " Populate fields from IM
-    p_prnam = ls_impr-prnam.
-    p_gjahr = ls_impr-gjahr.
-    p_prctr = ls_impr-prctr.
-    p_kostl = ls_impr-kostl.
+    " Get IM Program (PRNAM)
+    " Population: Get IMPR-POSID where IMPR-POSNR = selected POSNR
+    gv_p_prnam = ls_impr-prnam.
 
-    " Store for Screen 2
+    " Get Approval Year (GJAHR)
+    " Population: Get IMPR-GJAHR where IMPR-POSNR = selected POSNR
+    gv_p_gjahr = ls_impr-gjahr.
+
+    " Get Profit Center (PRCTR)
+    " Population: Get IMPR-PRCTR where IMPR-POSNR = selected POSNR
+    gv_p_prctr = ls_impr-prctr.
+
+    " Get Cost Center (KOSTL)
+    " Population: Get IMPR-KOSTL where IMPR-POSNR = selected POSNR
+    gv_p_kostl = ls_impr-kostl.
+
+    gv_p_verna = ls_impr-verna.
+
+    " Store additional fields for Screen 2
     gv_bukrs = ls_impr-bukrs.
     gv_werks = ls_impr-werks.
     gv_izwek = ls_impr-izwek.
-    gv_usr008 = ls_impr-usr008.
+    gv_usr008 = ls_impr-usr08.
 
     " Get Project Profile and Template
+    " Population: From IMPR-POSNR, get IMPR-IZWEK, then query config table
     PERFORM get_profile_template USING ls_impr-izwek
-                                 CHANGING p_profl p_pspid.
+                                 CHANGING gv_p_profl gv_p_pspid gv_p_post1.
 
     " Check GE Ariba flag
-    PERFORM check_ge_ariba USING ls_impr CHANGING p_usr10.
+    " Population: Auto-selected if IM Project management field = "GE"
+    ls_imprs = CORRESPONDING #( ls_impr ).
+
+    PERFORM check_ge_ariba USING ls_imprs CHANGING gv_p_usr10_c.
 
     " Set finish date for lumpsum
+    " Population: For Lumpsum, auto-populate with last day of current year
     IF ls_impr-izwek = 'LS'.
-      p_plsez = sy-datum.
-      p_plsez+4(4) = '1231'. " Last day of year
+      gv_p_plsez = sy-datum.
+      gv_p_plsez+4(4) = '1231'. " Last day of year (e.g., 31.12.2025)
     ENDIF.
 
   ELSE.
-    MESSAGE e002 WITH iv_posnr. " IM Number not found
+    MESSAGE e000(zmsg_a2r) WITH iv_posnr. " im Number not found
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form GET_PROFILE_TEMPLATE
+*& Form get_profile_template
+*&---------------------------------------------------------------------*
+*& text
 *&---------------------------------------------------------------------*
 FORM get_profile_template USING iv_izwek TYPE izwek
                           CHANGING cv_profl TYPE profidproj
-                                   cv_pspid TYPE ps_spdid.
+                                   cv_pspid TYPE ps_pspid
+                                   cv_post1 TYPE ps_post1.
 
-  DATA: ls_config TYPE ztb_a2r_conftab1.
+  DATA: lv_pspnr  TYPE ps_pspnr,
+        lv_zstage TYPE zde_a2r_satge.
 
-  SELECT SINGLE * FROM ztb_a2r_conftab1
-    INTO ls_config
-    WHERE izwek = iv_izwek.
+
+  " CRITICAL FIX: PSPNR in config table is INTERNAL number, not PSPID!
+  " From design: PSPNR = PC.000001 (display), 00000008 (internal)
+
+  SELECT SINGLE *
+    FROM zta2r_conftab1
+    INTO @DATA(ls_conf)
+    WHERE izwek = @iv_izwek
+    AND   z_stage = @lv_zstage.
+
 
   IF sy-subrc = 0.
-    cv_profl = ls_config-profl.
-    cv_pspid = ls_config-pspid.
+
+    cv_profl = ls_conf-profl.
+    lv_pspnr = ls_conf-pspnr.
+
+    " NOW get the PSPID (external ID) from PSPNR (internal number)
+    " Use PROJS table (standard WBS structure table from design 4)
+    SELECT SINGLE pspid, post1
+      FROM projs
+      INTO (@cv_pspid, @cv_post1)
+      WHERE pspnr = @lv_pspnr.
+
+
+    IF cv_pspid IS INITIAL.
+      MESSAGE w000(zmsg_a2r) WITH 'Template PSPID not found for PSPNR'(m18) lv_pspnr.
+      CLEAR: cv_profl, cv_pspid.
+    ENDIF.
+
+
   ELSE.
-    MESSAGE w003. " No entry found for profile and template
+    MESSAGE w000(zmsg_a2r) WITH 'No configuration found for IZWEK'(m19) iv_izwek.
     CLEAR: cv_profl, cv_pspid.
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form CHECK_GE_ARIBA
+*& Form get_im_posid_for_display
 *&---------------------------------------------------------------------*
-FORM check_ge_ariba USING is_impr TYPE impr
-                    CHANGING cv_flag TYPE char1.
+*& text
+*&---------------------------------------------------------------------*
+FORM get_im_posid_for_display USING iv_posnr TYPE im_posnr
+                            CHANGING cv_posid_display TYPE im_posid.
+
+  CHECK iv_posnr IS NOT INITIAL.
+
+  SELECT SINGLE posid
+    FROM impr
+    INTO cv_posid_display
+  WHERE posnr = iv_posnr.
+  IF sy-subrc <> 0.
+    cv_posid_display = iv_posnr.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_im_posid_for_display
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_available_budget_display USING iv_posnr         TYPE im_posnr
+                               CHANGING cv_budget_text   TYPE char10
+                                        cv_budget_amount TYPE bpge-wlges.
+
+  DATA: lv_avail TYPE bpge-wlges.
+
+  " Get OBJNR for the WBS element
+  SELECT SINGLE objnr
+    FROM impr
+    WHERE posnr = @iv_posnr
+    INTO @DATA(lv_objnr).
+
+  IF lv_objnr IS NOT INITIAL.
+    " Get budget values
+    SELECT SINGLE objnr, wlges, wtgev
+      FROM bpge
+      INTO @DATA(ls_bpge)
+*      UP TO 1 ROWS
+      WHERE objnr = @lv_objnr.
+*    ENDSELECT.
+
+    IF sy-subrc = 0.
+      lv_avail = ls_bpge-wlges - ls_bpge-wtgev.
+      cv_budget_amount = lv_avail.
+      cv_budget_text   = COND #( WHEN lv_avail > 0 THEN 'Yes' ELSE 'No' ).
+    ELSE.
+      cv_budget_text   = 'No'.
+      cv_budget_amount = 0.
+    ENDIF.
+
+  ELSE.
+    cv_budget_text   = 'No'.
+    cv_budget_amount = 0.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_project_currency
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_project_currency USING iv_pspnr     TYPE ps_pspnr
+                       CHANGING cv_currency  TYPE waers.
+
+  CLEAR cv_currency.
+  IF iv_pspnr IS NOT INITIAL.
+    SELECT SINGLE pwhie
+    FROM proj
+    INTO cv_currency
+    WHERE pspnr = iv_pspnr.
+    IF sy-subrc <> 0.
+      SELECT SINGLE waers
+        FROM t001
+        INTO cv_currency
+        WHERE bukrs = gv_bukrs.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form check_ge_ariba
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM check_ge_ariba  USING is_impr TYPE impr
+                  CHANGING cv_flag TYPE char1.
 
   " Check if project management field = GE (Global Engineering)
-  " This is a placeholder - adjust based on actual IM field
-  IF is_impr-usr10 = 'GE'.
+  IF is_impr-sizecl = 'GE'.
     cv_flag = gc_x.
   ELSE.
     CLEAR cv_flag.
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_SCREEN1
+*& Form validate_screen1
+*&---------------------------------------------------------------------*
+*& text
 *&---------------------------------------------------------------------*
 FORM validate_screen1.
 
-  DATA: lv_error TYPE abap_bool.
+  DATA: lv_error TYPE abap_bool,
+        lv_kokrs TYPE kokrs.
+
+  SELECT SINGLE kokrs
+    INTO @lv_kokrs
+    FROM impr
+    WHERE posnr = @gv_p_posnr.
 
   " Cost Center validation
-  PERFORM validate_cost_center USING p_kostl p_plsez
-                               CHANGING lv_error.
+  PERFORM validate_cost_center USING lv_kokrs gv_p_kostl gv_p_plsez
+  CHANGING lv_error.
 
   " Profit Center validation
-  PERFORM validate_profit_center USING p_prctr p_plsez
-                                 CHANGING lv_error.
+  PERFORM validate_profit_center USING lv_kokrs gv_p_prctr gv_p_plsez gv_p_prnam gv_p_posnr
+  CHANGING lv_error.
 
   " CC to PC assignment
-  PERFORM validate_cc_pc_assignment USING p_kostl p_prctr
-                                    CHANGING lv_error.
-
-  " FR Unit validation
-  PERFORM validate_fr_unit USING p_posnr p_prctr
-                           CHANGING lv_error.
+  PERFORM validate_cc_pc_assignment USING lv_kokrs gv_p_kostl gv_p_prctr
+  CHANGING lv_error.
 
   IF lv_error = abap_true.
-    MESSAGE e004. " Validation errors found
+    MESSAGE e000(zmsg_a2r). " Validation errors found
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_COST_CENTER
+*& Form validate_cost_center
 *&---------------------------------------------------------------------*
-FORM validate_cost_center USING iv_kostl TYPE kostl
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_cost_center USING iv_kokrs TYPE kokrs
+                                iv_kostl TYPE kostl
                                 iv_plsez TYPE ps_plsez_chg
                           CHANGING cv_error TYPE abap_bool.
 
-  DATA: ls_csks TYPE csks.
-
-  SELECT SINGLE * FROM csks
-    INTO ls_csks
-    WHERE kostl = iv_kostl.
-
+  " Check cost center validity against Finish Date
+  SELECT SINGLE @abap_true
+    FROM csks
+    WHERE kostl = @iv_kostl
+      AND kokrs = @iv_kokrs
+      AND datab <= @iv_plsez
+      AND datbi >= @iv_plsez
+   INTO @DATA(lv_found) .
   IF sy-subrc = 0.
-    IF ls_csks-datbi < iv_plsez.
-      MESSAGE e005 WITH iv_kostl. " Cost center not valid
-      cv_error = gc_x.
-    ENDIF.
+    CLEAR cv_error.
   ELSE.
-    MESSAGE e006 WITH iv_kostl. " Cost center does not exist
+    MESSAGE e000(zmsg_a2r) WITH 'Cost center is not valid in current year.'(v42).
     cv_error = gc_x.
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_PROFIT_CENTER
+*& Form validate_profit_center
 *&---------------------------------------------------------------------*
-FORM validate_profit_center USING iv_prctr TYPE prctr
-                                  iv_plsez TYPE ps_plsez_chg
+*& text
+*&---------------------------------------------------------------------*
+##NEEDED FORM validate_profit_center USING    iv_kokrs TYPE kokrs
+                                     iv_prctr TYPE prctr
+                                     iv_plsez TYPE ps_plsez_chg
+                                     iv_prnam TYPE im_prnam
+                                     iv_posnr TYPE im_posnr
                             CHANGING cv_error TYPE abap_bool.
 
-  DATA: ls_cepc TYPE cepc.
+  DATA: lv_prctr    TYPE impr-prctr,
+        lv_kokrs    TYPE impr-kokrs,
+        lv_prnam    TYPE impr-prnam,
+        lv_posnr    TYPE impr-posnr,
+        lv_datab    TYPE cepc-datab,
+        lv_datbi    TYPE cepc-datbi,
+        lv_year_end TYPE sy-datum.
 
-  SELECT SINGLE * FROM cepc
-    INTO ls_cepc
-    WHERE prctr = iv_prctr.
+  CLEAR cv_error.
 
-  IF sy-subrc = 0.
-    IF ls_cepc-datbi < iv_plsez.
-      MESSAGE e007 WITH iv_prctr. " Profit center not valid
-      cv_error = gc_x.
-    ENDIF.
+*---------------------------------------------------------------------*
+* Step 1: Get PRCTR + KOKRS from IMPR (override input values)
+*---------------------------------------------------------------------*
+  SELECT SINGLE prnam,
+                posnr,
+                prctr,
+                kokrs
+    INTO ( @lv_prnam, @lv_posnr, @lv_prctr, @lv_kokrs )
+    FROM impr
+   WHERE prnam = @iv_prnam
+     AND posnr = @iv_posnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'IMPR data not found'(m63).
+    cv_error = gc_x.
+    EXIT.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Step 2: Read CEPC validity period
+*---------------------------------------------------------------------*
+  SELECT SINGLE datab, datbi
+    INTO ( @lv_datab, @lv_datbi )
+    FROM cepc
+   WHERE prctr = @lv_prctr
+     AND kokrs = @lv_kokrs.
+*  ENDSELECT.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45).
+    cv_error = gc_x.
+    EXIT.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Step 3: Validate current year
+*---------------------------------------------------------------------*
+  lv_year_end = |{ sy-datum+0(4) }1231|.
+
+  IF lv_datab <= sy-datum
+     AND ( lv_datbi >= sy-datum
+        OR lv_datbi >= lv_year_end ).
+
+    CLEAR cv_error.
+
   ELSE.
-    MESSAGE e008 WITH iv_prctr. " Profit center does not exist
+    MESSAGE e000(zmsg_a2r) WITH 'Profit center is not valid in current year'(m45) lv_year_end.
     cv_error = gc_x.
   ENDIF.
 
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_CC_PC_ASSIGNMENT
+*& Form validate_cc_pc_assignment
 *&---------------------------------------------------------------------*
-FORM validate_cc_pc_assignment USING iv_kostl TYPE kostl
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_cc_pc_assignment USING iv_kokrs TYPE kokrs
+                                     iv_kostl TYPE kostl
                                      iv_prctr TYPE prctr
-                               CHANGING cv_error TYPE abap_bool.
+                            CHANGING cv_error TYPE abap_bool.
 
-  DATA: ls_csks TYPE csks,
-        ls_cepc TYPE cepc.
+  SELECT kokrs, kostl, datbi, datab, bukrs, prctr
+    FROM csks
+    INTO @DATA(ls_csks)
+     WHERE kokrs = @iv_kokrs
+     AND   kostl = @iv_kostl
+     AND   prctr = @iv_prctr
+     AND datab <= @sy-datum
+     AND datbi >= @sy-datum
+    ORDER BY datab.
+  ENDSELECT.
 
-  SELECT SINGLE * FROM csks
-    INTO ls_csks
-    WHERE kostl = iv_kostl.
 
-  IF ls_csks-prctr IS INITIAL.
-    MESSAGE e009 WITH iv_kostl. " CC has no PC assigned
+  IF ls_csks-prctr <> iv_prctr.
+    MESSAGE e000(zmsg_a2r) WITH iv_kostl 'is not assigned to'(m47) iv_prctr.
     cv_error = gc_x.
     RETURN.
   ENDIF.
 
-  SELECT SINGLE * FROM cepc
-    INTO ls_cepc
-    WHERE prctr = iv_prctr.
+  SELECT prctr, datbi, kokrs, bukrs
+    FROM cepc
+    INTO @DATA(ls_cepc)
+    WHERE prctr = @iv_prctr
+    AND kokrs = @iv_kokrs
+    ORDER BY datbi.
+  ENDSELECT.
 
   IF ls_cepc-bukrs IS NOT INITIAL AND
-     ls_cepc-bukrs NE ls_csks-bukrs.
-    MESSAGE e010. " Company codes do not match
+      ls_cepc-bukrs NE ls_csks-bukrs.
+    MESSAGE e000(zmsg_a2r) WITH 'No Company Code Assigned'(v01)."ERROR ASSIGNEE
     cv_error = gc_x.
   ENDIF.
-
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form VALIDATE_FR_UNIT
+*& Form get_available_im_budget
 *&---------------------------------------------------------------------*
-FORM validate_fr_unit USING iv_posnr TYPE im_posnr
-                            iv_prctr TYPE prctr
-                      CHANGING cv_error TYPE abap_bool.
-
-  " Placeholder for FR Unit validation
-  " Implement based on actual custom tables
-  " Reference: Table ZTXCA_ORG01
-
-ENDFORM.
-
+*& text
 *&---------------------------------------------------------------------*
-*& Form SHOW_TEMPLATE_PREVIEW
-*&---------------------------------------------------------------------*
-FORM show_template_preview USING iv_pspid TYPE ps_spdid.
+FORM get_available_im_budget USING iv_posnr TYPE im_posnr
+                          CHANGING cv_budget TYPE bpge-wlges.
 
-  DATA: lt_prpss TYPE TABLE OF prpss,
-        ls_prpss TYPE prpss.
-
-  SELECT * FROM prpss
-    INTO TABLE lt_prpss
-    WHERE pspid = iv_pspid
-    ORDER BY stufe posid.
+  SELECT SINGLE b~wlges, b~wtgev
+    FROM impr AS i
+    INNER JOIN bpge AS b ON b~objnr = i~objnr
+    WHERE i~posnr = @iv_posnr
+    INTO @DATA(ls_bpge).
+  "UP TO 1 ROWS.
+  "ENDSELECT.
 
   IF sy-subrc = 0.
-    CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
+    cv_budget = COND #( WHEN cv_budget > 0 THEN cv_budget ELSE 0 ).
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form create_tree_control
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM create_tree_control.
+
+  " Don't create if already exists
+  CHECK lo_tree_preview IS INITIAL.
+
+  TRY.
+      " Create container
+      CREATE OBJECT lo_cont_preview
+        EXPORTING
+          container_name = gc_tree_container.
+
+      " Set header
+      CLEAR ls_hierarchy_header.
+      ls_hierarchy_header-heading = 'Project Structure: Description'(m05).
+      ls_hierarchy_header-tooltip = 'Project Structure: Description'(m05).
+      ls_hierarchy_header-width   = 40.
+
+      " Create tree
+      CREATE OBJECT lo_tree_preview
+        EXPORTING
+          parent                = lo_cont_preview
+          node_selection_mode   = 0
+          item_selection        = space
+          hierarchy_column_name = gc_hierarchy_short_text
+          hierarchy_header      = ls_hierarchy_header.
+
+      " Add column
+      CALL METHOD lo_tree_preview->add_column
+        EXPORTING
+          name        = gc_hierarchy_technical_key
+          width       = 30
+          alignment   = cl_gui_column_tree=>align_left
+          header_text = CONV #( 'Identification'(m65) ) ##NO_TEXT.
+
+      " Set alignment (CFW workaround)
+      CALL METHOD lo_tree_preview->set_alignment
+        EXPORTING
+          alignment = 15.
+
+      lv_tree_loaded = abap_true.
+
+    CATCH cx_root INTO DATA(lx_error).
+      " Clean up on error
+      IF lo_tree_preview IS NOT INITIAL.
+        FREE lo_tree_preview.
+      ENDIF.
+      IF lo_cont_preview IS NOT INITIAL.
+        FREE lo_cont_preview.
+      ENDIF.
+      MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form load_tree_hierarchy
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM load_tree_hierarchy.
+
+  TYPES: BEGIN OF ty_prhis,
+           pspnr TYPE ps_pspnr,
+           psphi TYPE ps_pspnr,
+           up    TYPE ps_pspnr,
+           down  TYPE ps_pspnr,
+           left  TYPE ps_pspnr,
+           right TYPE ps_pspnr,
+         END OF ty_prhis.
+
+  TYPES: BEGIN OF ty_prpss,
+           pspnr TYPE prpss-pspnr,
+           stufe TYPE prpss-stufe,
+           posid TYPE prpss-posid,
+           post1 TYPE prpss-post1,
+         END OF ty_prpss.
+
+  TYPES: BEGIN OF ty_seq,
+           seqno TYPE i,
+           pspnr TYPE ps_pspnr,
+           stufe TYPE prpss-stufe,
+           posid TYPE prpss-posid,
+           post1 TYPE prpss-post1,
+         END OF ty_seq.
+
+  TYPES: BEGIN OF ty_level_map,
+           stufe    TYPE i,
+           node_key TYPE lvc_nkey,
+         END OF ty_level_map.
+
+  DATA: lv_psphi      TYPE ps_pspnr,
+        lv_node       TYPE ps_pspnr,
+        lv_parent_key TYPE lvc_nkey,
+        lv_last_key   TYPE lvc_nkey VALUE 0,
+        lv_next_stufe TYPE i,
+        lv_index      TYPE sy-tabix.
+
+  DATA: lt_prhis     TYPE STANDARD TABLE OF ty_prhis,
+        lt_prhis_h   TYPE HASHED TABLE OF ty_prhis WITH UNIQUE KEY pspnr,
+        lt_prpss     TYPE STANDARD TABLE OF ty_prpss,
+        lt_prpss_h   TYPE HASHED TABLE OF ty_prpss WITH UNIQUE KEY pspnr,
+        ls_prpss     TYPE ty_prpss,
+        lt_stack     TYPE STANDARD TABLE OF ps_pspnr,
+        lt_seq       TYPE STANDARD TABLE OF ty_seq,
+        ls_seq       TYPE ty_seq,
+        ls_next_seq  TYPE ty_seq,
+        lt_level_map TYPE STANDARD TABLE OF ty_level_map,
+        ls_level_map TYPE ty_level_map,
+        ls_node      TYPE treev_node,
+        ls_item      TYPE cnpb_h_treeitm.
+
+  FIELD-SYMBOLS: <lfs_prhis>     TYPE ty_prhis,
+                 <lfs_prpss>     TYPE ty_prpss,
+                 <lfs_level_map> TYPE ty_level_map.
+
+  CHECK gv_p_pspid IS NOT INITIAL.
+  CHECK lo_tree_preview IS NOT INITIAL.
+
+  TRY.
+
+      CLEAR: gt_treev_node,
+             gt_treeitm,
+             lt_prhis,
+             lt_prpss,
+             lt_seq,
+             lt_level_map.
+
+*--------------------------------------------------------------------*
+* 1. Get template project internal number
+*--------------------------------------------------------------------*
+      SELECT SINGLE pspnr, pspid, post1
+        INTO @DATA(ls_projs)
+        FROM projs
+        WHERE pspid = @gv_p_pspid.
+
+      IF sy-subrc <> 0.
+        DATA(lv_pspid_input) = gv_p_pspid.
+
+        CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+          EXPORTING
+            input  = lv_pspid_input
+          IMPORTING
+            output = lv_pspid_input.
+
+        SELECT SINGLE pspnr, pspid, post1
+          INTO @ls_projs
+          FROM projs
+          WHERE pspid = @lv_pspid_input.
+      ENDIF.
+
+      IF sy-subrc <> 0 OR ls_projs-pspnr IS INITIAL.
+        MESSAGE 'Template project not found in PROJS table'(m01) TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
+
+      lv_psphi = ls_projs-pspnr.
+
+*--------------------------------------------------------------------*
+* 2. Read PRHIS hierarchy
+*--------------------------------------------------------------------*
+      SELECT posnr AS pspnr,
+             psphi,
+             up,
+             down,
+             left,
+             right
+        FROM prhis
+        INTO TABLE @lt_prhis
+        WHERE psphi = @lv_psphi.
+      IF sy-subrc <> 0.
+        CLEAR lt_prhis.
+      ENDIF.
+
+*--------------------------------------------------------------------*
+* 3. Read PRPSS details
+*--------------------------------------------------------------------*
+      SELECT pspnr,
+             stufe,
+             posid,
+             post1
+        FROM prpss
+        INTO TABLE @lt_prpss
+        WHERE psphi = @lv_psphi.
+
+      IF lt_prpss IS INITIAL.
+        MESSAGE 'No WBS elements found for template'(m02) TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
+
+      lt_prpss_h = lt_prpss.
+
+*--------------------------------------------------------------------*
+* 4. Build sequence using PRHIS preorder traversal
+*    Fallback to POSID if PRHIS missing
+*--------------------------------------------------------------------*
+      IF lt_prhis IS NOT INITIAL.
+
+        lt_prhis_h = lt_prhis.
+
+        DATA(lv_root) = VALUE ps_pspnr( ).
+
+        " First try: entry where UP is initial
+        READ TABLE lt_prhis INTO DATA(ls_prhis)
+             WITH KEY up = VALUE ps_pspnr( ).
+
+        IF sy-subrc = 0.
+          lv_root = ls_prhis-pspnr.
+
+          " Fallback: first row of the table
+        ELSEIF lt_prhis IS NOT INITIAL.
+          lv_root = lt_prhis[ 1 ]-pspnr.                "#EC CI_NOORDER
+        ENDIF.
+
+        IF lv_root IS INITIAL.
+          MESSAGE e000(zmsg_a2r) WITH 'Unable to determine template root node'(m68).
+          RETURN.
+        ENDIF.
+
+        CLEAR lt_stack.
+        APPEND lv_root TO lt_stack.
+
+        WHILE lt_stack IS NOT INITIAL.
+
+          READ TABLE lt_stack INTO lv_node INDEX lines( lt_stack ).
+          DELETE lt_stack INDEX lines( lt_stack ).
+
+          READ TABLE lt_prhis_h ASSIGNING <lfs_prhis> WITH KEY pspnr = lv_node.
+          IF sy-subrc <> 0.
+            CONTINUE.
+          ENDIF.
+
+          READ TABLE lt_prpss_h ASSIGNING <lfs_prpss> WITH KEY pspnr = lv_node.
+          IF sy-subrc <> 0.
+            CONTINUE.
+          ENDIF.
+
+          CLEAR ls_seq.
+          ls_seq-seqno = lines( lt_seq ) + 1.
+          ls_seq-pspnr = <lfs_prpss>-pspnr.
+          ls_seq-stufe = <lfs_prpss>-stufe.
+          ls_seq-posid = <lfs_prpss>-posid.
+          ls_seq-post1 = <lfs_prpss>-post1.
+          APPEND ls_seq TO lt_seq.
+
+          IF <lfs_prhis>-right IS NOT INITIAL.
+            APPEND <lfs_prhis>-right TO lt_stack.
+          ENDIF.
+          IF <lfs_prhis>-down IS NOT INITIAL.
+            APPEND <lfs_prhis>-down TO lt_stack.
+          ENDIF.
+
+        ENDWHILE.
+
+      ELSE.
+
+        "Fallback only if PRHIS not available
+        LOOP AT lt_prpss INTO ls_prpss.
+          CLEAR ls_seq.
+          ls_seq-seqno = lines( lt_seq ) + 1.
+          ls_seq-pspnr = ls_prpss-pspnr.
+          ls_seq-stufe = ls_prpss-stufe.
+          ls_seq-posid = ls_prpss-posid.
+          ls_seq-post1 = ls_prpss-post1.
+          APPEND ls_seq TO lt_seq.
+        ENDLOOP.
+
+        SORT lt_seq BY posid.
+
+      ENDIF.
+
+      IF lt_seq IS INITIAL.
+        MESSAGE 'No WBS elements found for template'(m02) TYPE 'S' DISPLAY LIKE 'W'.
+        RETURN.
+      ENDIF.
+
+*--------------------------------------------------------------------*
+* 5. Root project node
+*--------------------------------------------------------------------*
+      lv_last_key = lv_last_key + 1.
+
+      CLEAR ls_node.
+      ls_node-node_key   = lv_last_key.
+      ls_node-relatkey   = ''.
+      ls_node-relatship  = cl_gui_column_tree=>relat_last_child.
+      ls_node-hidden     = space.
+      ls_node-disabled   = space.
+      ls_node-isfolder   = abap_true.
+      ls_node-expander   = abap_true.
+      APPEND ls_node TO gt_treev_node.
+
+      CLEAR ls_item.
+      ls_item-node_key  = lv_last_key.
+      ls_item-item_name = gc_hierarchy_short_text.
+      ls_item-class     = cl_gui_column_tree=>item_class_text.
+      CONCATENATE 'Template:'(v25) ls_projs-post1 INTO ls_item-text SEPARATED BY space.
+      APPEND ls_item TO gt_treeitm.
+
+      CLEAR ls_item.
+      ls_item-node_key  = lv_last_key.
+      ls_item-item_name = gc_hierarchy_technical_key.
+      ls_item-class     = cl_gui_column_tree=>item_class_text.
+      ls_item-text      = ls_projs-pspid.
+      APPEND ls_item TO gt_treeitm.
+
+      CLEAR ls_level_map.
+      ls_level_map-stufe    = 0.
+      ls_level_map-node_key = lv_last_key.
+      APPEND ls_level_map TO lt_level_map.
+
+*--------------------------------------------------------------------*
+* 6. Add nodes in exact template sequence
+*--------------------------------------------------------------------*
+      LOOP AT lt_seq INTO ls_seq.
+        lv_index = sy-tabix.
+
+        CLEAR ls_next_seq.
+        CLEAR lv_next_stufe.
+
+        READ TABLE lt_seq INTO ls_next_seq INDEX lv_index + 1.
+        IF sy-subrc = 0.
+          lv_next_stufe = ls_next_seq-stufe.
+        ELSE.
+          lv_next_stufe = 0.
+        ENDIF.
+
+        IF ls_seq-stufe = 1.
+          READ TABLE lt_level_map INTO ls_level_map WITH KEY stufe = 0.
+        ELSE.
+          READ TABLE lt_level_map INTO ls_level_map WITH KEY stufe = ls_seq-stufe - 1.
+        ENDIF.
+
+        IF sy-subrc = 0.
+          lv_parent_key = ls_level_map-node_key.
+        ELSE.
+          lv_parent_key = 1.
+        ENDIF.
+
+        lv_last_key = lv_last_key + 1.
+
+        CLEAR ls_node.
+        ls_node-node_key   = lv_last_key.
+        ls_node-relatkey   = lv_parent_key.
+        ls_node-relatship  = cl_gui_column_tree=>relat_last_child.
+        ls_node-hidden     = space.
+        ls_node-disabled   = space.
+
+        IF lv_next_stufe > ls_seq-stufe.
+          ls_node-isfolder = abap_true.
+          ls_node-expander = abap_true.
+        ELSE.
+          ls_node-isfolder = abap_false.
+          ls_node-expander = space.
+        ENDIF.
+
+        APPEND ls_node TO gt_treev_node.
+
+        CLEAR ls_item.
+        ls_item-node_key  = lv_last_key.
+        ls_item-item_name = gc_hierarchy_short_text.
+        ls_item-class     = cl_gui_column_tree=>item_class_text.
+        ls_item-text      = ls_seq-post1.
+        APPEND ls_item TO gt_treeitm.
+
+        CLEAR ls_item.
+        ls_item-node_key  = lv_last_key.
+        ls_item-item_name = gc_hierarchy_technical_key.
+        ls_item-class     = cl_gui_column_tree=>item_class_text.
+        ls_item-text      = ls_seq-posid.
+        APPEND ls_item TO gt_treeitm.
+
+        READ TABLE lt_level_map ASSIGNING <lfs_level_map>
+          WITH KEY stufe = ls_seq-stufe.
+        IF sy-subrc = 0.
+          <lfs_level_map>-node_key = lv_last_key.
+        ELSE.
+          CLEAR ls_level_map.
+          ls_level_map-stufe    = ls_seq-stufe.
+          ls_level_map-node_key = lv_last_key.
+          APPEND ls_level_map TO lt_level_map.
+        ENDIF.
+
+        DELETE lt_level_map WHERE stufe > ls_seq-stufe.
+
+      ENDLOOP.
+
+*--------------------------------------------------------------------*
+* 7. Display tree
+*--------------------------------------------------------------------*
+      CALL METHOD lo_tree_preview->delete_all_nodes.
+
+      CALL METHOD lo_tree_preview->hierarchy_header_set_text
+        EXPORTING
+          text = 'Project Structure: Description' ##NO_TEXT.
+
+      CALL METHOD lo_tree_preview->add_nodes_and_items
+        EXPORTING
+          node_table                = gt_treev_node
+          item_table                = gt_treeitm
+          item_table_structure_name = 'CNPB_H_TREEITM' ##NO_TEXT.
+
+      CALL METHOD lo_tree_preview->expand_root_nodes
+        EXPORTING
+          level_count    = 0
+          expand_subtree = abap_true.
+
+      CALL METHOD lo_tree_preview->hierarchy_header_set_width
+        EXPORTING
+          width     = 50
+          width_pix = space.
+
+      CALL METHOD lo_tree_preview->column_set_width
+        EXPORTING
+          column_name = gc_hierarchy_technical_key
+          width       = 25
+          width_pix   = space.
+
+      CALL METHOD cl_gui_cfw=>flush
+        EXCEPTIONS
+          cntl_system_error = 1
+          cntl_error        = 2.
+
+      IF sy-subrc = 0.
+        lv_tree_loaded = abap_true.
+      ENDIF.
+
+    CATCH cx_root INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form free_tree_control
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM free_tree_control.
+
+  " Free tree control when leaving screen
+  IF lo_tree_preview IS NOT INITIAL.
+    CALL METHOD lo_tree_preview->free.
+    FREE lo_tree_preview.
+  ENDIF.
+
+  IF lo_cont_preview IS NOT INITIAL.
+    CALL METHOD lo_cont_preview->free.
+    FREE lo_cont_preview.
+  ENDIF.
+
+  lv_tree_loaded = abap_false.
+  CLEAR: gt_treev_node, gt_treeitm.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form text_editor
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM text_editor .
+
+  CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
+
+  IF go_editor IS INITIAL.
+    CREATE OBJECT go_editor
       EXPORTING
-        i_title       = 'Project Template Preview'
-        i_tabname     = 'PRPSS'
-      TABLES
-        t_outtab      = lt_prpss
+        repid                      = sy-repid
+        dynnr                      = sy-dynnr
+        dynpro_container           = 'REMARKS'
+        wordwrap_mode              = 2
+        wordwrap_position          = 72
+        wordwrap_to_linebreak_mode = 1.
+  ENDIF.
+
+  CHECK go_editor IS BOUND.
+
+  IF lines( gt_text ) = gv_rlines AND NOT gt_text IS INITIAL.
+    APPEND INITIAL LINE TO gt_text.
+  ENDIF.
+  CALL METHOD go_editor->set_text_as_r3table
+    EXPORTING
+      table = gt_text.
+
+  IF NOT gt_text IS INITIAL AND NOT gv_rlines IS INITIAL.
+    CALL METHOD go_editor->select_lines
+      EXPORTING
+        from_line = 1
+        to_line   = gv_rlines.
+    CALL METHOD go_editor->protect_selection
+      EXPORTING
+        protect_mode = 1.
+    CALL METHOD go_editor->set_selection_pos_in_line
+      EXPORTING
+        line                   = ( gv_rlines + 1 )
+        pos                    = 0
       EXCEPTIONS
-        program_error = 1
-        OTHERS        = 2.
-  ELSE.
-    MESSAGE i011 WITH iv_pspid. " Template not found
+        error_cntl_call_method = 1
+        OTHERS                 = 2.
+    IF sy-subrc <> 0.
+      CLEAR gt_text.
+    ENDIF.
+  ENDIF.
+
+  "----- Statusbar
+  CALL METHOD go_editor->set_statusbar_mode
+    EXPORTING
+      statusbar_mode = 1.
+
+  "---- Toolbar
+  CALL METHOD go_editor->set_toolbar_mode
+    EXPORTING
+      toolbar_mode = 1.
+
+  "---- Visibililty
+  IF NOT gv_dflag IS INITIAL.
+    CALL METHOD go_editor->set_readonly_mode
+      EXPORTING
+        readonly_mode          = 1
+      EXCEPTIONS
+        error_cntl_call_method = 1
+        invalid_parameter      = 2
+        OTHERS                 = 3.
+    IF sy-subrc <> 0.
+      CLEAR gv_dflag.
+    ENDIF.
+  ENDIF.
+
+  CALL METHOD go_editor->flush.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_text
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_text.
+
+  DATA: gv_remarks TYPE zta2r_wbshdr-z_remarks.
+
+  CHECK sy-batch IS INITIAL AND sy-binpt IS INITIAL.
+
+  CLEAR: gs_text, gt_text.
+
+  IF gv_reqnum_text IS NOT INITIAL.
+    gs_header-zreq_num = gv_reqnum_text.
+  ENDIF.
+
+  IF gs_header-zreq_num = 0 OR gs_header-zreq_num IS INITIAL.
+    IF go_builder IS INITIAL.
+      "if you normally create it elsewhere, keep this defensive guard
+      CREATE OBJECT go_builder.  "adjust constructor if needed
+
+      CALL METHOD go_builder->get_next_request_number
+        RECEIVING
+          rv_reqnum = gv_request_number.
+
+      gs_header-zreq_num = gv_request_number.
+    ENDIF.
+
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* DISPLAY REQUEST MODE
+*---------------------------------------------------------------------*
+  IF gv_disp_req = abap_true.
+
+    SELECT SINGLE z_remarks
+      INTO gv_remarks
+      FROM zta2r_wbshdr
+      WHERE zreq_num = gs_header-zreq_num.
+
+    IF sy-subrc = 0 AND gv_remarks IS NOT INITIAL.
+      CLEAR gs_text.
+      gs_text-text = gv_remarks.
+      APPEND gs_text TO gt_text.
+    ENDIF.
+
+    CALL METHOD go_editor->set_text_as_r3table
+      EXPORTING
+        table = gt_text.
+
+*--- statusbar in text-control
+    CALL METHOD go_editor->set_statusbar_mode
+      EXPORTING
+        statusbar_mode = 1.
+
+*--- toolbar in text-control
+    CALL METHOD go_editor->set_toolbar_mode
+      EXPORTING
+        toolbar_mode = 1.
+
+*--- display only
+    CALL METHOD go_editor->set_readonly_mode
+      EXPORTING
+        readonly_mode          = 1
+      EXCEPTIONS
+        error_cntl_call_method = 1
+        invalid_parameter      = 2
+        OTHERS                 = 3.
+
+    IF sy-subrc <> 0.
+      RETURN.
+
+    ENDIF.
+
+    CALL METHOD go_editor->flush.
+
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* INPUT / EDIT MODE
+*---------------------------------------------------------------------*
+  CALL METHOD go_editor->get_text_as_r3table
+    IMPORTING
+      table = gt_text.
+
+*--- statusbar in text-control
+  CALL METHOD go_editor->set_statusbar_mode
+    EXPORTING
+      statusbar_mode = 1.
+
+*--- toolbar in text-control
+  CALL METHOD go_editor->set_toolbar_mode
+    EXPORTING
+      toolbar_mode = 1.
+
+  CALL METHOD go_editor->flush.
+
+  CLEAR gv_z_remarks.
+
+  LOOP AT gt_text INTO gs_text.
+    IF gv_z_remarks IS INITIAL.
+      gv_z_remarks = gs_text-text.
+    ELSE.
+      CONCATENATE gv_z_remarks
+                  gs_text-text
+             INTO gv_z_remarks
+        SEPARATED BY cl_abap_char_utilities=>newline.
+    ENDIF.
+  ENDLOOP.
+
+  gs_header-z_remarks = gv_z_remarks.
+
+*---------------------------------------------------------------------*
+* Additional Lines Check
+*---------------------------------------------------------------------*
+  IF lines( gt_text ) > gv_rlines.
+    READ TABLE gt_text INTO gs_text INDEX ( gv_rlines + 1 ).
+    IF gs_text IS INITIAL.
+      DELETE gt_text INDEX ( gv_rlines + 1 ).
+    ENDIF.
   ENDIF.
 
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*& Form GET_AVAILABLE_IM_BUDGET
+*& Form get_user_fullname
 *&---------------------------------------------------------------------*
-FORM get_available_im_budget USING iv_posnr TYPE im_posnr
-                             CHANGING cv_budget TYPE bpge-wlges.
+*& text
+*&---------------------------------------------------------------------*
+FORM get_user_fullname USING    iv_uname      TYPE xubname
+                       CHANGING cv_fullname   TYPE char50.
 
-  DATA: lv_objnr TYPE j_objnr,
-        ls_bpge  TYPE bpge.
+  DATA:lv_datefrom TYPE ad_date_fr,
+       lv_nation   TYPE ad_nation.
 
-  SELECT SINGLE objnr FROM impr
-    INTO lv_objnr
-    WHERE posnr = iv_posnr.
+
+  CLEAR cv_fullname.
+
+  " Get person number from username
+  SELECT SINGLE bname, persnumber
+    FROM usr21
+    INTO @DATA(ls_usr21)
+    WHERE bname = @iv_uname.
+
+  IF ls_usr21-persnumber IS NOT INITIAL.
+    " Get full name from address data
+    SELECT SINGLE persnumber, name_first, name_last
+      FROM adrp
+      INTO @DATA(ls_adrp)
+      WHERE persnumber = @ls_usr21-persnumber
+      AND   date_from = @lv_datefrom
+      AND   nation    = @lv_nation.
+
+    " Build full name: First Name Last Name
+    IF ls_adrp-name_first IS NOT INITIAL
+      OR ls_adrp-name_last IS NOT INITIAL.
+
+      CONCATENATE ls_adrp-name_first ls_adrp-name_last
+        INTO cv_fullname
+        SEPARATED BY space. CONDENSE cv_fullname.
+
+    ELSE.
+      " Fallback to username if no name found
+      cv_fullname = iv_uname.
+    ENDIF.
+
+  ELSE.
+    " If user not found, use username
+    cv_fullname = iv_uname.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_request_type_text
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_request_type_text USING    iv_reqtype      TYPE char2
+                           CHANGING cv_reqtype_text TYPE char40.
+
+  SELECT SINGLE z_reqtype_desc
+    FROM zta2r_reqtype
+    INTO cv_reqtype_text
+    WHERE z_reqtype = iv_reqtype.
+  IF sy-subrc <> 0.
+    CLEAR cv_reqtype_text.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form total_up_wbs_tc
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM total_up_wbs_tc.
+  DATA: lt_table5 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table4 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table3 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table2 TYPE STANDARD TABLE OF ty_wbs_display,
+        lt_table1 TYPE STANDARD TABLE OF ty_wbs_display,
+        lv_sum4   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum3   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum2   TYPE ty_wbs_display-zapproved_budg,
+        lv_sum1   TYPE ty_wbs_display-zapproved_budg,
+        lv_index4 TYPE sy-index,
+        lv_index3 TYPE sy-index,
+        lv_index2 TYPE sy-index.
+
+  DATA: lv_pspid_len4 TYPE numc2.
+  DATA: lv_pspid_len3 TYPE numc2.
+  DATA: lv_pspid_len2 TYPE numc2.
+  DATA: lv_pspid_len1 TYPE numc2.
+
+  DATA: lv_budget_check TYPE ty_wbs_display-zbudget_check.
+
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<fs_wbs_display>).
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = <fs_wbs_display>-posid
+      IMPORTING
+        output = <fs_wbs_display>-posid.
+  ENDLOOP.
+
+  "Auto-populate blank budget = 0 (so totals still update)
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa0>).
+    IF <wa0>-zapproved_budg IS INITIAL.
+      <wa0>-zapproved_budg = 0.
+    ENDIF.
+    IF <wa0>-stufe = 1.
+      gv_wert2 = <wa0>-zapproved_budg.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa>).
+    IF <wa>-stufe = '5'.
+      APPEND <wa> TO lt_table5.
+
+    ELSEIF <wa>-stufe = '4'.
+      APPEND <wa> TO lt_table4.
+      DATA(lv_pspid_new4) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new4.
+      lv_pspid_len4 = strlen( lv_pspid_new4 ).
+
+    ELSEIF <wa>-stufe = '3'.
+      APPEND <wa> TO lt_table3.
+      DATA(lv_pspid_new3) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new3.
+      lv_pspid_len3 = strlen( lv_pspid_new3 ).
+
+    ELSEIF <wa>-stufe = '2'.
+      APPEND <wa> TO lt_table2.
+      DATA(lv_pspid_new2) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new2.
+      lv_pspid_len2 = strlen( lv_pspid_new2 ).
+
+    ELSEIF <wa>-stufe = '1'.
+      APPEND <wa> TO lt_table1.
+      DATA(lv_pspid_new1) = <wa>-posid.
+      CALL FUNCTION 'FTR_CORR_SWIFT_DELETE_ENDZERO'
+        CHANGING
+          c_value = lv_pspid_new1.
+      lv_pspid_len1 = strlen( lv_pspid_new1 ).
+    ENDIF.
+  ENDLOOP.
+
+* Build the Total for Level4.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa4>) WHERE stufe = '4'.
+    LOOP AT lt_table5 ASSIGNING FIELD-SYMBOL(<wa5>).
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4).
+        lv_sum4 = lv_sum4 + <wa5>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum4 IS NOT INITIAL.
+      <wa4>-zapproved_budg = lv_sum4.
+    ENDIF.
+    lv_index4 = lv_index4 + 1.
+    MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zapproved_budg.
+    MODIFY lt_table4 FROM <wa4> INDEX lv_index4.
+    CLEAR: lv_sum4.
+  ENDLOOP.
+
+* Build the Total for Level3.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa3>) WHERE stufe = '3'.
+    LOOP AT lt_table4 ASSIGNING <wa4>.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3).
+        lv_sum3 = lv_sum3 + <wa4>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum3 IS NOT INITIAL.
+      <wa3>-zapproved_budg = lv_sum3.
+    ENDIF.
+    lv_index3 = lv_index3 + 1.
+    MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zapproved_budg.
+    MODIFY lt_table3 FROM <wa3> INDEX lv_index3.
+    CLEAR: lv_sum3.
+  ENDLOOP.
+
+* Build the Total for Level2.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa2>) WHERE stufe = '2'.
+    LOOP AT lt_table3 ASSIGNING <wa3>.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2).
+        lv_sum2 = lv_sum2 + <wa3>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_sum2 IS NOT INITIAL.
+      <wa2>-zapproved_budg = lv_sum2.
+    ENDIF.
+    lv_index2 = lv_index2 + 1.
+    MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zapproved_budg.
+    MODIFY lt_table2 FROM <wa2> INDEX lv_index2.
+    CLEAR: lv_sum2.
+  ENDLOOP.
+
+* Build the Total for Level1.
+  LOOP AT gt_wbs_display ASSIGNING FIELD-SYMBOL(<wa1>) WHERE stufe = '1'.
+    LOOP AT lt_table2 ASSIGNING <wa2>.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1).
+        lv_sum1 = lv_sum1 + <wa2>-zapproved_budg.
+      ENDIF.
+    ENDLOOP.
+    IF lv_sum1 IS NOT INITIAL.
+      <wa1>-zapproved_budg = lv_sum1.
+    ENDIF.
+    MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zapproved_budg.
+    CLEAR: lv_sum1.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Separate logic for zbudget_check
+*---------------------------------------------------------------------*
+
+* Level 4 gets X if any Level 5 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa5> WHERE stufe = '5'.
+      IF <wa5>-posid+0(lv_pspid_len4) = <wa4>-posid+0(lv_pspid_len4)
+         AND <wa5>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa4>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa4> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 3 gets X if any Level 4 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa4> WHERE stufe = '4'.
+      IF <wa4>-posid+0(lv_pspid_len3) = <wa3>-posid+0(lv_pspid_len3)
+         AND <wa4>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa3>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa3> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 2 gets X if any Level 3 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa3> WHERE stufe = '3'.
+      IF <wa3>-posid+0(lv_pspid_len2) = <wa2>-posid+0(lv_pspid_len2)
+         AND <wa3>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa2>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa2> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+* Level 1 gets X if any Level 2 child has X
+  LOOP AT gt_wbs_display ASSIGNING <wa1> WHERE stufe = '1'.
+    CLEAR lv_budget_check.
+
+    LOOP AT gt_wbs_display ASSIGNING <wa2> WHERE stufe = '2'.
+      IF <wa2>-posid+0(lv_pspid_len1) = <wa1>-posid+0(lv_pspid_len1)
+         AND <wa2>-zbudget_check IS NOT INITIAL.
+        lv_budget_check = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_budget_check IS NOT INITIAL.
+      <wa1>-zbudget_check = 'X'.
+      MODIFY gt_wbs_display FROM <wa1> TRANSPORTING zbudget_check.
+    ENDIF.
+  ENDLOOP.
+
+  PERFORM b3_level1.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form b3_level1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM b3_level1.
+  IF gv_req_type = 'B2'.
+    LOOP AT gt_wbs_display INTO DATA(ls_wbs) WHERE stufe = 1.
+      IF gv_wert2 IS NOT INITIAL.
+        CLEAR ls_wbs-zapproved_budg.
+        ls_wbs-zapproved_budg = gv_wert2.
+      ENDIF.
+
+      MODIFY gt_wbs_display FROM ls_wbs TRANSPORTING zapproved_budg.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form fcode_tc_find
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM fcode_tc_find USING iv_tc_name
+                         iv_table_name
+                         iv_mark_name
+                         iv_ok.
+
+  DATA: lv_tc_new_top_line TYPE i,
+
+        lv_tc_lines_name   TYPE scrfname,
+
+        lt_fields          TYPE STANDARD TABLE OF sval,
+        ls_fields          TYPE sval,
+
+        lv_pspid           TYPE ps_pspid.
+
+  FIELD-SYMBOLS: <fs_tc>    TYPE cxtab_control,
+                 <fs_lines> TYPE i.
+
+  ASSIGN (iv_tc_name) TO <fs_tc>.
+
+  " Get lines of table control                              *
+  CONCATENATE 'G_' iv_tc_name '_LINES' INTO lv_tc_lines_name.
+  ASSIGN (lv_tc_lines_name) TO <fs_lines>.
+
+  CLEAR: ls_fields.
+  ls_fields-tabname = 'PRPS'.
+  ls_fields-fieldname = 'POSID'.
+  APPEND ls_fields TO lt_fields.
+
+  CALL FUNCTION 'POPUP_GET_VALUES'
+    EXPORTING
+      popup_title     = 'Find WBS element' ##NO_TEXT
+    TABLES
+      fields          = lt_fields
+    EXCEPTIONS
+      error_in_fields = 1
+      OTHERS          = 2.
+
+  IF sy-subrc <> 0.
+    CLEAR ls_fields.
+  ENDIF.
+
+
+  READ TABLE lt_fields INTO ls_fields INDEX 1.
+  lv_pspid = ls_fields-value.
+
+  IF sy-subrc EQ 0.
+    READ TABLE gt_wbs_items WITH KEY posid = lv_pspid
+      TRANSPORTING NO FIELDS.
+    IF sy-subrc EQ 0.
+      lv_tc_new_top_line = sy-tabix.
+      " Set the new top line
+      <fs_tc>-top_line = lv_tc_new_top_line.
+      SET CURSOR FIELD 'zta2r_WBSITEM-POSID' LINE lv_tc_new_top_line.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form mark_request_error
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*FORM mark_request_error USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+*
+*  UPDATE zta2r_wbshdr
+*    SET request_status = 'ERROR'
+*    WHERE zreq_num = @iv_reqnum.
+*
+*  COMMIT WORK AND WAIT.
+*  MESSAGE e000(zmsg_a2r) WITH 'Error creating project for request' iv_reqnum ##NO_TEXT.
+*ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form submit_direct_creation
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM submit_direct_creation.
+
+  DATA: lv_reqnum  TYPE zta2r_wbshdr-zreq_num.
+
+  "STEP 1: Sync + convert
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+
+  "Only A1: allow auto-defaults
+  IF gv_edit_mode <> abap_true.
+    PERFORM populate_header_structure.
+  ELSE.
+    IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+      gs_header-z_remarks = gv_z_remarks.
+    ENDIF.
+  ENDIF.
+
+  "Ensure builder exists ONLY if we will call it
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder. "adjust if constructor requires params
+  ENDIF.
+
+  IF gs_header-request_status = 'REJECTED'.
+    gv_edit_mode = abap_false.
+  ENDIF.
+
+  "STEP 2: Save request / get request number
+  IF gv_edit_mode = abap_true.
+
+    "Edit mode: request number must already exist
+    lv_reqnum = gs_header-zreq_num.
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Missing request number for submit'(m69).
+      RETURN.
+    ENDIF.
+
+    "Update Z tables (no builder dependency)
+    PERFORM update_draft_request_db USING lv_reqnum.
+
+  ELSE.
+
+    gs_header-waers = gv_project_currency.
+
+    IF gv_gos_reqnum IS NOT INITIAL.
+      gs_header-zreq_num = gv_gos_reqnum.
+    ENDIF.
+
+    "Create mode: use your existing builder method
+    lv_reqnum = go_builder->save_request_for_submit(
+      is_header    = gs_header
+      it_wbs_items = gt_wbs_items
+    ).
+
+    IF lv_reqnum IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Failed to save request before submit'(m13).
+      RETURN.
+    ENDIF.
+
+    gs_header-zreq_num = lv_reqnum.
+
+  ENDIF.
+
+  "STEP 3: Set PENDING
+  UPDATE zta2r_wbshdr
+    SET request_status = 'PENDING',
+        waers          = @gv_project_currency
+    WHERE zreq_num = @lv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to update status for'(m03) lv_reqnum.
+    RETURN.
+  ENDIF.
+
+  COMMIT WORK AND WAIT.
+  gs_header-request_status = 'PENDING'.
+
+  " trigger WF approval process
+  PERFORM trigger_wf USING gs_header.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form sync_screen_to_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM sync_screen_to_header.
+
+  DATA: lv_posnr TYPE im_posnr.
+
+  "------------------------------------------------------------
+  " Push shadow values into GS_HEADER before save/submit
+  "------------------------------------------------------------
+  IF gv_u_post1 = abap_true.
+    gs_header-post1 = gs_header_user-post1.
+  ENDIF.
+
+  IF gv_u_vernr = abap_true.
+    gs_header-vernr = gs_header_user-vernr.
+  ENDIF.
+
+  IF gv_u_plsez = abap_true.
+    gs_header-plsez = gs_header_user-plsez.
+  ENDIF.
+
+  IF gv_u_bukrs = abap_true.
+    gs_header-bukrs = gs_header_user-bukrs.
+  ENDIF.
+
+  IF gv_u_werks = abap_true.
+    gs_header-werks = gs_header_user-werks.
+  ENDIF.
+
+  IF gv_u_prctr = abap_true.
+    gs_header-prctr = gs_header_user-prctr.
+  ENDIF.
+
+  IF gv_u_prnam = abap_true.
+    gs_header-prnam = gs_header_user-prnam.
+  ENDIF.
+
+  IF gv_u_kostl = abap_true.
+    gs_header-kostl = gs_header_user-kostl.
+  ENDIF.
+
+  IF gv_u_izwek = abap_true.
+    gs_header-izwek = gs_header_user-izwek.
+  ENDIF.
+
+  IF gv_u_zunifier_proj = abap_true.
+    gs_header-zunifier_proj = gs_header_user-zunifier_proj.
+  ENDIF.
+
+  IF gv_u_usr008 = abap_true.
+    gs_header-usr008 = gs_header_user-usr008.
+  ENDIF.
+
+  "------------------------------------------------------------
+  " Convert IM Position display value back to internal POSNR
+  "------------------------------------------------------------
+  IF gv_u_im_posid = abap_true AND gv_im_posid_user IS NOT INITIAL.
+
+    CLEAR lv_posnr.
+
+    "Direct match by POSID
+    SELECT SINGLE posnr
+      FROM impr
+      INTO @lv_posnr
+      "UP TO 1 ROWS
+      WHERE posid = @gv_im_posid_user.
+*    ENDSELECT.
+
+    IF sy-subrc <> 0.
+      "Fallback: user may have entered internal-like value
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = gv_im_posid_user
+        IMPORTING
+          output = lv_posnr.
+
+      SELECT SINGLE posnr
+        FROM impr
+        INTO @DATA(lv_check)
+        WHERE posnr = @lv_posnr.
+
+      IF sy-subrc <> 0.
+        CLEAR lv_posnr.
+      ENDIF.
+    ENDIF.
+
+    IF lv_posnr IS NOT INITIAL.
+      gs_header-posnr = lv_posnr.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_draft_req
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_draft_req USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  "Basic check
+  IF iv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter Request Number.'(v43).
+  ENDIF.
+
+  "Read Header
+  SELECT SINGLE *
+    FROM zta2r_wbshdr
+    INTO @DATA(ls_hdr)
+    WHERE zreq_num = @iv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+  ENDIF.
+
+  "Only creator can edit
+  IF ls_hdr-ernam <> sy-uname.
+    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this request.'(v44).
+  ENDIF.
+
+  "Only Draft and Rejected can edit
+  IF ls_hdr-request_status = 'PENDING' OR ls_hdr-request_status = 'APPROVED'.
+    MESSAGE e000(zmsg_a2r) WITH 'Request Number already submitted'(m70).
+  ENDIF.
+
+*  IF ls_hdr-request_status = 'APPROVED'.
+*    MESSAGE e000(zmsg_a2r) WITH 'Request Number already submitted'(m70).
+*  ENDIF.
+
+  "Reset buffers (important)
+  CLEAR: gs_header.
+  FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header to screen2 structure
+  MOVE-CORRESPONDING ls_hdr TO gs_header.
+
+  "Load items to internal table used by screen2
+  SELECT *
+    FROM zta2r_wbsitem
+    INTO TABLE @gt_wbs_items
+    WHERE zreq_num = @iv_reqnum.
+
+  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+  gv_p_posnr = gs_header-posnr.
+  gv_p_prnam = gs_header-prnam.
+  gv_p_kostl = gs_header-kostl.
+  gv_p_verna = gs_header-vernr.
+  gv_p_post1 = gs_header-post1.
+  gv_p_prctr = gs_header-prctr.
+  gv_p_plsez = gs_header-plsez.
+  gv_p_profl = gs_header-profl.
+
+  IF gv_p_posnr IS NOT INITIAL.
+
+    SELECT SINGLE posnr
+      FROM zta2r_wbshdr
+      INTO @DATA(lv_edit_posnr)
+      WHERE zreq_num = @gv_p_req_num.
+
+    SELECT SINGLE gjahr
+      FROM impr
+      INTO @DATA(lv_edit_gjahr)
+      WHERE posnr = @lv_edit_posnr.
+  ENDIF.
+
+  "Mark edit mode so prepare_screen2 will NOT copy template
+  gv_gjahr              = lv_edit_gjahr.
+  gv_edit_mode          = abap_true.
+  gv_loaded_reqnum      = iv_reqnum.
+  gv_header_initialized = abap_false.
+
+*  IF  ls_hdr-z_reqtype <> 'F1'.
+*    UPDATE zta2r_wbshdr
+*    SET z_reqtype = 'F1'
+*    WHERE zreq_num = @iv_reqnum.
+*
+*    COMMIT WORK AND WAIT.
+*
+**    ls_hdr-z_reqtype = 'F1'. "keep locally
+*
+*  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_draft_req
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_b3 USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr  TYPE zta2r_wbshdr.
+  DATA: lv_reqnum_b3    TYPE zta2r_wbshdr-zreq_num,
+        lv_request_stat TYPE zta2r_wbshdr-request_status,
+        lv_pending_b3   TYPE zta2r_wbshdr-z_reqtype.
+
+*  SELECT MAX( zreq_num )
+*    FROM zta2r_wbshdr
+*    INTO @lv_reqnum_b3
+*    WHERE pspnr = @gv_pspnr_sel.
+*  IF sy-uname = 'HQ75177'.
+*  ELSE.
+*    IF lv_reqnum_b3 IS INITIAL.
+*      MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+*    ENDIF.
+*  ENDIF.
+*
+*  IF lv_reqnum_b3 IS NOT INITIAL.
+*    iv_reqnum = lv_reqnum_b3.
+*  ENDIF.
+
+
+
+  SELECT SINGLE pspnr
+    FROM proj
+    INTO @DATA(lv_pspnr)
+    WHERE pspid = @gv_p_pspid_proj.
 
   IF sy-subrc = 0.
-    SELECT SINGLE wlges wtgev
-      FROM bpge
-      INTO (ls_bpge-wlges, ls_bpge-wtgev)
-      WHERE objnr = lv_objnr.
+    SELECT zreq_num, request_status, z_reqtype
+      FROM zta2r_wbshdr
+      WHERE pspnr = @lv_pspnr
+      ORDER BY zreq_num DESCENDING
+      INTO (@lv_reqnum_b3, @lv_request_stat, @lv_pending_b3)
+      UP TO 1 ROWS.
+    ENDSELECT.
 
-    cv_budget = ls_bpge-wlges - ls_bpge-wtgev.
-
-    IF cv_budget > 0.
-      gv_available_budget = cv_budget.
-    ELSE.
-      CLEAR gv_available_budget.
+    IF sy-subrc = 0.
+      gv_reqnum = lv_reqnum_b3.
     ENDIF.
+
+  ENDIF.
+
+  IF lv_request_stat <> 'APPROVED' AND lv_pending_b3 = 'B3'.
+    MESSAGE e000(zmsg_a2r) WITH 'You have a pending request'(m55).
+  ENDIF.
+*
+*  "Read Header
+*  SELECT SINGLE *
+*    FROM zta2r_wbshdr
+*    INTO @ls_hdr
+*    WHERE zreq_num = @iv_reqnum.
+**
+*  IF sy-subrc <> 0.
+*    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+*  ENDIF.
+*
+  SELECT SINGLE objnr
+    FROM proj
+    INTO @DATA(lv_objnr)
+    WHERE pspnr = @gs_header-pspnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Object number not found'(v26).
+  ENDIF.
+
+  SELECT SINGLE stat
+    FROM jest
+    INTO @DATA(lv_stat)
+    "UP TO 1 ROWS
+    WHERE objnr = @lv_objnr
+    AND inact = ''.
+*  ENDSELECT.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Status not found'(v27).
+  ENDIF.
+
+  IF lv_stat = 'I0045' OR lv_stat = 'I0046'.
+    MESSAGE e000(zmsg_a2r) WITH 'Project is TECO/CLSD. Modification not allowed'(v28).
+  ENDIF.
+  "Only creator can edit
+*  IF ls_hdr-ernam <> sy-uname.
+*    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+*  ENDIF.
+
+  "Must be Draft
+  "Field from your table design: REQUEST_STATUS
+*  IF ls_hdr-request_status <> 'APPROVED'.
+*  ELSEIF ls_hdr-request_status IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project.'(m67).
+*  ENDIF.
+
+*  "Reset buffers (important)
+*  CLEAR: gs_header.
+*  FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header to screen2 structure
+*  MOVE-CORRESPONDING ls_hdr TO gs_header.
+*
+*  "Load items to internal table used by screen2
+*  SELECT *
+*    FROM zta2r_wbsitem
+*    INTO TABLE @gt_wbs_items
+*    WHERE zreq_num = @iv_reqnum.
+
+*  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+*  gv_p_posnr = gs_header-posnr.
+*  gv_p_prnam = gs_header-prnam.
+*  gv_p_verna = gs_header-vernr.
+*  gv_p_kostl = gs_header-kostl.
+*  gv_p_post1 = gs_header-post1.
+*  gv_p_prctr = gs_header-prctr.
+*  gv_p_plsez = gs_header-plsez.
+*  gv_p_profl = gs_header-profl.
+*
+*  IF gv_p_posnr IS NOT INITIAL.
+*
+*    SELECT SINGLE posnr
+*      FROM zta2r_wbshdr
+*      INTO @DATA(lv_edit_posnr)
+*      WHERE zreq_num = @gv_p_req_num.
+*
+*    SELECT SINGLE gjahr
+*      FROM impr
+*      INTO @DATA(lv_edit_gjahr)
+*      WHERE posnr = @lv_edit_posnr.
+*  ENDIF.
+*
+*  "Mark edit mode so prepare_screen2 will NOT copy template
+*  gv_gjahr              = lv_edit_gjahr.
+*  gv_edit_mode          = abap_true.
+*  gv_loaded_reqnum      = iv_reqnum.
+*  gv_header_initialized = abap_false.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form update_draft_request_db
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM update_draft_request_db USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr_db TYPE zta2r_wbshdr,
+        ls_item   TYPE zta2r_wbsitem,
+        ls_wbs    TYPE zta2r_wbsitem,
+        lt_items  TYPE STANDARD TABLE OF zta2r_wbsitem.
+
+  "Read existing header to keep audit fields (ernam/erdat)
+  SELECT SINGLE *
+    FROM zta2r_wbshdr
+    INTO @ls_hdr_db
+    WHERE zreq_num = @iv_reqnum.
+
+  IF sy-subrc <> 0.
+    ls_hdr_db = gs_header.
+  ENDIF.
+
+  "Update ONLY editable fields, keep original ernam/erdat
+  ls_hdr_db-profl         = gs_header-profl.
+  ls_hdr_db-kostl         = gs_header-kostl.
+  ls_hdr_db-post1         = gs_header-post1.
+  ls_hdr_db-vernr         = gs_header-vernr.
+  ls_hdr_db-plsez         = gs_header-plsez.
+  ls_hdr_db-prctr         = gs_header-prctr.
+  ls_hdr_db-waers         = gv_project_currency.
+  ls_hdr_db-z_remarks     = gs_header-z_remarks.
+  ls_hdr_db-zunifier_proj = gs_header-zunifier_proj.
+
+  "keep these from db or refresh from IM if you want:
+  ls_hdr_db-posnr         = gs_header-posnr.
+  ls_hdr_db-prnam         = gs_header-prnam.
+  ls_hdr_db-bukrs         = gs_header-bukrs.
+  ls_hdr_db-werks         = gs_header-werks.
+  ls_hdr_db-izwek         = gs_header-izwek.
+  ls_hdr_db-usr008        = gs_header-usr008.
+  ls_hdr_db-usr10        = gs_header-usr10.
+  ls_hdr_db-z_reqtype     = gs_header-z_reqtype.
+
+  UPDATE zta2r_wbshdr FROM ls_hdr_db.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  "Replace items
+  DELETE FROM zta2r_wbsitem
+    WHERE zreq_num = @iv_reqnum.
+
+  CLEAR lt_items.
+
+  LOOP AT gt_wbs_items INTO ls_wbs.
+    CLEAR ls_item.
+    ls_item-mandt         = sy-mandt.
+    ls_item-zreq_num      = iv_reqnum.
+    ls_item-bukrs         = ls_hdr_db-bukrs.
+    ls_item-posid         = ls_wbs-posid.
+    ls_item-stufe         = ls_wbs-stufe.
+    ls_item-post1         = ls_wbs-post1.
+    ls_item-kostl         = ls_wbs-kostl.
+    ls_item-wert2         = ls_wbs-wert2.
+    ls_item-zbudget_check = ls_wbs-zbudget_check.
+    ls_item-imprf         = ls_wbs-imprf.
+    ls_item-prart         = ls_wbs-prart.
+    ls_item-gjahr         = ls_wbs-gjahr.
+    ls_item-posnr         = ls_wbs-posnr.
+
+    APPEND ls_item TO lt_items.
+  ENDLOOP.
+
+  IF lt_items IS NOT INITIAL.
+    INSERT zta2r_wbsitem FROM TABLE lt_items.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form pspid_pspnr
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM pspid_pspnr.
+  CLEAR: gv_pspnr_sel, gv_p_req_num, gv_vkokr.
+
+  SELECT SINGLE pspnr
+    FROM proj "UP TO 1 ROWS
+    INTO @gv_pspnr_sel
+    WHERE pspid = @gv_p_pspid_proj.
+  "ENDSELECT.
+
+  SELECT zreq_num
+    FROM zta2r_wbshdr UP TO 1 ROWS
+    INTO @gv_p_req_num "request  number
+    WHERE pspnr = @gv_pspnr_sel ORDER BY zreq_num.
+  ENDSELECT.
+
+  IF sy-subrc = 0.
+    SELECT vkokr
+  FROM zta2r_wbsitem UP TO 1 ROWS
+  INTO @gv_vkokr
+  WHERE zreq_num = @gv_p_req_num ORDER BY zreq_num.
+    ENDSELECT.
+  ELSE.
+    gv_raw_data = abap_true.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_screen2
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_screen2 USING iv_on_submit TYPE abap_bool.
+
+  DATA: lv_error          TYPE abap_bool,
+        lv_kokrs          TYPE kokrs,
+        lv_im_budget      TYPE bpge-wlges,
+        lv_level1_budget  TYPE bpge-wlges,
+        lv_has_attachment TYPE abap_bool,
+
+        lv_budget_im_curr TYPE bpge-wlges,
+        lv_im_waers       TYPE imtp-waers,
+        lv_ukurs          TYPE tcurr-ukurs.
+
+  CLEAR: lv_error, lv_kokrs, lv_im_budget, lv_level1_budget, lv_has_attachment.
+
+  "---------------------------------------------------------------*
+  " 1. Get KOKRS from IM Position
+  "---------------------------------------------------------------*
+  SELECT SINGLE kokrs
+    INTO @lv_kokrs
+    FROM impr
+   WHERE posnr = @gs_header-posnr.
+
+  IF gv_vkokr IS NOT INITIAL.
+    lv_kokrs = gv_vkokr.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  " 2. Mandatory header fields
+  "---------------------------------------------------------------*
+  PERFORM validate_screen2_header
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+  PERFORM validate_plant USING gs_header-werks gs_header-bukrs.
+
+  "---------------------------------------------------------------*
+  " 3. Reuse existing validations
+  "---------------------------------------------------------------*
+  PERFORM validate_cost_center
+    USING    lv_kokrs
+             gs_header-kostl
+             gs_header-plsez
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+  PERFORM resp_pers USING gs_header-vernr.
+
+  PERFORM validate_profit_center
+    USING    lv_kokrs
+             gs_header-prctr
+             gs_header-plsez
+             gs_header-prnam
+             gs_header-posnr
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+  PERFORM validate_cc_pc_assignment
+    USING    lv_kokrs
+             gs_header-kostl
+             gs_header-prctr
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+  PERFORM validate_approver_matrix
+  CHANGING lv_error.
+
+  "---------------------------------------------------------------*
+  " 4. WBS table validations
+  "---------------------------------------------------------------*
+  PERFORM validate_screen2_wbs_table
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+
+  PERFORM validate_total_up_done
+    CHANGING lv_error.
+
+  IF lv_error = abap_true.
+    MESSAGE e004.
+    EXIT.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* 5. Level 1 budget vs IM available budget
+*---------------------------------------------------------------------*
+  PERFORM get_im_available_budget_s2
+    CHANGING lv_im_budget
+             lv_im_waers.
+
+  PERFORM get_level1_total_budget
+    CHANGING lv_level1_budget.
+
+  " Optional: no level 1 budget entered
+  IF lv_level1_budget IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " Optional: cannot validate if no IM currency found
+  IF lv_im_waers IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " Convert Level 1 budget to IM currency if needed
+  IF gv_project_currency = lv_im_waers.
+
+    lv_budget_im_curr = lv_level1_budget.
+
+  ELSE.
+
+    PERFORM get_exchange_rate_to_im
+      USING    lv_im_waers
+               gv_project_currency
+      CHANGING lv_ukurs.
+
+    IF lv_ukurs IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Unable to determine exchange rate'(m59).
+      EXIT.
+    ENDIF.
+
+    lv_budget_im_curr = lv_level1_budget / lv_ukurs.
+
+  ENDIF.
+
+  " Final comparison
+  IF lv_budget_im_curr > lv_im_budget.
+    MESSAGE e000(zmsg_a2r) WITH 'Amount is greater than the available IM budget'(m60).
+    EXIT.
+  ENDIF.
+
+  "---------------------------------------------------------------*
+  " 6. Attachment validation - submit only
+  "---------------------------------------------------------------*
+  IF gv_req_type <> 'B2' AND gv_req_type <> 'E1'.
+    PERFORM check_attachment_exists
+      CHANGING lv_has_attachment.
+
+    IF lv_has_attachment IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Attachment is Mandatory.'(m43).
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+  IF gv_req_type = 'E1'.
+    "---------------------------------------------------------------*
+    " 7. Remarks validation
+    "---------------------------------------------------------------*
+    IF gv_z_remarks IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Remarks is Mandatory'(v23).
+      RETURN.
+    ENDIF.
+
+
+    "---------------------------------------------------------------*
+    " 8. To-Be validation
+    "---------------------------------------------------------------*
+    PERFORM tobe_validate.
+  ENDIF.
+
+  IF gs_header-pspid IS INITIAL.
+    SELECT SINGLE pspnr, pspid
+      FROM proj
+      INTO ( @gs_header-pspnr, @gs_header-pspid )
+      WHERE pspnr = @gs_header-pspnr.
+  ENDIF.
+  IF gs_header-pspnr IS INITIAL.
+    SELECT SINGLE pspnr, pspid
+      FROM proj
+      INTO ( @gs_header-pspnr, @gs_header-pspid )
+      WHERE pspnr = @gs_header-pspnr.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_screen2_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_screen2_header
+  CHANGING cv_error TYPE abap_bool.
+
+  CLEAR cv_error.
+
+  IF gs_header-post1 IS INITIAL
+  OR gs_header-bukrs IS INITIAL
+  OR gs_header-vernr IS INITIAL
+  OR gs_header-plsez IS INITIAL
+  OR gs_header-werks IS INITIAL
+  OR gs_header-prctr IS INITIAL
+  OR gs_header-prnam IS INITIAL
+  OR gs_header-kostl IS INITIAL
+  OR gs_header-izwek IS INITIAL
+  OR gs_header-posnr IS INITIAL.
+
+    MESSAGE e000(zmsg_a2r) WITH 'Fill in all required entry fields'(m42).
+    cv_error = abap_true.
+    RETURN.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_screen2_wbs_table
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_screen2_wbs_table
+  CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_wbs TYPE ty_wbs_display.
+
+  CLEAR cv_error.
+
+  IF gt_wbs_display IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter at least one WBS row'(m41).
+    cv_error = abap_true.
+    RETURN.
+  ENDIF.
+
+  " Duplicate / mandatory / level validations
+  PERFORM validate_wbs_duplicates
+    CHANGING cv_error.
+  IF cv_error = abap_true.
+    RETURN.
+  ENDIF.
+
+  LOOP AT gt_wbs_display INTO ls_wbs.
+
+    " Mandatory fields in table
+    IF ls_wbs-stufe IS INITIAL
+    OR ls_wbs-posid IS INITIAL
+    OR ls_wbs-post1 IS INITIAL.
+      MESSAGE e000(zmsg_a2r) WITH 'Fill in all required WBS entry fields'(m40).
+      cv_error = abap_true.
+      RETURN.
+    ENDIF.
+
+    " Level 1 validations based on FS
+    IF ls_wbs-stufe = 1.
+
+      " Only for ZPC00001
+      IF gv_p_profl = 'ZPC0001'.
+        " Investment Profile required in Level 1 WBS
+        IF ls_wbs-imprf IS INITIAL.
+          MESSAGE e000(zmsg_a2r)
+            WITH 'Investment Profile is required in Level 1 WBS'(m58) ls_wbs-posid.
+          cv_error = abap_true.
+          RETURN.
+        ENDIF.
+      ENDIF.
+
+      " Responsible Cost Center required in Level 1 WBS
+      IF ls_wbs-kostl IS INITIAL.
+        MESSAGE e000(zmsg_a2r)
+          WITH 'Responsible Cost Center is required in Level 1 WBS'(m57) ls_wbs-posid.
+        cv_error = abap_true.
+        RETURN.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_wbs_duplicates
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_wbs_duplicates
+  CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_wbs   TYPE ty_wbs_display,
+        lt_posid TYPE SORTED TABLE OF ps_posid WITH UNIQUE KEY table_line.
+
+  CLEAR cv_error.
+
+  LOOP AT gt_wbs_display INTO ls_wbs.
+
+    READ TABLE lt_posid
+      WITH TABLE KEY table_line = ls_wbs-posid
+      TRANSPORTING NO FIELDS.
+
+    IF sy-subrc = 0.
+      MESSAGE e000(zmsg_a2r)
+        WITH 'Duplicate WBS element found'(m37) ls_wbs-posid.
+      cv_error = abap_true.
+      RETURN.
+    ENDIF.
+
+    INSERT ls_wbs-posid INTO TABLE lt_posid.
+
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_level1_total_budget
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_level1_total_budget
+  CHANGING cv_level1_budget TYPE bpge-wlges.
+
+  DATA: ls_wbs TYPE ty_wbs_display.
+
+  CLEAR cv_level1_budget.
+
+  LOOP AT gt_wbs_display INTO ls_wbs WHERE stufe = 1..
+    IF ls_wbs-zapproved_budg IS NOT INITIAL.
+      cv_level1_budget = cv_level1_budget + ls_wbs-zapproved_budg.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form check_attachment_exists
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM check_attachment_exists
+  CHANGING cv_exists TYPE abap_bool.
+  cv_exists = abap_true.
+  IF gv_gos_reqnum IS INITIAL OR gv_gos_reqnum = 0.
+    cv_exists = abap_false.
+  ELSE.
+    DATA : wa_object       TYPE sibflporb,
+           int_rel_options TYPE obl_t_relt,
+           wa_rel_options  TYPE obl_s_relt,
+           int_links       TYPE obl_t_link.
+
+    wa_rel_options-low = 'ATTA'. "" Attachemnts
+    wa_rel_options-sign = 'I'.
+    wa_rel_options-option = 'EQ'.
+    APPEND wa_rel_options TO int_rel_options.
+
+    wa_object-instid = gv_gos_reqnum.
+    wa_object-typeid = 'ZA2RWBS'. "" PR
+    wa_object-catid  = 'BO'. "" Business Object
+    REFRESH int_links[].
+
+    TRY.
+        CALL METHOD cl_binary_relation=>read_links_of_binrels
+          EXPORTING
+            is_object           = wa_object          " Start object
+            it_relation_options = int_rel_options    " Link Types
+            ip_role             = 'GOSAPPLOBJ'       " Role type
+          IMPORTING
+            et_links            = int_links.         " Table with Relationship Records
+
+      CATCH cx_obl_parameter_error " Incorrect Calling of Interface
+            cx_obl_internal_error  " Internal Error of Relationship Service
+            cx_obl_model_error.     " Error with Model Roles
+
+        cv_exists = abap_false.
+    ENDTRY.
+
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_approver_matrix
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_approver_matrix CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_conf2 TYPE zta2r_conftab2.
+  IF gv_req_type = 'F1'.
+    gs_header-z_reqtype = 'A1'.
+  ELSE.
+    gs_header-z_reqtype = gv_req_type.
+  ENDIF.
+
+  cv_error = abap_false.
+  CLEAR ls_conf2.
+
+  IF gs_header-bukrs IS INITIAL
+  OR gs_header-profl IS INITIAL
+  OR gs_header-z_reqtype IS INITIAL.
+    cv_error = abap_true.
+    MESSAGE e000(zmsg_a2r) WITH 'CompCode, ProjProf, and ReqType are required'(v08).
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE bukrs, profl, z_reqtype
+    INTO @ls_conf2
+    FROM zta2r_conftab2
+    WHERE bukrs     = @gs_header-bukrs
+      AND profl     = @gs_header-profl
+      AND z_reqtype = @gs_header-z_reqtype.
+
+  IF sy-subrc <> 0.
+    cv_error = abap_true.
+    MESSAGE e000(zmsg_a2r) WITH 'Workflow not maintained - contact WBS MD Team'(v06).
+  ENDIF.
+
+*  IF ls_conf2-zaproval_1 IS INITIAL
+*     AND ls_conf2-zaproval_2 IS INITIAL
+*     AND ls_conf2-zerror_handling IS INITIAL.
+*    cv_error = abap_true.
+*    MESSAGE e000(zmsg_a2r) WITH 'Workflow not maintained - contact WBS MD Team'(v07).
+*  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_exchange_rate_to_im
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------
+FORM get_exchange_rate_to_im
+  USING    iv_im_waers      TYPE waers
+           iv_proj_waers    TYPE waers
+  CHANGING cv_ukurs         TYPE tcurr-ukurs.
+
+  DATA: lt_tcurr TYPE STANDARD TABLE OF tcurr,
+        ls_tcurr TYPE tcurr.
+
+  CLEAR cv_ukurs.
+
+  SELECT *
+    INTO TABLE lt_tcurr
+    FROM tcurr
+    WHERE kurst = 'M'
+      AND fcurr = iv_im_waers
+      AND tcurr = iv_proj_waers.
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  SORT lt_tcurr BY gdatu ASCENDING.
+  READ TABLE lt_tcurr INTO ls_tcurr INDEX 1.
+  IF sy-subrc = 0.
+    cv_ukurs = ls_tcurr-ukurs.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_im_available_budget_s2
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_im_available_budget_s2
+  CHANGING cv_im_budget TYPE bpge-wlges
+           cv_im_waers  TYPE imtp-waers.
+
+  DATA: lv_objnr     TYPE j_objnr,
+        lv_prnam     TYPE impr-prnam,
+        lv_gjahr     TYPE impr-gjahr,
+        lv_sum_wlges TYPE bpge-wtges,
+        lv_sum_wtgev TYPE bpge-wtgev,
+        lv_sum_wlgev TYPE bpge-wlgev.
+
+  CLEAR: cv_im_budget,
+         cv_im_waers,
+         lv_objnr,
+         lv_prnam,
+         lv_gjahr,
+         lv_sum_wlges,
+         lv_sum_wtgev,
+         lv_sum_wlgev.
+
+  " Get IM object number / program / year
+  SELECT SINGLE objnr
+                prnam
+                gjahr
+    INTO (lv_objnr, lv_prnam, lv_gjahr)
+    FROM impr
+    WHERE posnr = gs_header-posnr.
+
+  IF sy-subrc <> 0
+     OR lv_objnr IS INITIAL
+     OR lv_prnam IS INITIAL
+     OR lv_gjahr IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " Get IM currency
+  SELECT SINGLE waers
+    INTO cv_im_waers
+    FROM imtp
+    WHERE prnam = lv_prnam
+      AND gjahr = lv_gjahr.
+
+  IF sy-subrc <> 0 OR cv_im_waers IS INITIAL.
+    CLEAR cv_im_waers.
+    RETURN.
+  ENDIF.
+
+  " Available IM budget = WTGES - WTGEV - WLGEV
+  SELECT SUM( wlges )
+         SUM( wlgev )
+    INTO (lv_sum_wlges, lv_sum_wlgev)
+    FROM bpge
+    WHERE objnr = lv_objnr
+      AND vorga = 'KBUD'.
+
+  IF sy-subrc = 0.
+    cv_im_budget = lv_sum_wlges - lv_sum_wlgev.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_total_up_done
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_total_up_done
+  CHANGING cv_error TYPE abap_bool.
+
+  DATA: ls_parent     TYPE ty_wbs_display,
+        ls_child      TYPE ty_wbs_display,
+        lv_tabix      TYPE sy-tabix,
+        lv_nextix     TYPE sy-tabix,
+        lv_lines      TYPE i,
+        lv_sum        TYPE ty_wbs_display-zapproved_budg,
+        lv_next_stufe TYPE ps_stufe.
+
+  CLEAR cv_error.
+
+  lv_lines = lines( gt_wbs_display ).
+  IF lv_lines IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Dynamic hierarchy validation
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_parent.
+
+    lv_tabix = sy-tabix.
+    CLEAR lv_sum.
+
+    lv_nextix = lv_tabix + 1.
+    lv_next_stufe = ls_parent-stufe + 1.
+
+    WHILE lv_nextix <= lv_lines.
+
+      READ TABLE gt_wbs_display INTO ls_child INDEX lv_nextix.
+      IF sy-subrc <> 0.
+        EXIT.
+      ENDIF.
+
+      " Stop when next sibling or higher parent starts
+      IF ls_child-stufe <= ls_parent-stufe.
+        EXIT.
+      ENDIF.
+
+      " Only direct children
+      IF ls_child-stufe = lv_next_stufe.
+        lv_sum = lv_sum + ls_child-zapproved_budg.
+      ENDIF.
+
+      lv_nextix = lv_nextix + 1.
+
+    ENDWHILE.
+
+*---------------------------------------------------------------------*
+* Validation
+*---------------------------------------------------------------------*
+    " If child total is zero, consider valid
+    " Only validate when child total is greater than zero
+    IF lv_sum > 0.
+
+      IF ls_parent-zapproved_budg < lv_sum.
+        IF gv_req_type = 'B2'.
+          MESSAGE e000(zmsg_a2r)
+            WITH 'Budget is greater than Level 1.'(m61).
+        ELSE.
+          MESSAGE e000(zmsg_a2r)
+            WITH 'Budget mismatch. Total Up required.'(m35).
+        ENDIF.
+
+        cv_error = abap_true.
+        RETURN.
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form show_dms_link
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM show_dms_link USING iv_url TYPE char512.
+
+* Datadeclarations (local)
+  DATA:lo_container   TYPE REF TO cl_gui_custom_container,
+       lo_html_viewer TYPE REF TO cl_gui_html_viewer,
+       lv_url         TYPE char512.
+
+  CHECK NOT iv_url IS INITIAL.
+
+  lv_url = iv_url.
+
+* Processing ----------------------------------------------------------
+  CREATE OBJECT lo_html_viewer
+    EXPORTING
+      parent             = lo_container
+    EXCEPTIONS
+      cntl_error         = 1
+      cntl_install_error = 2
+      dp_install_error   = 3
+      dp_error           = 4
+      OTHERS             = 5.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    EXIT.
+  ENDIF.
+
+  CHECK lo_html_viewer IS BOUND.
+
+* -- display URL
+  CALL METHOD lo_html_viewer->show_url
+    EXPORTING
+      url                    = lv_url
+      in_place               = ' '
+    EXCEPTIONS
+      cntl_error             = 1
+      cnht_error_not_allowed = 2
+      cnht_error_parameter   = 3
+      dp_error_general       = 4
+      OTHERS                 = 5.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+* -- destroy instance
+  CALL METHOD lo_html_viewer->free
+    EXCEPTIONS
+      cntl_error        = 1
+      cntl_system_error = 2
+      OTHERS            = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  FREE lo_html_viewer.
+
+ENDFORM.                    " show_dms_link
+
+*&---------------------------------------------------------------------*
+*& Form submit_b3
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM submit_b3.
+
+  DATA: lv_reqnum  TYPE zta2r_wbshdr-zreq_num.
+
+*---------------------------------------------------------------------*
+* STEP 1 : Sync screen
+*---------------------------------------------------------------------*
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+*  PERFORM convert_wbs_posid_to_external.
+
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder.
+  ENDIF.
+
+  gs_header-waers = gv_project_currency.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gs_header-zreq_num = gv_gos_reqnum.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+*---------------------------------------------------------------------*
+* STEP 2 : SAVE B2 REQUEST
+*---------------------------------------------------------------------*
+  lv_reqnum = go_builder->save_request_for_submit_b3(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B3 request'(v39).
+    RETURN.
+  ENDIF.
+
+  gs_header-zreq_num = lv_reqnum.
+  gs_header-z_reqtype = 'B3'.
+
+  " trigger WF
+  PERFORM trigger_wf USING gs_header.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_b1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_b1 USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr  TYPE zta2r_wbshdr,
+        ls_proj TYPE proj.
+  DATA: lv_reqnum_b3    TYPE zta2r_wbshdr-zreq_num,
+        lv_request_stat TYPE zta2r_wbshdr-request_status,
+        lv_pending_b3   TYPE zta2r_wbshdr-z_reqtype.
+
+*  SELECT MAX( zreq_num )
+*    FROM zta2r_wbshdr
+*    INTO @lv_reqnum_b3
+*    WHERE pspnr = @gv_pspnr_sel.
+*
+*  IF lv_reqnum_b3 IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+*  ENDIF.
+*
+*  IF lv_reqnum_b3 IS NOT INITIAL.
+*    iv_reqnum = lv_reqnum_b3.
+*  ENDIF.
+*
+  SELECT SINGLE pspnr
+    FROM proj
+    INTO @DATA(lv_pspnr)
+    WHERE pspid = @gv_p_pspid_proj.
+
+  IF sy-subrc = 0.
+    SELECT zreq_num, request_status, z_reqtype
+      FROM zta2r_wbshdr
+      WHERE pspnr = @lv_pspnr
+      ORDER BY zreq_num DESCENDING
+      INTO (@lv_reqnum_b3, @lv_request_stat, @lv_pending_b3)
+      UP TO 1 ROWS.
+    ENDSELECT.
+    IF sy-subrc = 0.
+      gv_reqnum = lv_reqnum_b3.
+    ENDIF.
+  ENDIF.
+
+  IF lv_request_stat <> 'APPROVED' AND lv_pending_b3 = 'B3'.
+    MESSAGE e000(zmsg_a2r) WITH 'You have a pending request'(m55).
+  ENDIF.
+
+  SELECT SINGLE objnr
+    FROM proj
+    INTO @DATA(lv_objnr)
+    WHERE pspnr = @gs_header-pspnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Object number not found'(v26).
+  ENDIF.
+
+  SELECT SINGLE stat
+    FROM jest
+    INTO @DATA(lv_stat)
+    "UP TO 1 ROWS
+    WHERE objnr = @lv_objnr
+    AND inact = ''.
+*  ENDSELECT.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Status not found'(v27).
+  ENDIF.
+
+  IF lv_stat = 'I0045' OR lv_stat = 'I0046'.
+    MESSAGE e000(zmsg_a2r) WITH 'Project is TECO/CLSD. Modification not allowed'(v28).
+  ENDIF.
+*
+*  "Read Header
+*  SELECT SINGLE *
+*    FROM zta2r_wbshdr
+*    INTO @ls_hdr
+*    WHERE zreq_num = @iv_reqnum.
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+*  ENDIF.
+
+
+  "Only creator can edit
+*  IF ls_hdr-ernam <> sy-uname.
+*    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+*  ENDIF.
+
+*  "Must be Draft
+*  "Field from your table design: REQUEST_STATUS
+*  IF ls_hdr-request_status <> 'APPROVED'.
+*  ELSEIF ls_hdr-request_status IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project.'(m67).
+*  ENDIF.
+
+*  "Reset buffers (important)
+*  CLEAR: gs_header.
+*  FREE:  gt_wbs_items, gt_wbs_display.
+*
+*  "Load header to screen2 structure
+*  MOVE-CORRESPONDING ls_hdr TO gs_header.
+*
+*  "Load items to internal table used by screen2
+*  SELECT *
+*    FROM zta2r_wbsitem
+*    INTO TABLE @gt_wbs_items
+*    WHERE zreq_num = @iv_reqnum.
+*
+*  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+*  gv_p_posnr = gs_header-posnr.
+*  gv_p_prnam = gs_header-prnam.
+*  gv_p_verna = gs_header-vernr.
+*  gv_p_kostl = gs_header-kostl.
+*  gv_p_post1 = gs_header-post1.
+*  gv_p_prctr = gs_header-prctr.
+*  gv_p_plsez = gs_header-plsez.
+*  gv_p_profl = gs_header-profl.
+*
+*  IF gv_p_posnr IS NOT INITIAL.
+*
+*    SELECT SINGLE posnr
+*      FROM zta2r_wbshdr
+*      INTO @DATA(lv_edit_posnr)
+*      WHERE zreq_num = @gv_p_req_num.
+*
+*    SELECT SINGLE gjahr
+*      FROM impr
+*      INTO @DATA(lv_edit_gjahr)
+*      WHERE posnr = @lv_edit_posnr.
+*  ENDIF.
+*
+*  "Mark edit mode so prepare_screen2 will NOT copy template
+*  gv_gjahr              = lv_edit_gjahr.
+*  gv_edit_mode          = abap_true.
+*  gv_loaded_reqnum      = iv_reqnum.
+*  gv_header_initialized = abap_false.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form submit_b2
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM submit_b2.
+
+  DATA: lv_reqnum  TYPE zta2r_wbshdr-zreq_num,
+        lv_success TYPE abap_bool,
+        lt_return  TYPE TABLE OF bapiret2,
+        ls_return  TYPE bapiret2,
+        lv_message TYPE string.
+
+*---------------------------------------------------------------------*
+* STEP 1 : Sync screen
+*---------------------------------------------------------------------*
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+*  PERFORM convert_wbs_posid_to_external.
+
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder.
+  ENDIF.
+
+  gs_header-waers = gv_project_currency.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gs_header-zreq_num = gv_gos_reqnum.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 2 : SAVE B2 REQUEST
+*---------------------------------------------------------------------*
+  lv_reqnum = go_builder->save_request_for_submit_b2(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B2 request'(v15).
+    RETURN.
+  ENDIF.
+
+  gs_header-zreq_num = lv_reqnum.
+  gs_header-z_reqtype = 'B2'.
+
+  " trigger WF
+  PERFORM trigger_wf USING gs_header.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form load_b1_project_and_car_wbs
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM load_b1_project_and_car_wbs.
+
+  DATA: lt_existing_wbs TYPE ty_t_wbs_items,
+        lt_car_wbs      TYPE STANDARD TABLE OF zta2r_wbsitem,
+        ls_wbs          TYPE zta2r_wbsitem,
+        lv_proj_pspnr   TYPE proj-pspnr.
+
+  FIELD-SYMBOLS: <fs_car> TYPE zta2r_wbsitem.
+
+  CLEAR gt_wbs_items.
+
+  "------------------------------------------------------------
+  " 1) Get selected ESR project internal number
+  "------------------------------------------------------------
+  SELECT SINGLE pspnr
+    FROM proj
+    INTO @lv_proj_pspnr
+    WHERE pspid = @gv_p_pspid_proj.
+
+  IF sy-subrc <> 0 OR lv_proj_pspnr IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(v17).
+  ENDIF.
+
+  "------------------------------------------------------------
+  " 2) Load ALL existing ESR project WBS
+  "------------------------------------------------------------
+  PERFORM get_existing_project_wbs
+    USING    lv_proj_pspnr
+    CHANGING lt_existing_wbs.
+
+  APPEND LINES OF lt_existing_wbs TO gt_wbs_items.
+
+  "------------------------------------------------------------
+  " 3) Load CAR template WBS
+  "------------------------------------------------------------
+  CALL METHOD go_builder->copy_template_structure
+    EXPORTING
+      iv_pspid     = gv_p_pspid_car
+      iv_kostl     = gs_header-kostl
+    CHANGING
+      ct_wbs_items = lt_car_wbs.
+
+  "------------------------------------------------------------
+  " 4) Append CAR WBS except level 1 only
+  "------------------------------------------------------------
+  LOOP AT lt_car_wbs ASSIGNING <fs_car>.
+    CHECK <fs_car>-stufe > 1.
+
+    CLEAR ls_wbs.
+    MOVE-CORRESPONDING <fs_car> TO ls_wbs.
+
+    PERFORM replace_template_posid
+      USING    gv_p_pspid_car
+               gv_p_pspid_proj
+               <fs_car>-posid
+      CHANGING ls_wbs-posid.
+
+    ls_wbs-bukrs = gs_header-bukrs.
+    ls_wbs-kostl = gs_header-kostl.
+
+    IF gs_header-vkokr IS NOT INITIAL.
+      ls_wbs-vkokr = gs_header-vkokr.
+    ENDIF.
+
+    APPEND ls_wbs TO gt_wbs_items.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_existing_project_wbs
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_existing_project_wbs
+  USING    iv_proj_pspnr TYPE proj-pspnr
+  CHANGING ct_wbs_items  TYPE ty_t_wbs_items.
+
+  TYPES: BEGIN OF ty_prps,
+           pspnr TYPE prps-pspnr,
+           psphi TYPE prps-psphi,
+           stufe TYPE prps-stufe,
+           posid TYPE prps-posid,
+           post1 TYPE prps-post1,
+           pkokr TYPE prps-pkokr,
+           prart TYPE prps-prart,
+           pbukr TYPE prps-pbukr,
+           kostl TYPE prps-kostl,
+           imprf TYPE prps-imprf,
+         END OF ty_prps.
+
+  DATA: lt_prps TYPE STANDARD TABLE OF ty_prps,
+        ls_prps TYPE ty_prps,
+        ls_wbs  TYPE zta2r_wbsitem.
+
+  CLEAR ct_wbs_items.
+
+  SELECT pspnr,
+         psphi,
+         stufe,
+         posid,
+         post1,
+         pkokr,
+         prart,
+         pbukr,
+         kostl,
+         imprf
+    FROM prps
+    INTO TABLE @lt_prps
+    WHERE psphi = @iv_proj_pspnr
+    ORDER BY posid.
+
+  LOOP AT lt_prps INTO ls_prps.
+    CLEAR ls_wbs.
+    ls_wbs-posnr = ls_prps-pspnr.
+    ls_wbs-stufe = ls_prps-stufe.
+    ls_wbs-posid = ls_prps-posid.
+    ls_wbs-post1 = ls_prps-post1.
+    ls_wbs-vkokr = ls_prps-pkokr.
+    ls_wbs-prart = ls_prps-prart.
+    ls_wbs-bukrs = ls_prps-pbukr.
+    ls_wbs-kostl = ls_prps-kostl.
+    ls_wbs-imprf = ls_prps-imprf.
+
+    APPEND ls_wbs TO ct_wbs_items.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form replace_template_posid
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM replace_template_posid
+  USING    iv_car_pspid   TYPE projs-pspid
+           iv_proj_pspid  TYPE proj-pspid
+           iv_old_posid   TYPE prps-posid
+  CHANGING cv_new_posid   TYPE prps-posid.
+
+  DATA: lv_old  TYPE string,
+        lv_car  TYPE string,
+        lv_proj TYPE string.
+
+  lv_old  = iv_old_posid.
+  lv_car  = iv_car_pspid.
+  lv_proj = iv_proj_pspid.
+
+  cv_new_posid = iv_old_posid.
+
+  IF lv_old CS lv_car.
+    REPLACE FIRST OCCURRENCE OF lv_car IN lv_old WITH lv_proj.
+    cv_new_posid = lv_old.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_b
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_b2 USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  DATA: ls_hdr  TYPE zta2r_wbshdr,
+        ls_proj TYPE proj.
+  DATA: lv_reqnum_b3    TYPE zta2r_wbshdr-zreq_num,
+        lv_reqnum_t     TYPE zta2r_wbshdr-zreq_num,
+        lv_request_stat TYPE zta2r_wbshdr-request_status,
+        lv_pending_b3   TYPE zta2r_wbshdr-z_reqtype.
+
+*  SELECT MAX( zreq_num )
+*    FROM zta2r_wbshdr
+*    INTO @lv_reqnum_b3
+*    WHERE pspnr = @gv_pspnr_sel.
+*
+*  IF lv_reqnum_b3 IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+*  ENDIF.
+*
+*  IF lv_reqnum_b3 IS NOT INITIAL.
+*    iv_reqnum = lv_reqnum_b3.
+*  ENDIF.
+*
+  SELECT SINGLE pspnr
+    FROM proj
+    INTO @DATA(lv_pspnr)
+    WHERE pspid = @gv_p_pspid_proj.
+
+  IF sy-subrc = 0.
+    SELECT zreq_num, request_status, z_reqtype
+      FROM zta2r_wbshdr
+      WHERE pspnr = @lv_pspnr
+      ORDER BY zreq_num DESCENDING
+      INTO (@lv_reqnum_b3, @lv_request_stat, @lv_pending_b3)
+      UP TO 1 ROWS.
+    ENDSELECT.
+    IF sy-subrc = 0.
+      gv_reqnum = lv_reqnum_b3.
+    ENDIF.
+
+  ENDIF.
+
+  IF lv_request_stat <> 'APPROVED' AND lv_pending_b3 = 'B2'.
+    MESSAGE e000(zmsg_a2r) WITH 'You have a pending request'(m55).
+  ENDIF.
+
+  SELECT SINGLE objnr
+    FROM proj
+    INTO @DATA(lv_objnr)
+    WHERE pspnr = @gs_header-pspnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Object number not found'(v26).
+  ENDIF.
+
+  SELECT SINGLE stat
+    FROM jest
+    INTO @DATA(lv_stat)
+    "UP TO 1 ROWS
+    WHERE objnr = @lv_objnr
+    AND inact = ''.
+*  ENDSELECT.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Status not found'(v27).
+  ENDIF.
+
+  IF lv_stat = 'I0045' OR lv_stat = 'I0046'.
+    MESSAGE e000(zmsg_a2r) WITH 'Project is TECO/CLSD. Modification not allowed'(v28).
+  ENDIF.
+
+*  "Read Header
+*  SELECT SINGLE *
+*    FROM zta2r_wbshdr
+*    INTO @ls_hdr
+*    WHERE zreq_num = @iv_reqnum.
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+*  ENDIF.
+*
+*  SELECT SINGLE zreq_num, wert2
+*    FROM zta2r_wbsitem
+*    INTO ( @lv_reqnum_t, @gv_wert2 )
+*    "UP TO 1 ROWS
+*    WHERE zreq_num = @iv_reqnum.
+  "ENDSELECT.
+
+  "Only creator can edit
+*  IF ls_hdr-ernam <> sy-uname.
+*    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+*  ENDIF.
+
+  "Must be Draft
+  "Field from your table design: REQUEST_STATUS
+*  IF ls_hdr-request_status <> 'APPROVED'.
+*  ELSEIF ls_hdr-request_status IS INITIAL.
+*    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project.'(m67).
+*  ENDIF.
+*
+*  "Reset buffers (important)
+*  CLEAR: gs_header.
+*  FREE:  gt_wbs_items, gt_wbs_display.
+*
+*  "Load header to screen2 structure
+*  MOVE-CORRESPONDING ls_hdr TO gs_header.
+*
+*  "Load items to internal table used by screen2
+*  SELECT *
+*    FROM zta2r_wbsitem
+*    INTO TABLE @gt_wbs_items
+*    WHERE zreq_num = @iv_reqnum.
+*
+*
+*  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+*  gv_p_posnr = gs_header-posnr.
+*  gv_p_prnam = gs_header-prnam.
+*  gv_p_verna = gs_header-vernr.
+*  gv_p_kostl = gs_header-kostl.
+*  gv_p_post1 = gs_header-post1.
+*  gv_p_prctr = gs_header-prctr.
+*  gv_p_plsez = gs_header-plsez.
+*  gv_p_profl = gs_header-profl.
+*
+*  IF gv_p_posnr IS NOT INITIAL.
+*
+*    SELECT SINGLE posnr
+*      FROM zta2r_wbshdr
+*      INTO @DATA(lv_edit_posnr)
+*      WHERE zreq_num = @iv_reqnum.
+*
+*    SELECT SINGLE gjahr
+*      FROM impr
+*      INTO @DATA(lv_edit_gjahr)
+*      WHERE posnr = @lv_edit_posnr.
+*  ENDIF.
+*
+*  "Mark edit mode so prepare_screen2 will NOT copy template
+*  gv_gjahr              = lv_edit_gjahr.
+*  gv_edit_mode          = abap_true.
+*  gv_loaded_reqnum      = iv_reqnum.
+*  gv_header_initialized = abap_false.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form submit_b1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM submit_b1 .
+  DATA:
+    lv_reqnum        TYPE zta2r_wbshdr-zreq_num,
+    lv_success       TYPE abap_bool,
+    lt_return        TYPE STANDARD TABLE OF bapiret2,
+    lv_error         TYPE abap_bool,
+    lv_auto          TYPE char1,
+    lv_error_handler TYPE char8.
+
+  CLEAR: gt_l1_approvers, gt_l2_approvers.
+
+  "STEP 1: Sync + convert
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+  PERFORM populate_gt_wbs_car_wert2.
+
+  "Ensure builder exists ONLY if we will call it
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder. "adjust if constructor requires params
+  ENDIF.
+
+  IF gv_req_type = 'B1'.
+    gs_header-z_reqtype = 'B1'.
+  ENDIF.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gs_header-zreq_num = gv_gos_reqnum.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+
+  "Create mode: use your existing builder method
+  lv_reqnum = go_builder->save_request_for_submit(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items
+  ).
+
+*  go_builder->clear_left_if_zero(
+*    CHANGING
+*      ct_wbs_items = gt_wbs_items
+*      ct_phris_hier = gt_phris_hier
+*    ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to save request before submit'(m13).
+    RETURN.
+  ENDIF.
+
+  gs_header-zreq_num = lv_reqnum.
+
+  "STEP 3: Set PENDING
+  UPDATE zta2r_wbshdr
+    SET request_status = 'PENDING'
+    WHERE zreq_num = @lv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to update status for'(m03) lv_reqnum.
+    RETURN.
+  ENDIF.
+
+  COMMIT WORK AND WAIT.
+  gs_header-request_status = 'PENDING'.
+  gs_header-zreq_num = lv_reqnum.
+  gs_header-z_reqtype = 'B1'.
+
+  " trigger WF approval process
+  PERFORM trigger_wf USING gs_header.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form prepare_screen2_b1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM prepare_screen2_b1 .
+  DATA: lv_error    TYPE abap_bool,
+        ls_esr_root TYPE zta2r_wbsitem,
+        lv_esr_root TYPE zta2r_wbsitem-posid.
+
+  "Always get IM data (safe, doesn't overwrite screen2 edits)
+  PERFORM get_additional_im_data USING gv_p_posnr.
+
+  "Initialize screen2 ONCE only
+  IF gv_header_initialized = abap_true.
+    RETURN.
+  ENDIF.
+
+  "------------------------------------------------------------
+  "FIRST ENTRY ONLY
+  "------------------------------------------------------------
+
+  "=============================
+  "EDIT SAVED REQUEST (F1)
+  "=============================
+  IF gv_edit_mode = abap_true.
+
+    IF gv_req_type = 'B1'.
+      IF go_builder IS INITIAL.
+        CREATE OBJECT go_builder.
+      ENDIF.
+
+      "CAR
+      CALL METHOD go_builder->append_car_template
+        EXPORTING
+          iv_pspid_car = gv_p_pspid_car
+          iv_kostl     = gv_p_kostl
+        CHANGING
+          ct_wbs_items = gt_wbs_items
+          ct_wbs_car   = gt_wbs_car.
+
+      READ TABLE gt_wbs_items INTO ls_esr_root WITH KEY stufe = 1.
+      IF sy-subrc = 0.
+        REPLACE ALL OCCURRENCES OF '.' IN ls_esr_root-posid WITH ''.
+        lv_esr_root = ls_esr_root-posid.
+      ENDIF.
+
+      CALL METHOD go_builder->build_phris_hierarchy
+        EXPORTING
+          iv_pspid_car  = gv_p_pspid_car
+          iv_esr_root   = lv_esr_root
+          it_wbs_car    = gt_wbs_car
+        IMPORTING
+          et_phris_hier = gt_phris_hier.
+    ENDIF.
+
+    "At this point, caller already loaded:
+    " - gs_header from zta2r_WBSHDR
+    " - gt_wbs_items from zta2r_WBSITEM
+    "So DO NOT rebuild anything from template.
+*    PERFORM refresh_gt_wbs_items_from_db USING gv_loaded_reqnum.
+
+    PERFORM convert_to_display.
+    PERFORM set_wbs_default_values.  "only fills INITIAL values (safe)
+
+    "IMPORTANT: Do NOT call populate_header_structure in edit mode
+    "because it may overwrite DB header values (erdat/ernam etc.)
+
+    gv_header_initialized = abap_true.
+    RETURN.
+
+  ENDIF.
+
+  "=============================
+  "CREATE MODE (A1)
+  "=============================
+
+  " Build WBS items in correct PRHIS order
+  CLEAR gt_wbs_items.
+  CALL METHOD go_builder->copy_template_structure
+    EXPORTING
+      iv_pspid     = gv_p_pspid
+      iv_kostl     = gv_p_kostl
+    CHANGING
+      ct_wbs_items = gt_wbs_items.
+
+  PERFORM convert_to_display.
+  PERFORM set_wbs_default_values.
+  PERFORM populate_header_structure.
+  PERFORM validate_approver_matrix
+    CHANGING lv_error.
+
+
+  gv_header_initialized = abap_true.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form trigger_wf
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM trigger_wf  USING is_header TYPE zta2r_wbshdr.
+  DATA lv_wferror TYPE c.
+
+  go_builder->check_approver_matrix(
+    EXPORTING
+      iv_bukrs        = is_header-bukrs
+      iv_profl        = is_header-profl
+      iv_reqtype      = is_header-z_reqtype
+    IMPORTING
+      ev_auto         = DATA(lv_auto)
+      ev_found        = DATA(lv_found)
+      et_l1_approvers = DATA(lt_l1_approvers)
+      et_l2_approvers = DATA(lt_l2_approvers)
+      et_l3_approvers = DATA(lt_l3_approvers)
+  ).
+
+  IF lv_found EQ abap_true.
+
+    IF lv_auto = abap_true.
+      PERFORM f_auto_approve CHANGING lv_wferror.
+    ENDIF.
+
+    go_builder->trigger_workflow(
+      is_header     = is_header
+      iv_auto       = lv_auto
+      iv_wferror    = lv_wferror
+      it_l1_apprv   = lt_l1_approvers
+      it_l2_apprv   = lt_l2_approvers
+      it_l3_apprv   = lt_l3_approvers
+      it_wbscar     = gt_wbs_car
+      it_wbshier    = gt_phris_hier
+      it_wbsunclose = gt_wbs_unclose
+    ).
+
+    IF lv_auto = abap_true.
+      MESSAGE s000(zmsg_a2r) WITH 'Request'(m14) is_header-zreq_num
+             'submitted and auto approved'(t01).
+    ELSE.
+      MESSAGE s000(zmsg_a2r) WITH 'Request'(m14) is_header-zreq_num
+             'submitted for approval'(m06).
+    ENDIF.
+
+    LEAVE TO SCREEN 0.
+
+  ELSE.
+    MESSAGE s000(zmsg_a2r) WITH 'No approver configuration found for'(m08)
+                                 is_header-zreq_num.
+    LEAVE TO SCREEN 0.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form set_screen
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM set_screen  USING is_header TYPE zta2r_wbshdr.
+
+  "------------------------------------------------------------
+  " Screen 0100 values are already transported by dynpro into:
+  "   - GS_HEADER-*  for bound header fields
+  "   - GV_*         for helper/display fields
+  "
+  " So do NOT copy from P_* here.
+  " Only keep sticky/shadow values for fields that are editable
+  " on screen 0100 and helper fields that need conversion later.
+  "------------------------------------------------------------
+
+
+  " Description
+  gs_header_user-post1 = is_header-post1.
+  gv_u_post1           = abap_true.
+
+  " Person Responsible
+  gs_header_user-vernr = is_header-vernr.
+  gv_u_vernr           = abap_true.
+
+  " Finish Date
+  gs_header_user-plsez = is_header-plsez.
+  gv_u_plsez           = abap_true.
+
+  " IM Program
+  gs_header_user-prnam = is_header-prnam.
+  gv_u_prnam           = abap_true.
+
+  " Company Code
+  gs_header_user-bukrs = is_header-bukrs.
+  gv_u_bukrs           = abap_true.
+
+  " Plant
+  gs_header_user-werks = is_header-werks.
+  gv_u_werks           = abap_true.
+
+  " Profit Center
+  gs_header_user-prctr = is_header-prctr.
+  gv_u_prctr           = abap_true.
+
+  " Cost Center
+  gs_header_user-kostl = is_header-kostl.
+  gv_u_kostl           = abap_true.
+
+  " Investment Reason
+  gs_header_user-izwek = is_header-izwek.
+  gv_u_izwek           = abap_true.
+
+  " GE Ariba WF Flag / Unifier
+  gs_header_user-zunifier_proj = is_header-zunifier_proj.
+  gv_u_zunifier_proj           = abap_true.
+
+  " CAR Approval / USR008
+  gs_header_user-usr008 = is_header-usr008.
+  gv_u_usr008           = abap_true.
+
+
+  " IM Program Position display field -> keep external value sticky
+  IF gv_im_posid_display IS NOT INITIAL.
+    gv_im_posid_user = gv_im_posid_display.
+    gv_u_im_posid    = abap_true.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form sop_link
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM sop_link.
+  DATA: lv_link1 TYPE zde_pval02,
+        lv_link2 TYPE zde_pval03,
+        lv_link3 TYPE zde_pval04,
+        lv_link4 TYPE zde_dval01,
+        lv_link5 TYPE zde_dval02,
+        lv_link6 TYPE zde_dval03,
+        lv_link7 TYPE zde_dval04.
+
+  SELECT SINGLE pval02, pval03, pval04, dval01, dval02, dval03, dval04
+    FROM ztxca_param
+    INTO (@lv_link1, @lv_link2, @lv_link3, @lv_link4, @lv_link5, @lv_link6, @lv_link7)
+    "UP TO 1 ROWS
+    WHERE pval01 = 'X'
+    AND kdef01 = @gv_kdef01
+    AND kdef02 = @gv_kdef02.
+*  ENDSELECT.
+
+  gv_url = |{ lv_link1 }{ lv_link2 }{ lv_link3 }{ lv_link4 }{ lv_link5 }{ lv_link6 }{ lv_link7 }|.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form start_gos
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM start_gos  USING    iv_objkey  TYPE any
+                         iv_rw_mode TYPE sgs_rwmod
+                CHANGING co_gos     TYPE REF TO cl_gos_manager.
+
+* Datadeclarations (local)
+  DATA ls_object TYPE borident.
+
+* Processing ----------------------------------------------------------
+* -- reuqest available?
+  CHECK NOT iv_objkey IS INITIAL.
+
+* -- clear an existing old instance
+  IF co_gos IS BOUND.
+    FREE co_gos.
+  ENDIF.
+
+* -- create a new object service...
+  ls_object-objkey  = iv_objkey.
+  ls_object-objtype = 'ZA2RWBS'.
+
+  CREATE OBJECT co_gos
+    EXPORTING
+      is_object        = ls_object
+      ip_start_direct  = ' '
+      ip_no_instance   = ' '
+      ip_no_commit     = ' '
+    EXCEPTIONS
+      object_invalid   = 1
+      callback_invalid = 2
+      OTHERS           = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CHECK co_gos IS BOUND.
+
+* -- set rw mode...
+  CALL METHOD co_gos->set_rw_mode
+    EXPORTING
+      ip_mode = iv_rw_mode.
+
+ENDFORM.                    " start_gos
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_e1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_e1  USING    iv_reqnum.
+  DATA: ls_hdr  TYPE zta2r_wbshdr,
+        ls_proj TYPE proj.
+  DATA: lv_reqnum_b3    TYPE zta2r_wbshdr-zreq_num,
+        lv_reqnum_t     TYPE zta2r_wbshdr-zreq_num,
+        lv_request_stat TYPE zta2r_wbshdr-request_status,
+        lv_pending_b3   TYPE zta2r_wbshdr-z_reqtype.
+
+  SELECT MAX( zreq_num )
+    FROM zta2r_wbshdr
+    INTO @lv_reqnum_b3
+    WHERE pspnr = @gv_pspnr_sel.
+
+*    IF lv_reqnum_b3 IS INITIAL.
+*      MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+*    ENDIF.
+
+  IF lv_reqnum_b3 IS NOT INITIAL.
+    iv_reqnum = lv_reqnum_b3.
+  ENDIF.
+
+  SELECT SINGLE request_status, z_reqtype
+   FROM zta2r_wbshdr
+   INTO (@lv_request_stat, @lv_pending_b3)
+   WHERE zreq_num = @lv_reqnum_b3.
+
+  IF sy-subrc <> 0.
+    SELECT SINGLE pspnr
+  FROM proj
+  INTO @DATA(lv_pspnr)
+  WHERE pspid = @gv_p_pspid_proj.
+
+    IF sy-subrc = 0.
+      SELECT zreq_num, request_status, z_reqtype
+        FROM zta2r_wbshdr
+        WHERE pspnr = @lv_pspnr
+        ORDER BY zreq_num DESCENDING
+        INTO (@lv_reqnum_b3, @lv_request_stat, @lv_pending_b3)
+        UP TO 1 ROWS.
+      ENDSELECT.
+      IF sy-subrc = 0.
+        gv_reqnum = lv_reqnum_b3.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  IF lv_request_stat <> 'APPROVED' AND lv_pending_b3 = 'E1'.
+    MESSAGE e000(zmsg_a2r) WITH 'You have a pending request for unclose WBS'(v19).
+  ENDIF.
+
+*        "Read Header
+*        SELECT SINGLE *
+*          FROM zta2r_wbshdr
+*          INTO @ls_hdr
+*          WHERE zreq_num = @iv_reqnum.
+
+*          IF sy-subrc <> 0.
+*            MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+*          ENDIF.
+*
+*          SELECT SINGLE zreq_num, wert2
+*            FROM zta2r_wbsitem
+*            INTO ( @lv_reqnum_t, @gv_wert2 )
+*            "UP TO 1 ROWS
+*            WHERE zreq_num = @iv_reqnum.
+  "ENDSELECT.
+
+
+  "Only creator can edit
+*  IF ls_hdr-ernam <> sy-uname.
+*    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this project.'(m30).
+*  ENDIF.
+
+  "Must be Draft
+  "Field from your table design: REQUEST_STATUS
+*            IF ls_hdr-request_status <> 'APPROVED'.
+*            ELSEIF ls_hdr-request_status IS INITIAL.
+*              MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project.'(m67).
+*            ENDIF.
+
+*            "Reset buffers (important)
+*            CLEAR: gs_header.
+*            FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header to screen2 structure
+*            MOVE-CORRESPONDING ls_hdr TO gs_header.
+
+  "Load items to internal table used by screen2
+*            SELECT *
+*              FROM zta2r_wbsitem
+*              INTO TABLE @gt_wbs_items
+*              WHERE zreq_num = @iv_reqnum.
+
+
+*              "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+*              gv_p_posnr = gs_header-posnr.
+*              gv_p_prnam = gs_header-prnam.
+*              gv_p_verna = gs_header-vernr.
+*              gv_p_kostl = gs_header-kostl.
+*              gv_p_post1 = gs_header-post1.
+*              gv_p_prctr = gs_header-prctr.
+*              gv_p_plsez = gs_header-plsez.
+*              gv_p_profl = gs_header-profl.
+*
+*              IF gv_p_posnr IS NOT INITIAL.
+*
+*                SELECT SINGLE posnr
+*                  FROM zta2r_wbshdr
+*                  INTO @DATA(lv_edit_posnr)
+*                  WHERE zreq_num = @gv_p_req_num.
+*
+*                  SELECT SINGLE gjahr
+*                    FROM impr
+*                    INTO @DATA(lv_edit_gjahr)
+*                    WHERE posnr = @lv_edit_posnr.
+*                  ENDIF.
+*
+*                  "Mark edit mode so prepare_screen2 will NOT copy template
+*                  gv_gjahr              = lv_edit_gjahr.
+*                  gv_edit_mode          = abap_true.
+*                  gv_loaded_reqnum      = iv_reqnum.
+*                  gv_header_initialized = abap_false.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form populate_wbs_unclose
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM populate_wbs_unclose.
+
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: lt_jest    TYPE STANDARD TABLE OF jest,
+        ls_jest    TYPE jest,
+        ls_display TYPE ty_wbs_display,
+        ls_unclose TYPE zsa2r_wbsunclose.
+
+  CLEAR gt_wbs_unclose.
+
+*---------------------------------------------------------------------*
+* Build gt_wbs_unclose
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_display.
+
+    CLEAR: ls_unclose, gs_prps, ls_jest.
+
+*-------------------------------------------------------------------*
+* Copy fields
+*-------------------------------------------------------------------*
+    ls_unclose-wbs_level          = ls_display-stufe.
+    ls_unclose-pspid              = ls_display-pspid.
+    ls_unclose-wbs_element_code   = ls_display-posid.
+    ls_unclose-description        = ls_display-post1.
+    ls_unclose-cost_center_level1 = ls_display-kostl.
+    ls_unclose-approved_budget    = ls_display-zapproved_budg.
+    ls_unclose-flag_budget_check  = ls_display-zbudget_check.
+    ls_unclose-bukrs              = ls_display-bukrs.
+    ls_unclose-investment_profile = ls_display-imprf.
+    ls_unclose-prart              = ls_display-prart.
+    ls_unclose-mark               = ls_display-mark.
+
+    CLEAR ls_unclose-to_be.
+    gs_prps-posid                 = ls_display-posid.
+
+    APPEND ls_unclose TO gt_wbs_unclose.
+    APPEND gs_prps TO gt_prps.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form populate_wbs_unclose_status
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM populate_wbs_unclose_status.
+
+*---------------------------------------------------------------------*
+* Local Types
+*---------------------------------------------------------------------*
+
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        ls_posid_range TYPE ty_posid_range,
+        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
+        ls_prps_stat   TYPE ty_prps_stat,
+        lv_status      TYPE string.
+
+  DATA lv_tabix TYPE sy-tabix.
+
+
+*---------------------------------------------------------------------*
+* Check data
+*---------------------------------------------------------------------*
+  IF gt_wbs_unclose IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Build POSID range from gt_wbs_unclose
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
+    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
+      REPLACE ALL OCCURRENCES OF '.' IN <fs_unclose>-wbs_element_code WITH ''.
+      CLEAR ls_posid_range.
+      ls_posid_range-sign   = 'I'.
+      ls_posid_range-option = 'EQ'.
+      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
+      APPEND ls_posid_range TO lt_posid_range.
+    ENDIF.
+  ENDLOOP.
+
+  IF lt_posid_range IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Get PRPS-OBJNR + JEST-STAT
+* Active statuses only
+*---------------------------------------------------------------------*
+  SELECT a~posid,
+         a~objnr,
+         b~stat
+    INTO TABLE @lt_prps_stat
+    FROM prps  AS a
+    INNER JOIN jest  AS b
+      ON b~objnr = a~objnr
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space
+     AND b~stat IN ( 'I0002', 'I0045', 'I0046' ).
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Fill TXT04 as constant
+*---------------------------------------------------------------------*
+  LOOP AT lt_prps_stat INTO ls_prps_stat.
+    CASE ls_prps_stat-stat.
+      WHEN 'I0002'.
+        ls_prps_stat-txt04 = 'REL'.
+      WHEN 'I0045'.
+        ls_prps_stat-txt04 = 'TECO'.
+      WHEN 'I0046'.
+        ls_prps_stat-txt04 = 'CLSD'.
+    ENDCASE.
+
+    MODIFY lt_prps_stat FROM ls_prps_stat INDEX sy-tabix.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Update gt_wbs_unclose-status
+*---------------------------------------------------------------------*
+  SORT lt_prps_stat BY posid txt04.
+
+  IF sy-uname <> 'EV92123'.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      CLEAR lv_status.
+
+      LOOP AT lt_prps_stat INTO ls_prps_stat
+        WHERE posid = <fs_unclose>-wbs_element_code.
+
+        IF lv_status IS INITIAL.
+          lv_status = ls_prps_stat-txt04.
+        ELSE.
+          CONCATENATE lv_status ls_prps_stat-txt04
+            INTO lv_status SEPARATED BY ', '.
+        ENDIF.
+      ENDLOOP.
+
+      <fs_unclose>-status = lv_status.
+    ENDLOOP.
+
+  ELSE.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+
+      <fs_unclose>-status =
+        REDUCE string(
+          INIT lv = ``
+          FOR ls_stat IN lt_prps_stat
+          WHERE ( posid = <fs_unclose>-wbs_element_code )
+          NEXT lv = condense(
+                     SWITCH string(
+                       lv
+                       WHEN `` THEN ls_stat-txt04
+                       ELSE |{ lv }, { ls_stat-txt04 }|
+                     )
+                   )
+        ).
+
+    ENDLOOP.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* DISPLAY MODE
+*---------------------------------------------------------------------*
+
+  IF gv_disp_req = abap_true.
+
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      lv_tabix = sy-tabix.
+
+      READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
+      IF sy-subrc = 0.
+        IF gs_wbs_item-zstat IS NOT INITIAL.
+          <fs_unclose>-status = gs_wbs_item-zstat.
+        ENDIF.
+
+        IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
+          <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_teco_clsd
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_teco_clsd CHANGING cv_error TYPE abap_bool.
+
+*---------------------------------------------------------------------*
+* Local Types
+*---------------------------------------------------------------------*
+  TYPES: BEGIN OF ty_posid_range,
+           sign   TYPE c LENGTH 1,
+           option TYPE c LENGTH 2,
+           low    TYPE prps-posid,
+           high   TYPE prps-posid,
+         END OF ty_posid_range.
+
+  TYPES: BEGIN OF ty_wbs_stat,
+           posid TYPE prps-posid,
+           stat  TYPE jest-stat,
+         END OF ty_wbs_stat.
+
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: lv_pspnr       TYPE proj-pspnr,
+        lv_posid       TYPE prps-posid,
+        ls_display     TYPE ty_wbs_display,
+        ls_posid_range TYPE ty_posid_range,
+        ls_wbs_stat    TYPE ty_wbs_stat,
+        lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        lt_wbs_stat    TYPE STANDARD TABLE OF ty_wbs_stat,
+        lv_total_wbs   TYPE i,
+        lv_closed_wbs  TYPE i.
+
+*---------------------------------------------------------------------*
+* Init
+*---------------------------------------------------------------------*
+  CLEAR: cv_error,
+         lv_total_wbs,
+         lv_closed_wbs.
+
+*---------------------------------------------------------------------*
+* Validate Project Definition
+*---------------------------------------------------------------------*
+  lv_pspnr = gs_header-pspnr.
+
+  IF lv_pspnr IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Project Definition is required'(v21).
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Build WBS POSID range from gt_wbs_display
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    lv_posid = ls_display-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
+    CLEAR ls_posid_range.
+    ls_posid_range-sign   = 'I'.
+    ls_posid_range-option = 'EQ'.
+    ls_posid_range-low    = lv_posid.
+    APPEND ls_posid_range TO lt_posid_range.
+
+    ADD 1 TO lv_total_wbs.
+  ENDLOOP.
+
+  IF lt_posid_range IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Remove duplicate POSID entries
+*---------------------------------------------------------------------*
+  SORT lt_posid_range BY low.
+  DELETE ADJACENT DUPLICATES FROM lt_posid_range COMPARING low.
+
+*---------------------------------------------------------------------*
+* Get active WBS statuses TECO / CLSD only
+*---------------------------------------------------------------------*
+  SELECT a~posid,
+         b~stat
+    INTO TABLE @lt_wbs_stat
+    FROM prps AS a
+    INNER JOIN jest AS b
+      ON b~objnr = a~objnr
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space
+     AND b~stat  IN ( 'I0045', 'I0046', 'I0043', 'I0002' ).
+
+  SORT lt_wbs_stat BY posid stat.
+  DELETE ADJACENT DUPLICATES FROM lt_wbs_stat COMPARING posid stat.
+
+*---------------------------------------------------------------------*
+* Count how many selected WBS are already TECO / CLSD
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_display INTO ls_display.
+    IF ls_display-posid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    lv_posid = ls_display-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
+    READ TABLE lt_wbs_stat INTO ls_wbs_stat
+      WITH KEY posid = lv_posid.
+
+    gt_wbs_stat = lt_wbs_stat.
+
+    IF ls_wbs_stat-stat = 'I0043'.
+      gv_disp_req_wbs = abap_true.
+    ENDIF.
+    IF sy-subrc = 0.
+      ADD 1 TO lv_closed_wbs.
+    ENDIF.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Validation Result
+* Pass if partially TECO/CLSD exists
+* Error only if all selected WBS are still Released/open
+*---------------------------------------------------------------------*
+  IF lv_closed_wbs = 0.
+    MESSAGE e000(zmsg_a2r)
+      WITH 'WBS are in Released status. Re-open not needed.'(v20).
+    cv_error = gc_x.
+    RETURN.
+  ENDIF.
+
+  CLEAR cv_error.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form populate_gt_wbs_car_wert2
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM populate_gt_wbs_car_wert2 .
+  TYPES: BEGIN OF ty_item_map,
+           posid         TYPE ps_posid,
+           wert2         TYPE zta2r_wbsitem-wert2,
+           zbudget_check TYPE zta2r_wbsitem-zbudget_check,
+           post1         TYPE zta2r_wbsitem-post1,
+           kostl         TYPE zta2r_wbsitem-kostl,
+           imprf         TYPE zta2r_wbsitem-imprf,
+           prart         TYPE zta2r_wbsitem-prart,
+           bukrs         TYPE zta2r_wbsitem-bukrs,
+           werks         TYPE zta2r_wbsitem-werks,
+           vkokr         TYPE zta2r_wbsitem-vkokr,
+         END OF ty_item_map.
+
+  DATA: lt_item_map TYPE HASHED TABLE OF ty_item_map WITH UNIQUE KEY posid,
+        ls_item_map TYPE ty_item_map,
+        ls_item     TYPE zta2r_wbsitem,
+        lv_posid    TYPE ps_posid.
+
+  FIELD-SYMBOLS: <fs_car> TYPE zta2r_wbsitem,
+                 <fs_map> TYPE ty_item_map.
+
+  CLEAR lt_item_map.
+
+  LOOP AT gt_wbs_items INTO ls_item.
+    CLEAR: ls_item_map, lv_posid.
+
+    lv_posid = ls_item-posid.
+    REPLACE ALL OCCURRENCES OF '.' IN lv_posid WITH ''.
+
+    ls_item_map-posid         = lv_posid.
+    ls_item_map-wert2         = ls_item-wert2.
+    ls_item_map-zbudget_check = ls_item-zbudget_check.
+    ls_item_map-post1         = ls_item-post1.
+    ls_item_map-kostl         = ls_item-kostl.
+    ls_item_map-imprf         = ls_item-imprf.
+    ls_item_map-prart         = ls_item-prart.
+    ls_item_map-bukrs         = ls_item-bukrs.
+    ls_item_map-werks         = ls_item-werks.
+    ls_item_map-vkokr         = ls_item-vkokr.
+
+    INSERT ls_item_map INTO TABLE lt_item_map.
+  ENDLOOP.
+
+  LOOP AT gt_wbs_car ASSIGNING <fs_car>.
+    READ TABLE lt_item_map ASSIGNING <fs_map>
+      WITH TABLE KEY posid = <fs_car>-posid.
+    IF sy-subrc = 0.
+      <fs_car>-wert2         = <fs_map>-wert2.
+      <fs_car>-zbudget_check = <fs_map>-zbudget_check.
+      <fs_car>-post1         = <fs_map>-post1.
+      <fs_car>-kostl         = <fs_map>-kostl.
+      <fs_car>-imprf         = <fs_map>-imprf.
+      <fs_car>-prart         = <fs_map>-prart.
+      <fs_car>-bukrs         = <fs_map>-bukrs.
+      <fs_car>-werks         = <fs_map>-werks.
+      <fs_car>-vkokr         = <fs_map>-vkokr.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form submit_e1
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM submit_e1 .
+
+  DATA: lv_reqnum  TYPE zta2r_wbshdr-zreq_num,
+        lv_success TYPE abap_bool,
+        lt_return  TYPE TABLE OF bapiret2,
+        ls_return  TYPE bapiret2,
+        lv_message TYPE string.
+
+*---------------------------------------------------------------------*
+* STEP 1 : Sync screen
+*---------------------------------------------------------------------*
+  PERFORM sync_screen_to_header.
+  PERFORM convert_from_display.
+  PERFORM append_tobe.
+*  PERFORM convert_wbs_posid_to_external.
+
+  IF go_builder IS INITIAL.
+    CREATE OBJECT go_builder.
+  ENDIF.
+
+  IF gv_z_remarks IS NOT INITIAL AND gs_header-z_remarks IS INITIAL.
+    gs_header-z_remarks = gv_z_remarks.
+  ENDIF.
+
+  gs_header-waers = gv_project_currency.
+
+  IF gv_gos_reqnum IS NOT INITIAL.
+    gs_header-zreq_num = gv_gos_reqnum.
+  ELSE.
+    CALL METHOD go_builder->get_next_request_number
+      RECEIVING
+        rv_reqnum = gv_gos_reqnum.
+
+    gs_header-zreq_num = gv_gos_reqnum.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* STEP 2 : SAVE E1 REQUEST
+*---------------------------------------------------------------------*
+  lv_reqnum = go_builder->save_request_for_submit_e1(
+    is_header    = gs_header
+    it_wbs_items = gt_wbs_items
+    it_wbs_unclose = gt_wbs_unclose ).
+
+  IF lv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Failed to create B2 request'(v15).
+    RETURN.
+  ENDIF.
+
+  gs_header-zreq_num = lv_reqnum.
+  gs_header-z_reqtype = 'E1'.
+
+  " trigger WF
+  PERFORM trigger_wf USING gs_header.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form append_tobe
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM append_tobe .
+  DATA: ls_unclose TYPE zsa2r_wbsunclose,
+        lv_posid   TYPE ps_posid.
+
+  FIELD-SYMBOLS: <fs_item> TYPE zta2r_wbsitem.
+
+  IF gt_wbs_unclose IS INITIAL
+     OR gt_wbs_items   IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  LOOP AT gt_wbs_unclose INTO ls_unclose.
+
+    lv_posid = ls_unclose-wbs_element_code.
+
+    CALL FUNCTION 'CONVERSION_EXIT_ABPSN_OUTPUT'
+      EXPORTING
+        input  = lv_posid
+      IMPORTING
+        output = lv_posid.
+
+    READ TABLE gt_wbs_items ASSIGNING <fs_item>
+      WITH KEY posid = lv_posid.
+
+    IF sy-subrc = 0.
+      <fs_item>-zstat_tobe = ls_unclose-to_be.
+      <fs_item>-zstat      = ls_unclose-status.
+    ENDIF.
+
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_and_load_display_req
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM validate_and_load_display_req  USING iv_reqnum TYPE zta2r_wbshdr-zreq_num.
+
+  "Basic check
+  IF iv_reqnum IS INITIAL.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter Request Number.'(m71).
+  ENDIF.
+
+  "Read Header
+  SELECT SINGLE *
+    FROM zta2r_wbshdr
+    INTO @DATA(ls_hdr)
+    WHERE zreq_num = @iv_reqnum.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Request Number Not found'(m29).
+  ENDIF.
+
+*  "Only creator can edit
+*  IF ls_hdr-ernam <> sy-uname.
+*    MESSAGE e000(zmsg_a2r) WITH 'You are not allowed to edit this request.'(m30).
+*  ENDIF.
+
+*  Only Draft and Rejected can edit
+*  IF ls_hdr-request_status <> 'PENDING'.
+*    MESSAGE e000(zmsg_a2r) WITH 'Request Number are not Pending'(m62).
+*  ENDIF.
+
+  "Reset buffers (important)
+  CLEAR: gs_header.
+  FREE:  gt_wbs_items, gt_wbs_display.
+
+  "Load header to screen2 structure
+  MOVE-CORRESPONDING ls_hdr TO gs_header.
+
+  "Load items to internal table used by screen2
+  SELECT *
+    FROM zta2r_wbsitem
+    INTO TABLE @gt_wbs_items
+    WHERE zreq_num = @iv_reqnum.
+
+  "Align your helper PERFORMs that use p_* (posnr used by IMPR reads)
+  gv_p_posnr = gs_header-posnr.
+  gv_p_prnam = gs_header-prnam.
+  gv_p_kostl = gs_header-kostl.
+  gv_p_verna = gs_header-vernr.
+  gv_p_post1 = gs_header-post1.
+  gv_p_prctr = gs_header-prctr.
+  gv_p_plsez = gs_header-plsez.
+  gv_p_profl = gs_header-profl.
+  gs_header-request_status = ls_hdr-request_status.
+
+  IF gv_p_posnr IS NOT INITIAL.
+
+    SELECT SINGLE posnr
+      FROM zta2r_wbshdr
+      INTO @DATA(lv_edit_posnr)
+      WHERE zreq_num = @gv_p_req_num.
+
+    SELECT SINGLE gjahr
+      FROM impr
+      INTO @DATA(lv_edit_gjahr)
+      WHERE posnr = @lv_edit_posnr.
+  ENDIF.
+
+  "Mark edit mode so prepare_screen2 will NOT copy template
+  gv_gjahr              = lv_edit_gjahr.
+  gv_edit_mode          = abap_true.
+  gv_loaded_reqnum      = iv_reqnum.
+  gv_header_initialized = abap_false.
+
+  gv_req_type = ls_hdr-z_reqtype.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form tobe_validate
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM tobe_validate .
+
+  LOOP AT gt_wbs_unclose INTO gs_wbs_unclose.
+    IF gs_wbs_unclose-to_be IS NOT INITIAL.
+      IF gs_wbs_unclose-to_be <> 'REL' AND gs_wbs_unclose-to_be <> 'TECO'.
+        MESSAGE e000(zmsg_a2r) WITH 'To-Be Status are not REL/TECO'(v24).
+        RETURN.
+
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form show_workflow_log
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM show_workflow_log.
+
+  DATA: lv_top_wi_id     TYPE sww_wiid,
+        lv_top_wi_id_err TYPE sww_wiid,
+        lt_wflog_err     TYPE ty_t_wflog.
+
+  CLEAR: gt_wflog, gv_top_wi_id.
+
+* --- Main workflow ---
+  PERFORM get_top_wi_id_for_req USING    gs_header-zreq_num
+                                         'ZCL_A2R_WBS_REQUEST_FLEXWF'
+                                CHANGING lv_top_wi_id.
+
+* --- Error-handling workflow ---
+  PERFORM get_top_wi_id_for_req USING    gs_header-zreq_num
+                                         'ZCL_A2R_WBS_REQUEST_ERR_FLEXWF'
+                                CHANGING lv_top_wi_id_err.
+
+  IF lv_top_wi_id IS INITIAL AND lv_top_wi_id_err IS INITIAL.
+    RETURN.
+  ENDIF.
+
+* --- Read main workflow log ---
+  IF lv_top_wi_id IS NOT INITIAL.
+    gv_top_wi_id = lv_top_wi_id.
+    PERFORM get_workflow_log USING    gv_top_wi_id
+                             CHANGING gt_wflog.
+  ENDIF.
+
+* --- Read error workflow log and append ---
+  IF lv_top_wi_id_err IS NOT INITIAL.
+    gv_top_wi_id = lv_top_wi_id_err.
+    CLEAR lt_wflog_err.
+    PERFORM get_workflow_log USING    gv_top_wi_id
+                             CHANGING lt_wflog_err.
+    APPEND LINES OF lt_wflog_err TO gt_wflog.
+  ENDIF.
+
+  IF gt_wflog IS INITIAL.
+    RETURN.
+  ENDIF.
+
+* --- Final sort: chronological across both workflows ---
+  SORT gt_wflog BY created_on created_at wi_id.
+
+  PERFORM display_workflow_log_popup.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_top_wi_id_for_req
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_top_wi_id_for_req USING    iv_zreq_num  TYPE zta2r_wbshdr-zreq_num
+                                    iv_typeid    TYPE sibftypeid
+                           CHANGING cv_top_wi_id TYPE sww_wiid.
+
+  CLEAR cv_top_wi_id.
+
+  SELECT top_wi_id
+    FROM sww_wi2obj
+    INTO @cv_top_wi_id
+    UP TO 1 ROWS
+   WHERE instid = @iv_zreq_num
+     AND typeid = @iv_typeid
+     AND catid  = 'CL'.
+  ENDSELECT.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_workflow_log
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_workflow_log USING    iv_top_wi_id TYPE sww_wiid
+                      CHANGING ct_wflog     TYPE ty_t_wflog.
+
+  DATA: lt_worklist      TYPE STANDARD TABLE OF swr_wihdr,
+        ls_worklist      TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc,
+        ls_wflog         TYPE ty_wflog.
+
+  CLEAR ct_wflog.
+
+*---------------------------------------------------------------------*
+* Read top workitem
+*---------------------------------------------------------------------*
+  CLEAR ls_wflog.
+  PERFORM read_single_wi_log USING    iv_top_wi_id
+                             CHANGING ls_wflog.
+
+  IF ls_wflog-wi_id IS NOT INITIAL.
+    APPEND ls_wflog TO ct_wflog.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read child workitems
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SAP_WAPI_GET_CHILD_WORKITEMS'
+    EXPORTING
+      workitem_id    = iv_top_wi_id
+      user           = sy-uname
+      text           = abap_true
+      language       = sy-langu
+    IMPORTING
+      return_code    = lv_return_code
+    TABLES
+      worklist       = lt_worklist
+      message_lines  = lt_message_lines
+      message_struct = lt_message_struc.
+
+  LOOP AT lt_worklist INTO ls_worklist.
+
+    CLEAR ls_wflog.
+
+    PERFORM read_single_wi_log USING    ls_worklist-wi_id
+                               CHANGING ls_wflog.
+
+    IF ls_wflog-wi_id IS NOT INITIAL.
+      APPEND ls_wflog TO ct_wflog.
+    ENDIF.
+
+  ENDLOOP.
+
+  SORT ct_wflog BY wi_id.
+  DELETE ADJACENT DUPLICATES FROM ct_wflog COMPARING wi_id.
+
+  SORT ct_wflog BY created_on created_at wi_id.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form read_single_wi_log
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM read_single_wi_log USING    iv_wi_id TYPE sww_wiid
+                        CHANGING cs_wflog TYPE ty_wflog.
+
+  DATA: ls_header        TYPE swr_wihdr,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc.
+
+  CLEAR cs_wflog.
+
+  CALL FUNCTION 'SAP_WAPI_GET_HEADER'
+    EXPORTING
+      workitem_id         = iv_wi_id
+      user                = sy-uname
+      language            = sy-langu
+      translate_texts     = abap_true
+    IMPORTING
+      workitem_attributes = ls_header
+      return_code         = lv_return_code
+    TABLES
+      message_lines       = lt_message_lines
+      message_struct      = lt_message_struc.
+
+  IF lv_return_code <> 0.
+    RETURN.
+  ENDIF.
+
+  cs_wflog-wi_id         = ls_header-wi_id.
+  cs_wflog-top_wi_id     = gv_top_wi_id.
+  cs_wflog-wi_text       = ls_header-wi_text.
+  cs_wflog-created_on    = ls_header-wi_cd.
+  cs_wflog-created_at    = ls_header-wi_ct.
+*  cs_wflog-completed_on  = ls_header-wi_led.
+*  cs_wflog-completed_at  = ls_header-wi_let.
+
+  IF ls_header-wi_aa_name IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aa_name.
+  ELSEIF ls_header-wi_aagent IS NOT INITIAL.
+    cs_wflog-agent = ls_header-wi_aagent.
+  ENDIF.
+
+  IF ls_header-statustext IS NOT INITIAL.
+    cs_wflog-status = ls_header-statustext.
+  ELSE.
+    cs_wflog-status = ls_header-wi_stat.
+  ENDIF.
+
+  CLEAR cs_wflog-comment.
+
+*---------------------------------------------------------------------*
+* Read comment only for real human approval workitems
+*---------------------------------------------------------------------*
+  IF cs_wflog-wi_text CP 'WBS Approval*'
+     AND cs_wflog-agent IS NOT INITIAL
+     AND cs_wflog-agent NS 'IF On-prem'
+     AND cs_wflog-agent NS 'Workflow'
+     AND cs_wflog-agent NS 'RFC'
+     AND cs_wflog-agent NS 'S/4HANA'.
+
+    PERFORM get_wi_comment USING    iv_wi_id
+                           CHANGING cs_wflog-comment.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form get_wi_comment
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_wi_comment USING    iv_wi_id     TYPE sww_wiid
+                    CHANGING cv_comment   TYPE string.
+
+  DATA: lt_attachments   TYPE STANDARD TABLE OF swr_object,
+        ls_attachment    TYPE swr_object,
+        lt_message_lines TYPE STANDARD TABLE OF swr_messag,
+        lt_message_struc TYPE STANDARD TABLE OF swr_mstruc,
+        lv_return_code   TYPE sy-subrc.
+
+  DATA: lt_objcont TYPE STANDARD TABLE OF soli,
+        ls_objcont TYPE soli,
+        lt_objhead TYPE STANDARD TABLE OF soli,
+        lv_text    TYPE string,
+        lv_doc_id  TYPE sofolenti1-doc_id.
+
+  DATA: lt_parts TYPE STANDARD TABLE OF string,
+        lv_part  TYPE string.
+
+  DATA: ls_filter        TYPE sofilteri1.
+
+  CLEAR: cv_comment,
+         lt_attachments,
+         lt_message_lines,
+         lt_message_struc,
+         ls_filter.
+
+*---------------------------------------------------------------------*
+* Get only comment-semantic attachments
+*---------------------------------------------------------------------*
+  CALL FUNCTION 'SAP_WAPI_GET_ATTACHMENTS'
+    EXPORTING
+      workitem_id           = iv_wi_id
+      user                  = sy-uname
+      language              = sy-langu
+      comment_semantic_only = 'X'
+    IMPORTING
+      return_code           = lv_return_code
+    TABLES
+      attachments           = lt_attachments
+      message_lines         = lt_message_lines
+      message_struct        = lt_message_struc.
+
+  IF lv_return_code <> 0 OR lt_attachments IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Read all "Approver Comments" attachments and keep the latest
+*---------------------------------------------------------------------*
+  LOOP AT lt_attachments INTO ls_attachment
+    WHERE def_attrib = 'Approver Comments'
+       OR object_typ = 'CM'.
+
+    CLEAR: lt_parts, lv_part, lv_doc_id, lt_objhead, lt_objcont, lv_text.
+
+*-------------------------------------------------------------------*
+* OBJECT_ID format:
+* SOFM      FOL50000000000004RAW51000000055075
+* Need the 2nd token only
+*-------------------------------------------------------------------*
+    SPLIT ls_attachment-object_id AT space INTO TABLE lt_parts.
+    DELETE lt_parts WHERE table_line IS INITIAL.
+
+    READ TABLE lt_parts INTO lv_part INDEX 2.
+    IF sy-subrc <> 0 OR lv_part IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    lv_doc_id = lv_part.
+
+*-------------------------------------------------------------------*
+* Read SAPoffice document text
+*-------------------------------------------------------------------*
+    ls_filter-send_info  = space.
+    ls_filter-no_content = space.
+    ls_filter-rec_list   = space.
+
+    CALL FUNCTION 'SO_DOCUMENT_READ_API1'
+      EXPORTING
+        document_id                = lv_doc_id
+        filter                     = ls_filter
+      TABLES
+        object_header              = lt_objhead
+        object_content             = lt_objcont
+      EXCEPTIONS
+        document_id_not_exist      = 1
+        operation_no_authorization = 2
+        x_error                    = 3
+        OTHERS                     = 4.
+
+    IF sy-subrc <> 0 OR lt_objcont IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+*-------------------------------------------------------------------*
+* Build text for this attachment
+*-------------------------------------------------------------------*
+    LOOP AT lt_objcont INTO ls_objcont.
+      IF ls_objcont-line IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      IF lv_text IS INITIAL.
+        lv_text = ls_objcont-line.
+      ELSE.
+        CONCATENATE lv_text ls_objcont-line
+          INTO lv_text
+          SEPARATED BY cl_abap_char_utilities=>newline.
+      ENDIF.
+    ENDLOOP.
+
+*-------------------------------------------------------------------*
+* Keep the latest non-initial comment
+* Since loop continues, later attachment overwrites older one
+*-------------------------------------------------------------------*
+    IF lv_text IS NOT INITIAL.
+      cv_comment = lv_text.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form display_workflow_log_popup
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM display_workflow_log_popup.
+
+  DATA: lt_fcat   TYPE slis_t_fieldcat_alv,
+        ls_layout TYPE slis_layout_alv.
+
+  PERFORM build_wflog_fieldcat CHANGING lt_fcat.
+
+  ls_layout-zebra             = abap_true.
+  ls_layout-colwidth_optimize = abap_true.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program    = sy-repid
+      is_layout             = ls_layout
+      it_fieldcat           = lt_fcat
+      i_grid_title          = 'Workflow Log'(v31)
+      i_screen_start_column = 10
+      i_screen_start_line   = 5
+      i_screen_end_column   = 180
+      i_screen_end_line     = 25
+    TABLES
+      t_outtab              = gt_wflog
+    EXCEPTIONS
+      program_error         = 1
+      OTHERS                = 2.
+  IF sy-subrc <> 0.
+    CLEAR gt_wflog.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form build_wflog_fieldcat
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM build_wflog_fieldcat CHANGING ct_fcat TYPE slis_t_fieldcat_alv.
+
+  DATA: ls_fcat TYPE slis_fieldcat_alv.
+
+  CLEAR ct_fcat.
+
+  DEFINE add_fcat.
+    CLEAR ls_fcat.
+    ls_fcat-fieldname = &1.
+    ls_fcat-seltext_l = &2.
+    ls_fcat-outputlen = &3.
+    APPEND ls_fcat TO ct_fcat.
+  END-OF-DEFINITION.
+
+  add_fcat 'WI_ID'         'Workitem ID'(v32)   12.
+  add_fcat 'WI_TEXT'       'Step Text'(v33)     50.
+  add_fcat 'AGENT'         'Agent'(v34)         25.
+  add_fcat 'STATUS'        'Status'(v35)        20.
+  add_fcat 'CREATED_ON'    'Created On'(v36)    10.
+  add_fcat 'CREATED_AT'    'Created At'(v37)    8.
+*  add_fcat 'COMPLETED_ON'  'Completed On'  10.
+*  add_fcat 'COMPLETED_AT'  'Completed At'  8.
+  add_fcat 'COMMENT'       'Comment'(v38)       50.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_auto_approve
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM f_auto_approve CHANGING cv_error TYPE c .
+
+  CASE gv_req_type.
+    WHEN 'B1'.   "CAR
+
+      go_builder->create_car_wbs_b1(
+        EXPORTING
+          is_header     = gs_header
+          it_wbs_items  = gt_wbs_items
+          it_wbs_car    = gt_wbs_car
+          it_phris_hier = gt_phris_hier
+        IMPORTING
+          rv_success    = DATA(lv_response)
+      ).
+
+    WHEN 'B2'.   "Budget Distribution
+      lv_response = go_builder->budget_distribution( is_header = gs_header ).
+
+    WHEN 'B3'.   "Critical Changes
+      lv_response = go_builder->crit_change( is_header = gs_header ).
+
+    WHEN 'A1'. "Project Creation
+      lv_response = go_builder->create_project_cj20n(
+        EXPORTING
+          is_header = gs_header
+      ).
+      IF lv_response EQ abap_true.
+        UPDATE zta2r_wbshdr
+          SET request_status       = 'APPROVED'
+              zapproved_by         = sy-uname
+              zrequest_approved_on = sy-datum
+         WHERE zreq_num = gs_header-zreq_num.
+
+        CLEAR lv_response.
+      ENDIF.
+
+
+    WHEN 'E1'. "Project Creation
+      lv_response = go_builder->unclose_wbs_status( it_wbs_unclose = gt_wbs_unclose
+                                                    iv_req_num     = gs_header-zreq_num ).
+
+
+    WHEN OTHERS.
+      CLEAR lv_response.
+  ENDCASE.
+
+  cv_error = lv_response.
+
+  IF lv_response EQ abap_true.
+    PERFORM f_update_tab_wbshdr.
+    CLEAR lv_response.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form f_update_tab_wbshdr
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM f_update_tab_wbshdr .
+  CONSTANTS:
+  lc_apprd  TYPE char8 VALUE 'APPROVED'.
+
+  UPDATE zta2r_wbshdr
+    SET request_status       = lc_apprd
+        zapproved_by         = sy-uname
+        zrequest_approved_on = sy-datum
+        pspid                = gs_header-pspid
+    WHERE zreq_num = gs_header-zreq_num.
+ENDFORM.
+**&---------------------------------------------------------------------*
+**& Form ge_ariba
+**&---------------------------------------------------------------------*
+**& text
+**&---------------------------------------------------------------------*
+**& -->  p1        text
+**& <--  p2        text
+**&---------------------------------------------------------------------*
+*FORM ge_ariba .
+*  DATA: lv_posnr  TYPE impr-posnr,
+*        lv_sizecl TYPE impr-sizecl.
+*  SELECT posnr, sizecl
+*    FROM impr
+*    INTO (@lv_posnr, @lv_sizecl)
+*    WHERE posnr = @gv_p_posnr.
+*  ENDSELECT.
+*
+*  IF sy-subrc = 0.
+*    IF lv_sizecl = 'GE'.
+*      gv_p_usr10_c = abap_true.
+*    ELSE.
+*      gv_p_usr10_c = abap_false.
+*    ENDIF.
+*  ENDIF.
+*ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form resp_pers
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> GS_HEADER_VERNR
+*&---------------------------------------------------------------------*
+FORM resp_pers  USING    iv_gs_header_vernr.
+
+  TYPES: BEGIN OF ty_pers,
+           vernr TYPE ps_vernr,
+         END OF ty_pers.
+
+  DATA: lt_pers TYPE STANDARD TABLE OF ty_pers,
+        ls_pers TYPE ty_pers.
+
+  SELECT DISTINCT vernr
+    FROM tcj04
+    WHERE vernr IS NOT INITIAL
+    INTO TABLE @lt_pers.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+
+  IF NOT line_exists( lt_pers[ table_line = iv_gs_header_vernr ] ).
+    MESSAGE e000(zmsg_a2r) WITH 'Person Responsible is Invalid'(m72).
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_raw_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> gv_p_pspid_PROJ
+*&---------------------------------------------------------------------*
+FORM get_raw_data
+  USING iv_pspid_proj TYPE zta2r_wbshdr-pspid.
+
+  "------------------------------------------------------------
+  " Local Types
+  "------------------------------------------------------------
+  TYPES: BEGIN OF ty_proj,
+           pspnr TYPE proj-pspnr,
+           post1 TYPE proj-post1,
+           ernam TYPE proj-ernam,
+           erdat TYPE proj-erdat,
+           vernr TYPE proj-vernr,
+           vbukr TYPE proj-vbukr,
+           vkokr TYPE proj-vkokr,
+           prctr TYPE proj-prctr,
+           plsez TYPE proj-plsez,
+           werks TYPE proj-werks,
+           profl TYPE proj-profl,
+           kostl TYPE proj-kostl,
+         END OF ty_proj.
+
+  TYPES: BEGIN OF ty_prps,
+           posid         TYPE prps-posid,
+           post1         TYPE prps-post1,
+           objnr         TYPE prps-objnr,
+           pbukr         TYPE prps-pbukr,
+           pkokr         TYPE prps-pkokr,
+           fkstl         TYPE prps-fkstl,
+           werks         TYPE prps-werks,
+           stufe         TYPE prps-stufe,
+           usr10         TYPE prps-usr10,
+           zunifier_proj TYPE prps-zunifier_proj,
+         END OF ty_prps.
+
+  TYPES: BEGIN OF ty_objnr,
+           objnr TYPE bpge-objnr,
+         END OF ty_objnr.
+
+  TYPES: BEGIN OF ty_posid,
+           posid TYPE v_ivp_pr-posid,
+         END OF ty_posid.
+
+  TYPES: BEGIN OF ty_posnr,
+           posnr TYPE impr-posnr,
+         END OF ty_posnr.
+
+  TYPES: BEGIN OF ty_bpge_lednr,
+           objnr TYPE bpge-objnr,
+           lednr TYPE bpge-lednr,
+         END OF ty_bpge_lednr.
+
+  TYPES: BEGIN OF ty_bpge_wert2,
+           objnr TYPE bpge-objnr,
+           wtges TYPE bpge-wtges,
+         END OF ty_bpge_wert2.
+
+  TYPES: BEGIN OF ty_bpge_geber,
+           objnr TYPE bpge-objnr,
+           geber TYPE bpge-geber,
+         END OF ty_bpge_geber.
+
+  TYPES: BEGIN OF ty_ivp_pr,
+           posid TYPE v_ivp_pr-posid,
+           prnam TYPE v_ivp_pr-prnam,
+           gjahr TYPE v_ivp_pr-gjahr,
+           posnr TYPE v_ivp_pr-posnr,
+           prart TYPE v_ivp_pr-prart,
+         END OF ty_ivp_pr.
+
+  TYPES: BEGIN OF ty_impr,
+           posnr TYPE impr-posnr,
+           izwek TYPE impr-izwek,
+         END OF ty_impr.
+
+  "------------------------------------------------------------
+  " Local Data
+  "------------------------------------------------------------
+  DATA: ls_proj TYPE ty_proj.
+
+  DATA: lt_prps TYPE STANDARD TABLE OF ty_prps,
+        ls_prps TYPE ty_prps.
+
+  DATA: lt_objnr TYPE SORTED TABLE OF ty_objnr
+                  WITH UNIQUE KEY objnr,
+        lt_posid TYPE SORTED TABLE OF ty_posid
+                  WITH UNIQUE KEY posid,
+        lt_posnr TYPE SORTED TABLE OF ty_posnr
+                  WITH UNIQUE KEY posnr.
+
+  DATA: lt_max_kstp   TYPE HASHED TABLE OF ty_bpge_lednr
+                     WITH UNIQUE KEY objnr,
+        lt_wert2      TYPE HASHED TABLE OF ty_bpge_wert2
+                   WITH UNIQUE KEY objnr,
+        lt_max_kbud   TYPE HASHED TABLE OF ty_bpge_lednr
+                     WITH UNIQUE KEY objnr,
+        lt_geber_kbud TYPE HASHED TABLE OF ty_bpge_geber
+                       WITH UNIQUE KEY objnr.
+
+  DATA: lt_ivp_pr_raw TYPE STANDARD TABLE OF ty_ivp_pr,
+        lt_ivp_pr     TYPE HASHED TABLE OF ty_ivp_pr
+                    WITH UNIQUE KEY posid.
+
+  DATA: lt_impr TYPE HASHED TABLE OF ty_impr
+                 WITH UNIQUE KEY posnr.
+
+  DATA: lt_max_kstp_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
+        lt_max_kbud_raw TYPE STANDARD TABLE OF ty_bpge_lednr,
+        lt_wert2_raw    TYPE STANDARD TABLE OF ty_bpge_wert2,
+        lt_geber_raw    TYPE STANDARD TABLE OF ty_bpge_geber,
+        lt_impr_raw     TYPE STANDARD TABLE OF ty_impr.
+
+  FIELD-SYMBOLS:
+    <fs_item>   TYPE zta2r_wbsitem,
+    <fs_wert2>  TYPE ty_bpge_wert2,
+    <fs_ivp_pr> TYPE ty_ivp_pr,
+    <fs_impr>   TYPE ty_impr.
+
+  CLEAR: gs_header,
+         gt_wbs_items.
+
+  "------------------------------------------------------------
+  " 1) Read PROJ Header
+  "------------------------------------------------------------
+  SELECT SINGLE
+         pspnr
+         post1
+         ernam
+         erdat
+         vernr
+         vbukr
+         vkokr
+         prctr
+         plsez
+         werks
+         profl
+         kostl
+    INTO ls_proj
+    FROM proj
+   WHERE pspid = iv_pspid_proj.
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  gs_header-mandt = sy-mandt.
+  gs_header-pspnr = ls_proj-pspnr.
+  gs_header-post1 = ls_proj-post1.
+  gs_header-ernam = ls_proj-ernam.
+  gs_header-erdat = ls_proj-erdat.
+  gs_header-vernr = ls_proj-vernr.
+  gs_header-bukrs = ls_proj-vbukr.
+  gs_header-vkokr = ls_proj-vkokr.
+  gs_header-prctr = ls_proj-prctr.
+  gs_header-plsez = ls_proj-plsez.
+  gs_header-werks = ls_proj-werks.
+  gs_header-profl = ls_proj-profl.
+  gs_header-kostl = ls_proj-kostl.
+
+  "------------------------------------------------------------
+  " 2) Read PRPS Items
+  "------------------------------------------------------------
+  SELECT
+         posid
+         post1
+         objnr
+         pbukr
+         pkokr
+         fkstl
+         werks
+         stufe
+         usr10
+         zunifier_proj
+    INTO TABLE lt_prps
+    FROM prps
+   WHERE psphi = ls_proj-pspnr.
+
+  SORT lt_prps BY posid.
+
+  IF lt_prps IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "------------------------------------------------------------
+  " Build helper tables
+  "------------------------------------------------------------
+  LOOP AT lt_prps INTO ls_prps.
+
+    IF ls_prps-stufe = 1.
+      gs_header-usr10 = ls_prps-usr10.
+    ENDIF.
+
+    INSERT VALUE #( objnr = ls_prps-objnr )
+      INTO TABLE lt_objnr.
+
+    INSERT VALUE #( posid = ls_prps-posid )
+      INTO TABLE lt_posid.
+
+  ENDLOOP.
+
+  "------------------------------------------------------------
+  " 4) BPGE KSTP -> WERT2
+  " Highest LEDNR only (no SUM)
+  "------------------------------------------------------------
+  IF lt_objnr IS NOT INITIAL.
+
+    CLEAR lt_max_kstp_raw.
+
+    SELECT
+           objnr
+           lednr
+      INTO TABLE lt_max_kstp_raw
+      FROM bpge
+      FOR ALL ENTRIES IN lt_objnr
+     WHERE objnr = lt_objnr-objnr
+       AND vorga = 'KSTP'.
+
+    SORT lt_max_kstp_raw BY objnr lednr DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM lt_max_kstp_raw COMPARING objnr.
+    .
+
+    lt_max_kstp = CORRESPONDING #( lt_max_kstp_raw ).
+
+    IF lt_max_kstp IS NOT INITIAL.
+
+      SELECT
+             a~objnr,
+             a~wtges
+        FROM bpge AS a
+        INNER JOIN @lt_max_kstp AS b
+           ON a~objnr = b~objnr
+          AND a~lednr = b~lednr
+       WHERE a~vorga = 'KSTP'
+        INTO TABLE @lt_wert2_raw.
+
+      SORT lt_wert2_raw BY objnr.
+
+      LOOP AT lt_wert2_raw INTO DATA(ls_wert2_raw).
+
+        READ TABLE lt_wert2
+          WITH TABLE KEY objnr = ls_wert2_raw-objnr
+          TRANSPORTING NO FIELDS.
+
+        IF sy-subrc <> 0.
+          INSERT VALUE #(
+            objnr = ls_wert2_raw-objnr
+            wtges = ls_wert2_raw-wtges
+          ) INTO TABLE lt_wert2.
+        ENDIF.
+
+      ENDLOOP.
+
+    ENDIF.
+
+    "----------------------------------------------------------
+    " 5) BPGE KBUD -> GEBER
+    "----------------------------------------------------------
+    CLEAR lt_max_kbud_raw.
+
+    SELECT
+           objnr
+           lednr
+      INTO TABLE lt_max_kbud_raw
+      FROM bpge
+      FOR ALL ENTRIES IN lt_objnr
+     WHERE objnr = lt_objnr-objnr
+       AND vorga = 'KBUD'
+       AND geber <> ''.
+
+    SORT lt_max_kbud_raw BY objnr lednr DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM lt_max_kbud_raw COMPARING objnr.
+
+    lt_max_kbud = CORRESPONDING #( lt_max_kbud_raw ).
+
+    IF lt_max_kbud IS NOT INITIAL.
+
+      SELECT
+             a~objnr,
+             MAX( a~geber ) AS geber
+        FROM bpge AS a
+        INNER JOIN @lt_max_kbud AS b
+           ON a~objnr = b~objnr
+          AND a~lednr = b~lednr
+       WHERE a~vorga = 'KBUD'
+         AND a~geber <> ''
+       GROUP BY a~objnr
+        INTO TABLE @lt_geber_raw.
+
+      lt_geber_kbud = CORRESPONDING #( lt_geber_raw ).
+
+    ENDIF.
+
+  ENDIF.
+
+  "------------------------------------------------------------
+  " 6) V_IVP_PR
+  " No MAX(GJAHR), keep first only
+  "------------------------------------------------------------
+  IF lt_posid IS NOT INITIAL.
+
+    SELECT
+           posid
+           prnam
+           gjahr
+           posnr
+           prart
+      INTO TABLE lt_ivp_pr_raw
+      FROM v_ivp_pr
+      FOR ALL ENTRIES IN lt_posid
+     WHERE posid = lt_posid-posid.
+
+    SORT lt_ivp_pr_raw BY posid gjahr posnr.
+
+    LOOP AT lt_ivp_pr_raw INTO DATA(ls_ivp_raw).
+
+      READ TABLE lt_ivp_pr
+        WITH TABLE KEY posid = ls_ivp_raw-posid
+        TRANSPORTING NO FIELDS.
+
+      IF sy-subrc <> 0.
+
+        INSERT ls_ivp_raw
+          INTO TABLE lt_ivp_pr.
+
+        INSERT VALUE #( posnr = ls_ivp_raw-posnr )
+          INTO TABLE lt_posnr.
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDIF.
+
+  "------------------------------------------------------------
+  " 7) IMPR -> IZWEK
+  "------------------------------------------------------------
+  IF lt_posnr IS NOT INITIAL.
+
+    SELECT
+           posnr
+           izwek
+      INTO TABLE lt_impr_raw
+      FROM impr
+      FOR ALL ENTRIES IN lt_posnr
+     WHERE posnr = lt_posnr-posnr.
+
+    lt_impr = CORRESPONDING #( lt_impr_raw ).
+
+  ENDIF.
+
+  "------------------------------------------------------------
+  " 3) Populate gt_wbs_items
+  "------------------------------------------------------------
+  LOOP AT lt_prps INTO ls_prps.
+
+    APPEND INITIAL LINE TO gt_wbs_items ASSIGNING <fs_item>.
+
+    <fs_item>-mandt = sy-mandt.
+    <fs_item>-pspid = iv_pspid_proj.
+    <fs_item>-posid = ls_prps-posid.
+    <fs_item>-post1 = ls_prps-post1.
+    <fs_item>-bukrs = ls_prps-pbukr.
+    <fs_item>-vkokr = ls_prps-pkokr.
+    <fs_item>-stufe = ls_prps-stufe.
+    <fs_item>-werks = ls_prps-werks.
+
+    IF gs_header-zunifier_proj IS INITIAL
+       AND ls_prps-zunifier_proj IS NOT INITIAL.
+      gs_header-zunifier_proj = ls_prps-zunifier_proj.
+    ENDIF.
+
+
+    READ TABLE lt_wert2 ASSIGNING <fs_wert2>
+      WITH TABLE KEY objnr = ls_prps-objnr.
+
+    IF sy-subrc = 0.
+      <fs_item>-wert2 = <fs_wert2>-wtges.
+    ENDIF.
+
+    READ TABLE lt_ivp_pr ASSIGNING <fs_ivp_pr>
+      WITH TABLE KEY posid = ls_prps-posid.
+
+    IF sy-subrc = 0.
+
+      <fs_item>-gjahr = <fs_ivp_pr>-gjahr.
+      <fs_item>-prart = <fs_ivp_pr>-prart.
+
+      IF gs_header-prnam IS INITIAL.
+        gs_header-prnam = <fs_ivp_pr>-prnam.
+      ENDIF.
+
+      IF gs_header-gjahr IS INITIAL.
+        gs_header-gjahr = <fs_ivp_pr>-gjahr.
+      ENDIF.
+
+      IF gs_header-posnr IS INITIAL.
+        gs_header-posnr = <fs_ivp_pr>-posnr.
+      ENDIF.
+
+      IF gs_header-izwek IS INITIAL.
+
+        READ TABLE lt_impr ASSIGNING <fs_impr>
+          WITH TABLE KEY posnr = <fs_ivp_pr>-posnr.
+
+        IF sy-subrc = 0.
+          gs_header-izwek = <fs_impr>-izwek.
+        ENDIF.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_raw
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> gv_p_pspid_CAR
+*&---------------------------------------------------------------------*
+FORM get_raw  USING    iv_pspid TYPE zta2r_wbshdr-pspid.
+
+  DATA: lv_psphi TYPE prps-psphi,
+        lv_kostl TYPE zta2r_wbsitem-kostl,
+        lv_prart TYPE zta2r_wbsitem-prart.
+
+  lv_psphi = iv_pspid.
+
+  SELECT SINGLE pspnr, pspid, post1, ernam, erdat, vernr, vbukr, vkokr, prctr, plsez, werks, profl, kostl, pwhie
+    FROM proj
+    INTO @DATA(ls_hdr)
+    WHERE pspid = @iv_pspid.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Please enter valid project'(m54).
+  ENDIF.
+
+  SELECT SINGLE prnam, gjahr, posnr
+    FROM v_ivp_pr
+    INTO @DATA(ls_ivp)
+    WHERE posid = @iv_pspid.
+
+  IF sy-subrc = 0.
+    gs_header-pspnr = ls_hdr-pspnr.
+    gs_header-pspid = ls_hdr-pspid.
+    gs_header-post1 = ls_hdr-post1.
+    gs_header-ernam = sy-uname.
+    gs_header-erdat = sy-datum.
+    gs_header-vernr = ls_hdr-vernr.
+    gs_header-bukrs = ls_hdr-vbukr.
+    gs_header-vkokr = ls_hdr-vkokr.
+    gs_header-prctr = ls_hdr-prctr.
+    gs_header-plsez = ls_hdr-plsez.
+    gs_header-werks = ls_hdr-werks.
+    gs_header-profl = ls_hdr-profl.
+    gs_header-prctr = ls_hdr-prctr.
+    gs_header-prnam = ls_ivp-prnam.
+    gs_header-gjahr = ls_ivp-gjahr.
+    gs_header-posnr = ls_ivp-posnr.
+    gs_header-kostl = ls_hdr-kostl.
+    gs_header-waers = ls_hdr-pwhie.
+    gs_header-z_reqtype = gv_req_type.
+    gs_header-pspid = iv_pspid.
+  ELSE.
+    MESSAGE e000(zmsg_a2r) WITH 'Project not assigned to any IM'(m74).
+  ENDIF.
+
+
+  DATA:
+*      lt_prps TYPE SORTED TABLE OF prps
+*                WITH UNIQUE KEY posid,
+        lt_bpge TYPE STANDARD TABLE OF bpge.
+
+  DATA: lr_posid TYPE RANGE OF prps-posid.
+
+  FIELD-SYMBOLS:
+    <fs_wbs_item> TYPE zta2r_wbsitem.
+
+  "------------------------------------------------------------
+  " Build range using POSID from GT_WBS_ITEMS
+  "------------------------------------------------------------
+  LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
+
+    IF <fs_wbs_item>-posid IS NOT INITIAL.
+      APPEND VALUE #(
+        sign   = 'I'
+        option = 'EQ'
+        low    = <fs_wbs_item>-posid
+      ) TO lr_posid.
+    ENDIF.
+
+  ENDLOOP.
+
+  SORT lr_posid BY low.
+  DELETE ADJACENT DUPLICATES FROM lr_posid COMPARING low.
+
+  "------------------------------------------------------------
+  " Read PRPS for:
+  " - ZUNIFIER_PROJ
+  " - OBJNR (needed for BPGE)
+  "------------------------------------------------------------
+  IF lr_posid IS NOT INITIAL.
+
+    SELECT pspnr,
+           posid,
+           post1,
+           objnr,
+           prart,
+           imprf,
+           fkstl,
+           zunifier_proj
+      FROM prps
+      INTO TABLE @DATA(lt_prps)
+      WHERE posid IN @lr_posid.
+
+    SORT lt_prps BY posid.
+
+  ENDIF.
+
+  "------------------------------------------------------------
+  " Read BPGE using OBJNR from PRPS
+  " Need max LEDNR where GEBER is not initial
+  "------------------------------------------------------------
+  IF lt_prps IS NOT INITIAL.
+
+    SELECT objnr, lednr, wtges
+      FROM bpge
+      FOR ALL ENTRIES IN @lt_prps
+      WHERE objnr = @lt_prps-objnr
+        AND vorga = 'KSTP'
+      INTO TABLE @DATA(lt_budget).
+
+    SELECT objnr,
+           lednr,
+           geber
+      FROM bpge
+      FOR ALL ENTRIES IN @lt_prps
+      WHERE objnr = @lt_prps-objnr
+        AND vorga = 'KBUD'
+        AND geber IS NOT INITIAL
+      INTO TABLE @lt_bpge.
+
+  ENDIF.
+
+  SORT lt_bpge BY objnr lednr DESCENDING.
+  SORT lt_budget BY objnr lednr DESCENDING.
+
+  "------------------------------------------------------------
+  " Fill GT_WBS_ITEMS
+  "------------------------------------------------------------
+  LOOP AT gt_wbs_items ASSIGNING <fs_wbs_item>.
+*    IF <fs_wbs_item>-stufe = 1.
+*      lv_kostl = <fs_wbs_item>-kostl.
+*      lv_prart = <fs_wbs_item>-prart.
+*      <fs_wbs_item>-post1 = gs_header-post1.
+*      gs_header-kostl = lv_kostl.
+*    ELSE.
+*      <fs_wbs_item>-kostl = lv_kostl.
+*      <fs_wbs_item>-prart = lv_prart.
+*    ENDIF.
+
+    CLEAR:
+      <fs_wbs_item>-zbudget_check.
+
+    "------------------------------------------
+    " Read PRPS using POSID
+    "------------------------------------------
+    READ TABLE lt_prps INTO DATA(ls_prps)
+      WITH KEY posid = <fs_wbs_item>-posid
+      BINARY SEARCH.
+
+    IF sy-subrc = 0.
+
+      "Fill ZUNIFIER_PROJ
+      gs_header-zunifier_proj = ls_prps-zunifier_proj.
+      <fs_wbs_item>-posid = ls_prps-posid.
+      <fs_wbs_item>-post1 = ls_prps-post1.
+      <fs_wbs_item>-werks = ls_hdr-werks.
+      <fs_wbs_item>-vkokr = ls_hdr-vkokr.
+*      <fs_wbs_item>-stufe = ls_prps-stufe.
+      <fs_wbs_item>-kostl = ls_prps-fkstl.
+      <fs_wbs_item>-prart = ls_prps-prart.
+      <fs_wbs_item>-imprf = ls_prps-imprf.
+      <fs_wbs_item>-gjahr = ls_ivp-gjahr.
+
+      gs_header-kostl     = ls_prps-fkstl.
+*---------------------------------------------------------------------*
+* Copy KOSTL and PRART from STUFE = 1 WBS to all lower level WBS
+*---------------------------------------------------------------------*
+
+      DATA: ls_level1 TYPE zta2r_wbsitem.
+
+      CLEAR ls_level1.
+
+*---------------------------------------------------------------------*
+* Get Level 1 WBS (parent/root)
+*---------------------------------------------------------------------*
+      READ TABLE gt_wbs_items INTO ls_level1
+        WITH KEY stufe = 1.
+
+      gs_header-kostl = ls_level1-kostl.
+      gv_p_kostl = ls_level1-kostl.
+
+      IF sy-subrc = 0.
+
+        LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_wbs>).
+
+          IF <fs_wbs>-stufe > 1.
+
+            IF <fs_wbs>-kostl IS INITIAL.
+              <fs_wbs>-kostl = ls_level1-kostl.
+
+            ENDIF.
+
+            IF <fs_wbs>-prart IS INITIAL.
+              <fs_wbs>-prart = ls_level1-prart.
+            ENDIF.
+*            ELSE.
+*              <fs_wbs>-post1 = gs_header-post1.
+          ELSE.
+            gv_wert2 = <fs_wbs>-wert2.
+          ENDIF.
+
+        ENDLOOP.
+
+      ENDIF.
+
+
+      "------------------------------------------
+      " Budget Check from BPGE
+      " if max LEDNR exists with GEBER not initial
+      " then set X
+      "------------------------------------------
+      READ TABLE lt_bpge INTO DATA(ls_bpge)
+        WITH KEY objnr = ls_prps-objnr
+        BINARY SEARCH.
+      IF sy-subrc = 0.
+        <fs_wbs_item>-zbudget_check = 'X'.
+      ENDIF.
+
+      READ TABLE lt_budget INTO DATA(ls_budget)
+        WITH KEY objnr = ls_prps-objnr
+        BINARY SEARCH.
+      IF sy-subrc = 0.
+        <fs_wbs_item>-wert2 = ls_budget-wtges.
+      ENDIF.
+
+    ENDIF.
+
+
+  ENDLOOP.
+
+  PERFORM arrange_prhi.
+
+  gv_gjahr              = ls_ivp-gjahr.
+  gv_edit_mode          = abap_true.
+  gv_header_initialized = abap_false.
+  gs_header-ernam = sy-uname.
+  gs_header-erdat = sy-datum.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form arrange_prhi
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM arrange_prhi .
+*---------------------------------------------------------------------*
+* Arrange gt_wbs_items-POSID based on PRHI hierarchy sequence
+*---------------------------------------------------------------------*
+
+  TYPES: BEGIN OF ty_prhi,
+           posid TYPE prps-posid,
+           up    TYPE prhi-up,
+           left  TYPE prhi-left,
+           right TYPE prhi-right,
+         END OF ty_prhi.
+
+  DATA: lt_prhi_order TYPE STANDARD TABLE OF ty_prhi,
+        ls_prhi_order TYPE ty_prhi,
+        lt_wbs_sorted TYPE STANDARD TABLE OF zta2r_wbsitem,
+        ls_wbs_item   TYPE zta2r_wbsitem.
+
+  CLEAR: lt_prhi_order,
+         lt_wbs_sorted.
+
+*---------------------------------------------------------------------*
+* Get hierarchy order from PRHI using current project
+* Replace gs_header-pspid with your project definition if needed
+*---------------------------------------------------------------------*
+  SELECT
+      p~posid,
+      h~up,
+      h~left,
+      h~right
+    INTO TABLE @lt_prhi_order
+    FROM prhi AS h
+    INNER JOIN prps AS p
+      ON p~pspnr = h~posnr
+    WHERE h~psphi = @gs_header-pspid
+    ORDER BY h~left ASCENDING.
+
+*---------------------------------------------------------------------*
+* Arrange gt_wbs_items following PRHI sequence
+*---------------------------------------------------------------------*
+  LOOP AT lt_prhi_order INTO ls_prhi_order.
+
+    READ TABLE gt_wbs_items INTO ls_wbs_item
+      WITH KEY posid = ls_prhi_order-posid.
+
+    IF sy-subrc = 0.
+      APPEND ls_wbs_item TO lt_wbs_sorted.
+    ENDIF.
+
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Replace original table with arranged sequence
+*---------------------------------------------------------------------*
+  IF lt_wbs_sorted IS NOT INITIAL.
+    gt_wbs_items = lt_wbs_sorted.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_budgetchk
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM get_budgetchk.
+
+  "-------------------------------------------------------
+  " Local types (only needed fields)
+  "-------------------------------------------------------
+  TYPES: BEGIN OF ty_wbs_budget,
+           posid         TYPE prps-posid,
+           zbudget_check TYPE zta2r_wbsitem-zbudget_check,
+         END OF ty_wbs_budget.
+
+  DATA: lt_wbs_db  TYPE STANDARD TABLE OF ty_wbs_budget,
+        lt_wbs_map TYPE HASHED TABLE OF ty_wbs_budget
+                     WITH UNIQUE KEY posid.
+
+  "-------------------------------------------------------
+  " Validate input
+  "-------------------------------------------------------
+  IF gv_reqnum IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "-------------------------------------------------------
+  " Get data from DB
+  "-------------------------------------------------------
+  SELECT posid,
+         zbudget_check
+    FROM zta2r_wbsitem
+    INTO TABLE @lt_wbs_db
+    WHERE zreq_num = @gv_reqnum.
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  LOOP AT lt_wbs_db ASSIGNING FIELD-SYMBOL(<fs_wbsdb>).
+    REPLACE ALL OCCURRENCES OF '.' IN <fs_wbsdb>-posid WITH ''.
+  ENDLOOP.
+
+  "-------------------------------------------------------
+  " Convert to hashed table for fast lookup
+  "-------------------------------------------------------
+  lt_wbs_map = lt_wbs_db.
+
+  "-------------------------------------------------------
+  " Update gt_wbs_items
+  "-------------------------------------------------------
+  LOOP AT gt_wbs_items ASSIGNING FIELD-SYMBOL(<fs_wbs>).
+
+    READ TABLE lt_wbs_map ASSIGNING FIELD-SYMBOL(<fs_db>)
+      WITH TABLE KEY posid = <fs_wbs>-posid.
+
+    IF sy-subrc = 0.
+      <fs_wbs>-zbudget_check = <fs_db>-zbudget_check.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Form validate_plant
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> GS_HEADER_WERKS
+*&      --> GS_HEADER_BUKRS
+*&---------------------------------------------------------------------*
+FORM validate_plant  USING    iv_hdr_werks
+                              iv_hdr_bukrs.
+
+  SELECT SINGLE bwkey
+  FROM t001k
+  INTO @DATA(lv_bwkey)
+ WHERE bwkey = @iv_hdr_werks
+   AND bukrs = @iv_hdr_bukrs.
+
+  IF sy-subrc <> 0.
+    MESSAGE e000(zmsg_a2r) WITH 'Plant'(m75) iv_hdr_werks 'does not belong to company code'(m76) iv_hdr_bukrs.
+    RETURN.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_data_display
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM get_data_display .
+  SELECT SINGLE *
+    FROM zta2r_wbshdr
+    INTO @gs_header
+    WHERE zreq_num = @gv_p_req_num.
+
+  SELECT *
+    FROM zta2r_wbsitem
+    INTO TABLE @gt_wbs_items
+    WHERE zreq_num = @gv_p_req_num.
+*  gt_wbs_unclose = gt_wbs_items.
+
+  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
+
+    READ TABLE gt_wbs_items INTO DATA(ls_item)
+      WITH KEY pspid = <fs_unclose>-wbs_element_code.
+
+    IF sy-subrc = 0.
+      <fs_unclose>-status = ls_item-zstat.
+      <fs_unclose>-to_be  = ls_item-zstat_tobe.
+    ENDIF.
+
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form populate_wbs_unclose_status_d
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM populate_wbs_unclose_status_d.
+
+*---------------------------------------------------------------------*
+* Local Types
+*---------------------------------------------------------------------*
+
+*---------------------------------------------------------------------*
+* Data
+*---------------------------------------------------------------------*
+  DATA: lt_posid_range TYPE STANDARD TABLE OF ty_posid_range,
+        ls_posid_range TYPE ty_posid_range,
+        lt_prps_stat   TYPE STANDARD TABLE OF ty_prps_stat,
+        ls_prps_stat   TYPE ty_prps_stat,
+        lv_status      TYPE string.
+
+  DATA lv_tabix TYPE sy-tabix.
+
+
+*---------------------------------------------------------------------*
+* Check data
+*---------------------------------------------------------------------*
+  IF gt_wbs_unclose IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Build POSID range from gt_wbs_unclose
+*---------------------------------------------------------------------*
+  LOOP AT gt_wbs_unclose ASSIGNING FIELD-SYMBOL(<fs_unclose>).
+    IF <fs_unclose>-wbs_element_code IS NOT INITIAL.
+      REPLACE ALL OCCURRENCES OF '.' IN <fs_unclose>-wbs_element_code WITH ''.
+      CLEAR ls_posid_range.
+      ls_posid_range-sign   = 'I'.
+      ls_posid_range-option = 'EQ'.
+      ls_posid_range-low    = <fs_unclose>-wbs_element_code.
+      APPEND ls_posid_range TO lt_posid_range.
+    ENDIF.
+  ENDLOOP.
+
+  IF lt_posid_range IS INITIAL.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Get PRPS-OBJNR + JEST-STAT
+* Active statuses only
+*---------------------------------------------------------------------*
+  SELECT a~posid,
+         a~objnr,
+         b~stat
+    INTO TABLE @lt_prps_stat
+    FROM prps  AS a
+    INNER JOIN jest  AS b
+      ON b~objnr = a~objnr
+   WHERE a~posid IN @lt_posid_range
+     AND b~inact = @space
+     AND b~stat IN ( 'I0002', 'I0045', 'I0046' ).
+
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Fill TXT04 as constant
+*---------------------------------------------------------------------*
+  LOOP AT lt_prps_stat INTO ls_prps_stat.
+    CASE ls_prps_stat-stat.
+      WHEN 'I0002'.
+        ls_prps_stat-txt04 = 'REL'.
+      WHEN 'I0045'.
+        ls_prps_stat-txt04 = 'TECO'.
+      WHEN 'I0046'.
+        ls_prps_stat-txt04 = 'CLSD'.
+    ENDCASE.
+
+    MODIFY lt_prps_stat FROM ls_prps_stat INDEX sy-tabix.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Update gt_wbs_unclose-status
+*---------------------------------------------------------------------*
+  SORT lt_prps_stat BY posid txt04.
+
+  IF sy-uname <> 'EV92123'.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      CLEAR lv_status.
+
+      LOOP AT lt_prps_stat INTO ls_prps_stat
+        WHERE posid = <fs_unclose>-wbs_element_code.
+
+        IF lv_status IS INITIAL.
+          lv_status = ls_prps_stat-txt04.
+        ELSE.
+          CONCATENATE lv_status ls_prps_stat-txt04
+            INTO lv_status SEPARATED BY ', '.
+        ENDIF.
+      ENDLOOP.
+
+      <fs_unclose>-status = lv_status.
+    ENDLOOP.
+
+  ELSE.
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+
+      <fs_unclose>-status =
+        REDUCE string(
+          INIT lv = ``
+          FOR ls_stat IN lt_prps_stat
+          WHERE ( posid = <fs_unclose>-wbs_element_code )
+          NEXT lv = condense(
+                     SWITCH string(
+                       lv
+                       WHEN `` THEN ls_stat-txt04
+                       ELSE |{ lv }, { ls_stat-txt04 }|
+                     )
+                   )
+        ).
+
+    ENDLOOP.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* DISPLAY MODE
+*---------------------------------------------------------------------*
+
+  IF gv_disp_req = abap_true.
+
+    LOOP AT gt_wbs_unclose ASSIGNING <fs_unclose>.
+      lv_tabix = sy-tabix.
+
+      READ TABLE gt_wbs_items INTO gs_wbs_item INDEX lv_tabix.
+      IF sy-subrc = 0.
+        IF gs_wbs_item-zstat IS NOT INITIAL.
+          <fs_unclose>-status = gs_wbs_item-zstat.
+        ENDIF.
+
+        IF gs_wbs_item-zstat_tobe IS NOT INITIAL.
+          <fs_unclose>-to_be = gs_wbs_item-zstat_tobe.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
   ENDIF.
 
 ENDFORM.
