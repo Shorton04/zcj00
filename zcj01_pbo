@@ -1,20 +1,24 @@
 *&---------------------------------------------------------------------*
-*& Include ZTR_A2R_WBSZCJ01_PBO
-*& Process Before Output Modules
+*& Include          ZTR_A2R_WBSZCJ01_PBO
 *&---------------------------------------------------------------------*
-
 *&---------------------------------------------------------------------*
 *& Module STATUS_0100 OUTPUT
 *&---------------------------------------------------------------------*
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS 'STATUS_100'.
-  SET TITLEBAR 'TITLE_100'.
+MODULE status_0200 OUTPUT.
+  SET PF-STATUS 'STATUS_200'.
+  SET TITLEBAR 'TITLE_200'.
 
-  " Make display-only fields non-editable
+  " Handle field editability
   LOOP AT SCREEN.
-    IF screen-group1 = 'DIS'.
+    " Finish Date: Not editable for Lumpsum
+    IF screen-name = 'gv_p_plsez' AND gv_izwek = 'LS'.
       screen-input = 0.
-      screen-invisible = 0.
+      MODIFY SCREEN.
+    ENDIF.
+
+    " GE Ariba Flag: Never editable
+    IF screen-name = 'gv_p_usr10_C'.
+      screen-input = 0.
       MODIFY SCREEN.
     ENDIF.
   ENDLOOP.
@@ -23,22 +27,692 @@ ENDMODULE.
 *&---------------------------------------------------------------------*
 *& Module STATUS_0200 OUTPUT
 *&---------------------------------------------------------------------*
-MODULE status_0200 OUTPUT.
-  SET PF-STATUS 'STATUS_200'.
-  SET TITLEBAR 'TITLE_200'.
+MODULE status_0100 OUTPUT.
 
-  " Initialize table control
-  DESCRIBE TABLE gt_wbs_display LINES tc_wbs-lines.
+  DATA gt_excl TYPE STANDARD TABLE OF sy-ucomm.
+
+  IF gv_disp_req = abap_true.
+    "Hide these toolbar buttons
+    APPEND 'SUBMIT' TO gt_excl.
+    APPEND 'ATTCH'   TO gt_excl.
+    APPEND 'UPLD'   TO gt_excl.
+*    APPEND 'DWNLD'  TO gt_excl.
+    SET PF-STATUS 'STATUS_100' EXCLUDING gt_excl.
+  ELSE.
+    APPEND 'WFLOG'   TO gt_excl.
+
+    SET PF-STATUS 'STATUS_100' EXCLUDING gt_excl.
+  ENDIF.
+
+  LOOP AT SCREEN.
+
+    "=========================================================
+    " Default: Header fields are display-only
+    "=========================================================
+    IF screen-name = 'GS_HEADER-POST1'
+    OR screen-name = 'GS_HEADER-BUKRS'
+    OR screen-name = 'GS_HEADER-VERNR'
+    OR screen-name = 'GV_PROJECT_CURRENCY'
+    OR screen-name = 'GV_REQUESTOR_DISPLAY'
+    OR screen-name = 'GS_HEADER-PLSEZ'
+    OR screen-name = 'GS_HEADER-WERKS'
+    OR screen-name = 'GS_HEADER-REQUEST_STATUS'
+    OR screen-name = 'GV_IM_POSID_DISPLAY'
+    OR screen-name = 'GS_HEADER-PRCTR'
+    OR screen-name = 'GV_REQTYPE_DISPLAY'
+    OR screen-name = 'GS_HEADER-PRNAM'
+    OR screen-name = 'GS_HEADER-KOSTL'
+    OR screen-name = 'GV_GJAHR'
+    OR screen-name = 'GS_HEADER-IZWEK'
+    OR screen-name = 'GV_AVAIL_BUDGET_TEXT'
+    OR screen-name = 'GS_HEADER-USR008'
+    OR screen-name = 'GS_HEADER-USR10'
+    OR screen-name = 'GS_HEADER-ZUNIFIER_PROJ'.
+
+      screen-input = 0.
+      screen-intensified = 0.
+      MODIFY SCREEN.
+
+    ENDIF.
+
+    "=========================================================
+    " A1 editable fields only
+    "=========================================================
+    IF gv_disp_req = abap_false.
+      IF gv_req_type = 'A1' OR gv_req_type = 'F1'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'
+        OR screen-name = 'GS_HEADER-USR008'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+
+      "=========================================================
+      " B3 editable fields like B1 / FDS
+      "=========================================================
+      IF gv_req_type = 'B3'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'
+        OR screen-name = 'GS_HEADER-WERKS'
+        OR screen-name = 'GS_HEADER-USR10'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+      IF gv_req_type = 'B2'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
 
 ENDMODULE.
+
+MODULE status_0101 OUTPUT.
+
+  DATA gt_excl2 TYPE STANDARD TABLE OF sy-ucomm.
+
+  IF gv_disp_req = abap_true.
+    "Hide these toolbar buttons
+    APPEND 'SUBMIT' TO gt_excl2.
+    APPEND 'ATTCH'   TO gt_excl2.
+    APPEND 'UPLD'   TO gt_excl2.
+*    APPEND 'DWNLD'  TO gt_excl.
+    SET PF-STATUS 'STATUS_100' EXCLUDING gt_excl2.
+  ELSE.
+    APPEND 'WFLOG'   TO gt_excl2.
+
+    SET PF-STATUS 'STATUS_100' EXCLUDING gt_excl2.
+  ENDIF.
+
+  LOOP AT SCREEN.
+
+    "=========================================================
+    " Default: Header fields are display-only
+    "=========================================================
+    IF screen-name = 'GS_HEADER-POST1'
+    OR screen-name = 'GS_HEADER-BUKRS'
+    OR screen-name = 'GS_HEADER-VERNR'
+    OR screen-name = 'GV_PROJECT_CURRENCY'
+    OR screen-name = 'GV_REQUESTOR_DISPLAY'
+    OR screen-name = 'GS_HEADER-PLSEZ'
+    OR screen-name = 'GS_HEADER-WERKS'
+    OR screen-name = 'GS_HEADER-REQUEST_STATUS'
+    OR screen-name = 'GV_IM_POSID_DISPLAY'
+    OR screen-name = 'GS_HEADER-PRCTR'
+    OR screen-name = 'GV_REQTYPE_DISPLAY'
+    OR screen-name = 'GS_HEADER-PRNAM'
+    OR screen-name = 'GS_HEADER-KOSTL'
+    OR screen-name = 'GV_GJAHR'
+    OR screen-name = 'GS_HEADER-IZWEK'
+    OR screen-name = 'GV_AVAIL_BUDGET_TEXT'
+    OR screen-name = 'GS_HEADER-USR008'
+    OR screen-name = 'GS_HEADER-USR10'
+    OR screen-name = 'GS_HEADER-ZUNIFIER_PROJ'.
+
+      screen-input = 0.
+      screen-intensified = 0.
+      MODIFY SCREEN.
+
+    ENDIF.
+
+    "=========================================================
+    " A1 editable fields only
+    "=========================================================
+    IF gv_disp_req = abap_false.
+      IF gv_req_type = 'A1' OR gv_req_type = 'F1'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'
+        OR screen-name = 'GS_HEADER-USR008'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+
+      "=========================================================
+      " B3 editable fields like B1 / FDS
+      "=========================================================
+      IF gv_req_type = 'B3'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'
+        OR screen-name = 'GS_HEADER-WERKS'
+        OR screen-name = 'GS_HEADER-USR10'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+      IF gv_req_type = 'B2'.
+        IF screen-name = 'GS_HEADER-POST1'
+        OR screen-name = 'GS_HEADER-VERNR'
+        OR screen-name = 'GS_HEADER-PLSEZ'.
+
+          screen-input = 1.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMODULE.
+
+*MODULE status_0300 OUTPUT.
+**  SET PF-STATUS 'xxxxxxxx'.
+**  SET TITLEBAR 'xxx'.
+*  IF gs_header-z_reqtype = 'A1'.
+*    LOOP AT SCREEN.
+*      CASE screen-name.
+*        WHEN 'TC_WBS_INSERT'   OR
+* 'TC_WBS_DELETE'   OR
+* 'TC_WBS_TOP'      OR
+* 'TC_WBS_PREVIOUS' OR
+* 'TC_WBS_NEXT'     OR
+* 'TC_WBS_BOTTOM'   OR
+* 'TC_WBS_MARK'     OR
+* 'TC_WBS_DEMARK'.
+*          screen-active = 0.
+*          MODIFY SCREEN.
+*      ENDCASE.
+*    ENDLOOP.
+*  ENDIF.
+*ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module STATUS_0400 OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0400 OUTPUT.
+* SET PF-STATUS 'xxxxxxxx'.
+* SET TITLEBAR 'xxx'.
+  PERFORM text_editor.
+    IF gv_disp_req = abap_true.
+      PERFORM get_text.
+    ENDIF.
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module SET_TABLE_FIELD_ATTRIBUTES OUTPUT
+*&---------------------------------------------------------------------*
+MODULE set_table_field_attributes OUTPUT.
+
+  DATA: gv_read_only TYPE abap_bool.
+  CLEAR: gv_read_only.
+
+
+  " Global read-only by request status
+  IF gs_header-request_status = 'PENDING'.
+    gv_read_only = abap_true.
+  ENDIF.
+
+*  IF gs_header-request_status = 'REJECTED'.
+*    gv_rejected = abap_true.
+*  ENDIF.
+  " B3 = all rows/fields uneditable
+
+  LOOP AT SCREEN.
+    IF gv_disp_req = abap_false.
+
+
+      "--------------------------------------------------------------*
+      " Add row (Editable) - not applicable for B3 due to logic above
+      "--------------------------------------------------------------*
+      IF gs_wbs_display-stufe IS INITIAL
+      AND gs_wbs_display-posid IS INITIAL
+      AND gs_wbs_display-imprf IS INITIAL.
+        screen-input       = 1.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+        CONTINUE.
+      ENDIF.
+
+      "--------------------------------------------------------------*
+      " Always gray out template/header-derived fields
+      "--------------------------------------------------------------*
+      IF screen-name = 'GS_WBS_DISPLAY-STUFE'
+      OR screen-name = 'GS_WBS_DISPLAY-POSID'
+      OR screen-name = 'GS_WBS_DISPLAY-POSNR'
+      OR screen-name = 'GS_WBS_DISPLAY-BUKRS'
+      OR screen-name = 'GS_WBS_DISPLAY-IMPRF'
+      OR screen-name = 'GS_WBS_DISPLAY-KOSTL'
+      OR screen-name = 'GS_WBS_DISPLAY-PRART'.
+
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+        CONTINUE.
+      ENDIF.
+
+      "--------------------------------------------------------------*
+      " B2 rule:
+      " Only ZAPPROVED_BUDG and ZBUDGET_CHECK editable for STUFE > 2
+      " All other fields uneditable
+      "--------------------------------------------------------------*
+      IF gv_req_type = 'B2'.
+
+        IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+        OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'.
+
+          IF gv_read_only = abap_true OR gs_wbs_display-stufe < 2.
+            screen-input       = 0.
+            screen-intensified = 0.
+          ELSE.
+            screen-input       = 1.
+            screen-intensified = 0.
+          ENDIF.
+
+          MODIFY SCREEN.
+          CONTINUE.
+
+        ELSEIF screen-name CP 'GS_WBS_DISPLAY-*'.
+
+          screen-input       = 0.
+          screen-intensified = 0.
+          MODIFY SCREEN.
+          CONTINUE.
+
+        ENDIF.
+
+      ENDIF.
+
+      "--------------------------------------------------------------*
+      " Default logic for non-B2 / non-B3
+      "--------------------------------------------------------------*
+
+      " Description
+      IF screen-name = 'GS_WBS_DISPLAY-POST1'.
+*        IF gs_wbs_display-stufe = 1 OR gv_read_only = abap_true.
+*          screen-input = 0.
+*          screen-intensified = 0.
+*        ELSE.
+        screen-input = 1.
+        screen-intensified = 0.
+*        ENDIF.
+        MODIFY SCREEN.
+        CONTINUE.
+      ENDIF.
+
+      " Budget fields: editable only if not read-only
+      IF screen-name = 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+      OR screen-name = 'GS_WBS_DISPLAY-ZBUDGET_CHECK'
+      OR screen-name = 'TC_WBS_INSERT'
+      OR screen-name = 'TC_WBS_DELETE'
+      OR screen-name = 'TC_WBS_MARK'
+      OR screen-name = 'TC_WBS_DEMARK'
+      OR screen-name = 'TOTAL_UP'.
+
+        IF gv_read_only = abap_true.
+          screen-input       = 0.
+          screen-intensified = 0.
+        ELSE.
+          screen-input       = 1.
+          screen-intensified = 0.
+        ENDIF.
+
+        MODIFY SCREEN.
+        CONTINUE.
+      ENDIF.
+
+    ELSE.
+
+      IF screen-name = 'GS_WBS_DISPLAY-STUFE'
+            OR screen-name CP 'GS_WBS_DISPLAY-POSID'
+            OR screen-name CP 'GS_WBS_DISPLAY-IMPRF'
+            OR screen-name CP 'GS_WBS_DISPLAY-PRART'
+            OR screen-name CP 'GS_WBS_DISPLAY-POST1'
+            OR screen-name CP 'GS_WBS_DISPLAY-KOSTL'
+            OR screen-name CP 'GS_WBS_DISPLAY-ZAPPROVED_BUDG'
+            OR screen-name CP 'GS_WBS_DISPLAY-ZBUDGET_CHECK'
+            OR screen-name CP 'GS_WBS_DISPLAY-MARK'
+            OR screen-name = 'TC_WBS_INSERT'
+            OR screen-name = 'TC_WBS_DELETE'
+            OR screen-name = 'TC_WBS_MARK'
+            OR screen-name = 'TC_WBS_DEMARK'
+            OR screen-name = 'TOTAL_UP'.
+
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+        CONTINUE.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMODULE.
+
 
 *&---------------------------------------------------------------------*
 *& Module FILL_TABLE_CONTROL OUTPUT
 *&---------------------------------------------------------------------*
-MODULE fill_table_control OUTPUT.
-  " Read current line of table control
-  READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
-  IF sy-subrc = 0.
-    " Fields are automatically filled from gs_wbs_display
+*MODULE fill_table_control OUTPUT.
+*  " Read current line of table control
+**  READ TABLE gt_wbs_display INTO gs_wbs_display INDEX tc_wbs-current_line.
+**  IF sy-subrc = 0.
+**    " Fields are automatically filled from gs_wbs_display
+**  ENDIF.
+*ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Module BUILD_IM_DROPDOWN OUTPUT
+*&---------------------------------------------------------------------*
+MODULE build_im_dropdown OUTPUT.
+
+  DATA: gs_value  TYPE vrm_value,
+        gt_values TYPE vrm_values,
+        gt_impr   TYPE STANDARD TABLE OF ty_impr,
+        gs_impr   TYPE ty_impr,
+        gt_parts  TYPE STANDARD TABLE OF string,
+        gv_dummy  TYPE string,
+        gv_pr01   TYPE string.
+
+  CHECK gt_im_dropdown IS INITIAL.
+
+  " Get IM positions that have config entries
+  SELECT
+    i~posnr AS posnr,
+    i~gjahr AS gjahr,
+    i~posid AS posid,
+    i~prnam AS prnam,
+    i~izwek AS izwek
+    FROM impr AS i
+    INNER JOIN zta2r_conftab1 AS c
+      ON c~izwek = i~izwek
+      INTO TABLE @gt_impr
+  ORDER BY i~posid DESCENDING.
+  IF sy-subrc EQ 0.
+    LOOP AT gt_impr INTO gs_impr.
+      CLEAR gs_value.
+      " Internal value.
+      gs_value-key = gs_impr-posnr.
+
+      SPLIT gs_impr-posid AT space INTO TABLE gt_parts.
+      READ TABLE gt_parts INDEX lines( gt_parts ) INTO gs_value-text.
+
+      APPEND gs_value TO gt_im_dropdown.
+    ENDLOOP.
+
+
+    CALL FUNCTION 'VRM_SET_VALUES'
+      EXPORTING
+        id              = 'gv_p_posnr'
+        values          = gt_im_dropdown
+      EXCEPTIONS
+        id_illegal_name = 1
+        OTHERS          = 2.
+    IF sy-subrc <> 0.
+      CLEAR gt_im_dropdown.
+    ENDIF.
   ENDIF.
+
+*  PERFORM ge_ariba.
+ENDMODULE.
+
+
+
+MODULE display_tree_preview OUTPUT.
+
+  " Only proceed if template is set
+  CHECK gv_p_pspid IS NOT INITIAL.
+
+  " Create tree on first call
+  IF lo_tree_preview IS INITIAL.
+    PERFORM create_tree_control.
+    " Verify creation succeeded
+    CHECK lo_tree_preview IS NOT INITIAL.
+  ENDIF.
+
+  " Load or reload data if template changed
+  IF gv_p_pspid NE gv_pspid_old.
+    PERFORM load_tree_hierarchy.
+    gv_pspid_old = gv_p_pspid.
+  ENDIF.
+
+ENDMODULE.
+
+MODULE posnr_changed INPUT.
+
+  SELECT SINGLE posnr
+    FROM impr
+    INTO @gv_im_posnr
+    "UP TO 1 ROWS
+    WHERE posid = @gv_p_posid.
+  "ENDSELECT.
+  IF sy-subrc EQ 0.
+    gv_p_posnr = gv_im_posnr.
+  ENDIF.
+
+  IF gv_p_posnr IS NOT INITIAL AND gv_p_posnr NE gv_posnr_old.
+
+    PERFORM get_im_data USING gv_p_posnr.
+
+    " Force tree refresh
+    IF lo_tree_preview IS NOT INITIAL.
+      PERFORM free_tree_control.
+    ENDIF.
+
+    gv_posnr_old = gv_p_posnr.
+  ENDIF.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0300 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0300 OUTPUT.
+* SET PF-STATUS 'xxxxxxxx'.
+* SET TITLEBAR 'xxx'.
+
+  CASE screen-name.
+    WHEN 'TC_WBS_INSERT'   OR
+         'TC_WBS_DELETE'   OR
+         'TC_WBS_MARK'     OR
+         'TC_WBS_DEMARK'   OR
+         'TC_WBS_TOP'      OR
+         'TC_WBS_PREVIOUS' OR
+         'TC_WBS_NEXT'     OR
+         'TC_WBS_BOTTOM'.
+
+      screen-active = 0.
+      MODIFY SCREEN.
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0500 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0500 OUTPUT.
+  SET PF-STATUS 'STATUS_500'.
+  SET TITLEBAR 'TITLE_500'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0600 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0600 OUTPUT.
+  SET PF-STATUS 'STATUS_600'.
+  SET TITLEBAR 'TITLE_600'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0700 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0700 OUTPUT.
+  SET PF-STATUS 'STATUS_700'.
+  SET TITLEBAR 'TITLE_700'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0800 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0800 OUTPUT.
+  SET PF-STATUS 'STATUS_800'.
+  SET TITLEBAR 'TITLE_800'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module START_GOS OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE start_gos OUTPUT.
+* -- start GOS
+  IF go_gos IS NOT BOUND.
+    IF gv_disp_req = abap_true.
+      gv_rw_mode = 'D'.
+      gv_gos_reqnum = gv_p_req_num.
+    ELSE.
+      gv_rw_mode = 'E'.
+    ENDIF.
+
+    PERFORM start_gos USING    gv_gos_reqnum
+                               gv_rw_mode
+                      CHANGING go_gos.
+  ENDIF.
+
+ENDMODULE.                 " START_GOS  OUTPUT
+*&---------------------------------------------------------------------*
+*& Module STATUS_0900 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0900 OUTPUT.
+  SET PF-STATUS 'STATUS_900'.
+  SET TITLEBAR 'TITLE_900'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0501 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0501 OUTPUT.
+
+  SET PF-STATUS 'STATUS_501'.
+  SET TITLEBAR 'TITLE_501'.
+ENDMODULE.
+
+MODULE status_0502 OUTPUT.
+
+  IF gv_p_req_num IS INITIAL.
+    GET PARAMETER ID 'ZREQN' FIELD gv_p_req_num.
+    IF sy-subrc = 0.
+      gv_from_hotspot = abap_true.
+    ENDIF.
+  ENDIF.
+  SET PF-STATUS 'STATUS_501'.
+  SET TITLEBAR 'TITLE_501'.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module SET_TABLE_FIELD_ATTRIBUTES_E1 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE set_table_field_attributes_e1 OUTPUT.
+  DATA gs_p_wbs_stat TYPE ty_wbs_stat.
+
+  LOOP AT SCREEN.
+
+  IF gv_disp_req = abap_true.
+    IF screen-name CP 'GS_WBS_UNCLOSE-TO_BE'.
+      screen-input       = 0.
+      screen-intensified = 0.
+      MODIFY SCREEN.
+      CONTINUE.
+    ENDIF.
+
+  ELSE.
+    IF screen-name CP 'GS_WBS_UNCLOSE-TO_BE'.
+
+      REPLACE ALL OCCURRENCES OF '.' IN gs_wbs_unclose-wbs_element_code WITH ''.
+
+      CLEAR gs_p_wbs_stat.
+      READ TABLE gt_wbs_stat INTO gs_p_wbs_stat
+              WITH KEY posid = gs_wbs_unclose-wbs_element_code.
+
+      IF sy-subrc = 0 AND ( gs_p_wbs_stat-stat = 'I0043' OR
+                             gs_p_wbs_stat-stat = 'I0002' ).
+        " Released / Lock → gray out
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+
+      ELSEIF sy-subrc <> 0.
+        " Not found in status table → gray out as well
+        screen-input       = 0.
+        screen-intensified = 0.
+        MODIFY SCREEN.
+
+      ENDIF.
+      " I0045 / I0046 → stays editable (no modify)
+
+    ENDIF.
+  ENDIF.
+
+ENDLOOP.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_DROPDOWN OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_dropdown OUTPUT.
+
+*  DATA: gt_values TYPE vrm_values,
+*        gs_value  TYPE vrm_value.
+
+  CLEAR gt_values.
+
+  gs_value-key  = 'REL'.
+  gs_value-text = 'REL'.
+  APPEND gs_value TO gt_values.
+
+  gs_value-key  = 'TECO'.
+  gs_value-text = 'TECO'.
+  APPEND gs_value TO gt_values.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id              = 'GS_WBS_UNCLOSE-TO_BE'
+      values          = gt_values
+    EXCEPTIONS
+      id_illegal_name = 1
+      OTHERS          = 2.
+
+  IF sy-subrc <> 0.
+    RETURN.
+
+  ENDIF.
+
 ENDMODULE.
